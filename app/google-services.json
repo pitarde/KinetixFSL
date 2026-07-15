@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "173560349034",
+    "project_id": "kinetixfsl-73d88",
+    "storage_bucket": "kinetixfsl-73d88.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:173560349034:android:1948d6f5d0cd893efbe513",
+        "android_client_info": {
+          "package_name": "com.example.kinetixfsl"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDKSVIOoUPN6xsE4sXmV5MpZrUeLC2zaus"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

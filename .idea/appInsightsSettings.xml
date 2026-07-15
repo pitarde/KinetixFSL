@@ -8,10 +8,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="PLACEHOLDER" />
-                  <option name="mobileSdkAppId" value="" />
-                  <option name="projectId" value="" />
-                  <option name="projectNumber" value="" />
+                  <option name="appId" value="com.example.kinetixfsl" />
+                  <option name="mobileSdkAppId" value="1:173560349034:android:1948d6f5d0cd893efbe513" />
+                  <option name="projectId" value="kinetixfsl-73d88" />
+                  <option name="projectNumber" value="173560349034" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />

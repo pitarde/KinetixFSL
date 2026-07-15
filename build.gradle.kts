@@ -2,4 +2,6 @@
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.compose) apply false
+    // Firebase config processor. Declared here (apply false), applied in :app.
+    alias(libs.plugins.google.services) apply false
 }

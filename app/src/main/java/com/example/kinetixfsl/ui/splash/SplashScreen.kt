@@ -1,4 +1,4 @@
-package com.example.kinetixfsl.ui.theme.splash
+package com.example.kinetixfsl.ui.splash
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
