@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- KinetixFSL brand palette, sampled from the logo -->
+    <color name="kinetix_ink">#FF1E224F</color>
+    <color name="kinetix_navy">#FF303465</color>
+    <color name="kinetix_indigo">#FF3C3489</color>
+    <color name="kinetix_green">#FF1D9E75</color>
+    <color name="kinetix_mint">#FF95D4CC</color>
+    <color name="kinetix_white">#FFFFFFFF</color>
+</resources>
