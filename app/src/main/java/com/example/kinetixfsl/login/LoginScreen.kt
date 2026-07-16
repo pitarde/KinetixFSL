@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -52,11 +53,12 @@ import com.example.kinetixfsl.ui.theme.KinetixWhite
 
 
 /**
- * The login screen. Email/password sign-in against Firebase; the Google button is
- * present but not yet wired (that's a later step). On success, [onLoginSuccess] fires.
+ * The login screen. Email/password sign-in and Google Sign-In (via Credential
+ * Manager) both go through the shared [LoginViewModel]. On success,
+ * [onLoginSuccess] fires.
  *
  * @param onLoginSuccess       navigate to Home
- * @param onNavigateToSignUp   navigate to the (not-yet-built) register screen
+ * @param onNavigateToSignUp   navigate to the register screen
  * @param onForgotPassword     navigate to password reset (not-yet-built)
  */
 @Composable
@@ -68,6 +70,8 @@ fun LoginScreen(
     viewModel: LoginViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // Credential Manager needs an Activity context to render its account sheet.
+    val context = LocalContext.current
 
     // When the ViewModel reports success, tell the caller once, then reset the flag.
     if (state.isLoginSuccessful) {
@@ -82,7 +86,7 @@ fun LoginScreen(
         onToggleVisibility = viewModel::togglePasswordVisibility,
         onLoginClick = viewModel::login,
         onForgotPassword = onForgotPassword,
-        onGoogleClick = { /* TODO: wire Google Sign-In in a later step */ },
+        onGoogleClick = { viewModel.signInWithGoogle(context) },
         onSignUpClick = onNavigateToSignUp,
         modifier = modifier,
     )
@@ -238,8 +242,11 @@ private fun LoginContent(
 
         Spacer(Modifier.height(24.dp))
 
-        // ---- Google (stubbed) ----
-        GoogleButton(onClick = onGoogleClick)
+        // ---- Google ----
+        GoogleButton(
+            onClick = onGoogleClick,
+            enabled = !state.isLoading,
+        )
 
         Spacer(Modifier.height(32.dp))
 
@@ -326,23 +333,27 @@ private fun KinetixTextField(
     )
 }
 
-/** The "continue with Google" button. Visual only until Google Sign-In is wired. */
+/**
+ * The "continue with Google" button. Now wired to Credential Manager via the
+ * ViewModel; the [enabled] flag greys it out while any sign-in is in flight.
+ */
 @Composable
 private fun GoogleButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(52.dp)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .background(KinetixWhite, RoundedCornerShape(26.dp))
             .border(1.dp, KinetixOutline, RoundedCornerShape(26.dp)),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // "G" stand-in. Swap for the real multicolor Google logo when wiring auth.
+            // Simple "G" mark. Swap for the multicolor Google logo later if desired.
             Text(
                 text = "G",
                 style = MaterialTheme.typography.titleMedium,

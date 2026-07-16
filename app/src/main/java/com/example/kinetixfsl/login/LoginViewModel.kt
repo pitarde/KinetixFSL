@@ -1,5 +1,6 @@
 package com.example.kinetixfsl.ui.login
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.kinetixfsl.auth.AuthRepository
@@ -53,6 +54,24 @@ class LoginViewModel(
 
         viewModelScope.launch {
             when (val result = authRepository.signIn(state.email, state.password)) {
+                is AuthResult.Success ->
+                    _uiState.update { it.copy(isLoading = false, isLoginSuccessful = true) }
+
+                is AuthResult.Error ->
+                    _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
+            }
+        }
+    }
+
+    /**
+     * Kicks off the Google Sign-In flow. The UI passes in an Activity context so
+     * Credential Manager has a window to render its account-picker sheet on.
+     */
+    fun signInWithGoogle(context: Context) {
+        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+
+        viewModelScope.launch {
+            when (val result = authRepository.signInWithGoogle(context)) {
                 is AuthResult.Success ->
                     _uiState.update { it.copy(isLoading = false, isLoginSuccessful = true) }
 
