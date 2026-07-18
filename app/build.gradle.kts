@@ -58,12 +58,17 @@ dependencies {
     // Firebase — BoM first, then each product with no explicit version.
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.auth)
+    implementation(libs.firebase.firestore)
+    implementation(libs.firebase.storage)
     implementation(libs.kotlinx.coroutines.play.services)
 
     // Google Sign-In via Credential Manager.
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services.auth)
     implementation(libs.googleid)
+
+    // Image loading for Compose.
+    implementation(libs.coil.compose)
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

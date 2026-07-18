@@ -1,4 +1,4 @@
-package com.example.kinetixfsl.ui.home
+package com.example.kinetixfsl.community
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,128 +31,101 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.kinetixfsl.ui.home.tabs.CameraTabPlaceholder
-import com.example.kinetixfsl.ui.home.tabs.GameTabPlaceholder
-import com.example.kinetixfsl.ui.home.tabs.ModulesTabPlaceholder
-import com.example.kinetixfsl.ui.home.tabs.ProfileTabPlaceholder
-import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+import com.example.kinetixfsl.community.tabs.CommunityProfilePlaceholder
+import com.example.kinetixfsl.community.tabs.CreatePostPlaceholder
+import com.example.kinetixfsl.community.tabs.NotificationsPlaceholder
+import com.example.kinetixfsl.ui.home.KinetixDrawerContent
 import com.example.kinetixfsl.ui.theme.KinetixIndigo
 import com.example.kinetixfsl.ui.theme.KinetixInk
 import com.example.kinetixfsl.ui.theme.KinetixMuted
 import com.example.kinetixfsl.ui.theme.KinetixOutline
-import com.example.kinetixfsl.ui.theme.KinetixSurface
 import com.example.kinetixfsl.ui.theme.KinetixWhite
 import kotlinx.coroutines.launch
 
 /**
- * The Home shell. Wraps everything the user sees after login: side drawer,
- * top bar with hamburger, the current tab's content, and the bottom nav bar.
+ * The Community shell. Reuses the app-wide side drawer from Home, but with its
+ * own tab state and its own bottom nav (Home = feed, Profile, Create, Notifications).
  *
- * The drawer only opens from the Home tab (it's the only tab with the hamburger).
- * Other tabs get a simple centered title bar instead. This matches how most apps
- * feel: the drawer belongs to Home, not to Camera / Game / etc.
+ * Nav callbacks come from KinetixNavHost so the drawer's "Dashboard" link can
+ * pop back to Home. All other drawer items still TODO for now.
  */
 @Composable
-fun HomeScreen(
-    onSignOut: () -> Unit,
-    onNavigateToCommunity: () -> Unit,
+fun CommunityScreen(
+    onNavigateToDashboard: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var selectedTab by remember { mutableStateOf(HomeTab.HOME) }
+    var selectedTab by remember { mutableStateOf(CommunityTab.HOME) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet(
-                drawerContainerColor = KinetixWhite,
-            ) {
+            ModalDrawerSheet(drawerContainerColor = KinetixWhite) {
                 KinetixDrawerContent(
-                    // All drawer clicks close the drawer for now — real destinations
-                    // hook in later, one feature at a time.
                     onDashboardClick = {
-                        selectedTab = HomeTab.HOME
                         scope.launch { drawerState.close() }
+                        onNavigateToDashboard()
                     },
-                    onGestureToTextClick = { /* TODO(gesture-to-text) */
-                        scope.launch { drawerState.close() }
-                    },
-                    onTextToGestureClick = { /* TODO(text-to-gesture) */
-                        scope.launch { drawerState.close() }
-                    },
+                    onGestureToTextClick = { scope.launch { drawerState.close() } },
+                    onTextToGestureClick = { scope.launch { drawerState.close() } },
                     onCommunityClick = {
-                        scope.launch { drawerState.close() }
-                        onNavigateToCommunity()
-                    },
-                    onStartCommunityClick = { /* TODO(community-create) */
+                        // Already here — just close the drawer and reset to feed.
+                        selectedTab = CommunityTab.HOME
                         scope.launch { drawerState.close() }
                     },
-                    onDiscoverCommunitiesClick = { /* TODO(community-discover) */
-                        scope.launch { drawerState.close() }
-                    },
-                    onAboutClick = { /* TODO(about) */
-                        scope.launch { drawerState.close() }
-                    },
+                    onStartCommunityClick = { scope.launch { drawerState.close() } },
+                    onDiscoverCommunitiesClick = { scope.launch { drawerState.close() } },
+                    onAboutClick = { scope.launch { drawerState.close() } },
                 )
             }
         },
     ) {
-        HomeScaffold(
+        CommunityScaffold(
             selectedTab = selectedTab,
             onTabSelected = { selectedTab = it },
             onMenuClick = { scope.launch { drawerState.open() } },
-            onSignOut = onSignOut,
             modifier = modifier,
         )
     }
 }
 
 @Composable
-private fun HomeScaffold(
-    selectedTab: HomeTab,
-    onTabSelected: (HomeTab) -> Unit,
+private fun CommunityScaffold(
+    selectedTab: CommunityTab,
+    onTabSelected: (CommunityTab) -> Unit,
     onMenuClick: () -> Unit,
-    onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(KinetixSurface)
+            .background(KinetixWhite)
             .statusBarsPadding(),
     ) {
-        HomeTopBar(
-            tab = selectedTab,
-            onMenuClick = onMenuClick,
-        )
+        CommunityTopBar(tab = selectedTab, onMenuClick = onMenuClick)
 
         Box(modifier = Modifier.weight(1f)) {
             when (selectedTab) {
-                HomeTab.HOME -> DashboardContent()
-                HomeTab.MODULES -> ModulesTabPlaceholder()
-                HomeTab.CAMERA -> CameraTabPlaceholder()
-                HomeTab.GAME -> GameTabPlaceholder()
-                HomeTab.PROFILE -> ProfileTabPlaceholder(onSignOut = onSignOut)
+                CommunityTab.HOME -> CommunityFeedContent()
+                CommunityTab.PROFILE -> CommunityProfilePlaceholder()
+                CommunityTab.CREATE -> CreatePostPlaceholder()
+                CommunityTab.NOTIFICATIONS -> NotificationsPlaceholder()
             }
         }
 
-        HomeBottomNav(
-            selectedTab = selectedTab,
-            onTabSelected = onTabSelected,
-        )
+        CommunityBottomNav(selectedTab = selectedTab, onTabSelected = onTabSelected)
     }
 }
 
 /**
- * The top bar. Only the Home tab shows the hamburger — every other tab shows a
- * centered title so the user always knows where they are.
+ * The top bar. Only the feed (Home) tab shows the hamburger — the other tabs
+ * show a centred title so the user always knows where they are.
  */
 @Composable
-private fun HomeTopBar(
-    tab: HomeTab,
+private fun CommunityTopBar(
+    tab: CommunityTab,
     onMenuClick: () -> Unit,
 ) {
     Box(
@@ -162,9 +134,9 @@ private fun HomeTopBar(
             .height(56.dp)
             .padding(horizontal = 12.dp),
     ) {
-        if (tab == HomeTab.HOME) {
+        if (tab == CommunityTab.HOME) {
             Icon(
-                imageVector = HomeIcons.Menu,
+                imageVector = CommunityIcons.Menu,
                 contentDescription = "Open menu",
                 tint = KinetixInk,
                 modifier = Modifier
@@ -184,11 +156,10 @@ private fun HomeTopBar(
     }
 }
 
-/** The five-icon bottom nav. Selected icon takes the brand indigo, rest are muted. */
 @Composable
-private fun HomeBottomNav(
-    selectedTab: HomeTab,
-    onTabSelected: (HomeTab) -> Unit,
+private fun CommunityBottomNav(
+    selectedTab: CommunityTab,
+    onTabSelected: (CommunityTab) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -204,7 +175,7 @@ private fun HomeBottomNav(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            HomeTab.entries.forEach { tab ->
+            CommunityTab.entries.forEach { tab ->
                 NavItem(
                     icon = tab.icon,
                     label = tab.label,
@@ -234,15 +205,7 @@ private fun NavItem(
             imageVector = icon,
             contentDescription = label,
             tint = tint,
-            modifier = Modifier.size(26.dp),
+            modifier = Modifier.size(28.dp),
         )
-    }
-}
-
-@Preview(showBackground = true, showSystemUi = true)
-@Composable
-private fun HomeScreenPreview() {
-    KinetixFSLTheme {
-        HomeScreen(onSignOut = {}, onNavigateToCommunity = {})
     }
 }

@@ -9,6 +9,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.kinetixfsl.auth.AuthRepository
+import com.example.kinetixfsl.community.CommunityScreen
 import com.example.kinetixfsl.ui.forgotpassword.CheckEmailScreen
 import com.example.kinetixfsl.ui.forgotpassword.ForgotPasswordScreen
 import com.example.kinetixfsl.ui.home.HomeScreen
@@ -36,6 +37,7 @@ object Route {
         "$CHECK_EMAIL_BASE/${URLEncoder.encode(email, StandardCharsets.UTF_8.name())}"
 
     const val HOME = "home"
+    const val COMMUNITY = "community"
 }
 
 @Composable
@@ -105,8 +107,6 @@ fun KinetixNavHost(
         composable(Route.FORGOT_PASSWORD) {
             ForgotPasswordScreen(
                 onLinkSent = { email ->
-                    // Navigate to the confirmation, clearing forgot-password from the stack
-                    // so back from the confirmation lands on Login, not the input screen.
                     navController.navigate(Route.checkEmail(email)) {
                         popUpTo(Route.FORGOT_PASSWORD) { inclusive = true }
                     }
@@ -141,7 +141,26 @@ fun KinetixNavHost(
                     navController.navigate(Route.LOGIN) {
                         popUpTo(Route.HOME) { inclusive = true }
                     }
-                }
+                },
+                onNavigateToCommunity = {
+                    // Home -> Community. No popUpTo -- back returns to Home.
+                    navController.navigate(Route.COMMUNITY)
+                },
+            )
+        }
+
+        composable(Route.COMMUNITY) {
+            CommunityScreen(
+                onNavigateToDashboard = {
+                    // Drawer "Dashboard" from Community: go home. If Home is still
+                    // on the stack we just pop back; if not, we navigate fresh.
+                    val popped = navController.popBackStack(Route.HOME, inclusive = false)
+                    if (!popped) {
+                        navController.navigate(Route.HOME) {
+                            popUpTo(Route.COMMUNITY) { inclusive = true }
+                        }
+                    }
+                },
             )
         }
     }
