@@ -1,18 +1,7 @@
 package com.example.kinetixfsl.navigation
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -22,6 +11,7 @@ import androidx.navigation.navArgument
 import com.example.kinetixfsl.auth.AuthRepository
 import com.example.kinetixfsl.ui.forgotpassword.CheckEmailScreen
 import com.example.kinetixfsl.ui.forgotpassword.ForgotPasswordScreen
+import com.example.kinetixfsl.ui.home.HomeScreen
 import com.example.kinetixfsl.ui.login.LoginScreen
 import com.example.kinetixfsl.ui.onboarding.OnboardingScreen
 import com.example.kinetixfsl.ui.register.RegisterScreen
@@ -145,7 +135,7 @@ fun KinetixNavHost(
         }
 
         composable(Route.HOME) {
-            HomePlaceholder(
+            HomeScreen(
                 onSignOut = {
                     authRepository.signOut()
                     navController.navigate(Route.LOGIN) {
@@ -153,25 +143,6 @@ fun KinetixNavHost(
                     }
                 }
             )
-        }
-    }
-}
-
-@Composable
-private fun HomePlaceholder(
-    onSignOut: () -> Unit,
-) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "Home",
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.height(16.dp))
-            TextButton(onClick = onSignOut) {
-                Text("Sign out", color = MaterialTheme.colorScheme.secondary)
-            }
         }
     }
 }
