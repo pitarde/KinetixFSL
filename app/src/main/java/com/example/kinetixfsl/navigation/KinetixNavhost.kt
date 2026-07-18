@@ -14,14 +14,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.kinetixfsl.auth.AuthRepository
+import com.example.kinetixfsl.ui.forgotpassword.CheckEmailScreen
+import com.example.kinetixfsl.ui.forgotpassword.ForgotPasswordScreen
 import com.example.kinetixfsl.ui.login.LoginScreen
 import com.example.kinetixfsl.ui.onboarding.OnboardingScreen
 import com.example.kinetixfsl.ui.register.RegisterScreen
 import com.example.kinetixfsl.ui.splash.SplashScreen
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 /** Every destination in the app. Add to this as we build each screen. */
 object Route {
@@ -29,6 +36,15 @@ object Route {
     const val ONBOARDING = "onboarding"
     const val LOGIN = "login"
     const val REGISTER = "register"
+    const val FORGOT_PASSWORD = "forgot_password"
+
+    // Check-email carries the address it was sent to as a URL-encoded path arg.
+    private const val CHECK_EMAIL_BASE = "check_email"
+    const val CHECK_EMAIL_ARG = "email"
+    const val CHECK_EMAIL_PATTERN = "$CHECK_EMAIL_BASE/{$CHECK_EMAIL_ARG}"
+    fun checkEmail(email: String): String =
+        "$CHECK_EMAIL_BASE/${URLEncoder.encode(email, StandardCharsets.UTF_8.name())}"
+
     const val HOME = "home"
 }
 
@@ -36,8 +52,6 @@ object Route {
 fun KinetixNavHost(
     navController: NavHostController = rememberNavController(),
 ) {
-    // One auth handle for routing decisions. Firebase persists the session across
-    // app restarts, so this is already correct the moment the app launches.
     val authRepository = remember { AuthRepository() }
 
     NavHost(
@@ -47,7 +61,6 @@ fun KinetixNavHost(
         composable(Route.SPLASH) {
             SplashScreen(
                 onFinished = {
-                    // Already signed in -> Home; otherwise -> onboarding/login.
                     val destination = if (authRepository.isSignedIn) {
                         Route.HOME
                     } else {
@@ -78,11 +91,10 @@ fun KinetixNavHost(
                     }
                 },
                 onNavigateToSignUp = {
-                    // Login -> Register. No popUpTo, so back returns to Log in.
                     navController.navigate(Route.REGISTER)
                 },
                 onForgotPassword = {
-                    // TODO: build password reset, then navigate here.
+                    navController.navigate(Route.FORGOT_PASSWORD)
                 },
             )
         }
@@ -90,21 +102,49 @@ fun KinetixNavHost(
         composable(Route.REGISTER) {
             RegisterScreen(
                 onRegisterSuccess = {
-                    // Account created & signed in -> Home, clearing the auth stack.
-                    navController.navigate(Route.LOGIN) {
+                    navController.navigate(Route.HOME) {
                         popUpTo(Route.LOGIN) { inclusive = true }
                     }
                 },
                 onNavigateToLogin = {
-                    // "Already have an account? Login" -> just go back to Log in.
                     navController.popBackStack()
                 },
             )
         }
 
+        composable(Route.FORGOT_PASSWORD) {
+            ForgotPasswordScreen(
+                onLinkSent = { email ->
+                    // Navigate to the confirmation, clearing forgot-password from the stack
+                    // so back from the confirmation lands on Login, not the input screen.
+                    navController.navigate(Route.checkEmail(email)) {
+                        popUpTo(Route.FORGOT_PASSWORD) { inclusive = true }
+                    }
+                },
+                onNavigateBack = {
+                    navController.popBackStack()
+                },
+            )
+        }
+
+        composable(
+            route = Route.CHECK_EMAIL_PATTERN,
+            arguments = listOf(navArgument(Route.CHECK_EMAIL_ARG) { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val encoded = backStackEntry.arguments?.getString(Route.CHECK_EMAIL_ARG).orEmpty()
+            val email = URLDecoder.decode(encoded, StandardCharsets.UTF_8.name())
+
+            CheckEmailScreen(
+                email = email,
+                onBackToLogin = {
+                    navController.navigate(Route.LOGIN) {
+                        popUpTo(Route.LOGIN) { inclusive = true }
+                    }
+                },
+            )
+        }
+
         composable(Route.HOME) {
-            // Placeholder until we build the real home screen.
-            // Temporary Sign Out so you can test the logged-in vs logged-out flow.
             HomePlaceholder(
                 onSignOut = {
                     authRepository.signOut()

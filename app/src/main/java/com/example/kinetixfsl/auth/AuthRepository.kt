@@ -24,18 +24,13 @@ import kotlinx.coroutines.tasks.await
  * The single point of contact with Firebase Authentication. Everything else in
  * the app talks to this, never to FirebaseAuth directly — so if the backend ever
  * changes, only this file does.
- *
- * Firebase's own calls are callback-based; we bridge them to coroutines with
- * `.await()` so the ViewModel can call them like normal suspend functions.
  */
 class AuthRepository(
     private val firebaseAuth: FirebaseAuth = FirebaseAuth.getInstance(),
 ) {
-    /** The signed-in user, or null if nobody is signed in. */
     val currentUser: FirebaseUser?
         get() = firebaseAuth.currentUser
 
-    /** True if a user session already exists (used to skip login on relaunch). */
     val isSignedIn: Boolean
         get() = firebaseAuth.currentUser != null
 
@@ -56,10 +51,6 @@ class AuthRepository(
         }
     }
 
-    /**
-     * Creates a new account, then stamps the display name onto it so the rest of
-     * the app can greet the user by name. On success the user is also signed in.
-     */
     suspend fun signUp(fullName: String, email: String, password: String): AuthResult {
         return try {
             val authResult = firebaseAuth
@@ -82,27 +73,38 @@ class AuthRepository(
         }
     }
 
+    /**
+     * Asks Firebase to email a password-reset link to [email]. Firebase hosts
+     * the reset page itself — the user taps the link, sets a new password in
+     * their browser, then returns to the app and logs in normally.
+     *
+     * IMPORTANT: for privacy, Firebase does NOT tell us whether the email is
+     * actually registered. It returns success either way (or a network error).
+     * That means we cannot show a "no such account" message here without
+     * leaking whether an email is in the system — which would be an
+     * account-enumeration risk. We say "check your inbox" and move on.
+     */
+    suspend fun sendPasswordResetEmail(email: String): AuthResult {
+        return try {
+            firebaseAuth.sendPasswordResetEmail(email.trim()).await()
+            AuthResult.Success
+        } catch (e: FirebaseAuthInvalidCredentialsException) {
+            AuthResult.Error("That email address looks invalid.")
+        } catch (e: Exception) {
+            AuthResult.Error(e.localizedMessage ?: "Something went wrong. Try again.")
+        }
+    }
+
     // ---------------------------------------------------------------------------------
     // Google
     // ---------------------------------------------------------------------------------
 
-    /**
-     * Runs the full Google Sign-In flow via Credential Manager, then exchanges
-     * the resulting Google ID token for a Firebase session.
-     *
-     * If Firebase has never seen this Google account before, it creates one; if
-     * it has, it signs in as before. Either way, on success [isSignedIn] is true.
-     *
-     * The [context] should be an Activity context so the credential sheet can render.
-     */
     suspend fun signInWithGoogle(context: Context): AuthResult {
-        // 1. Ask Credential Manager for a Google ID token.
         val idToken = when (val tokenResult = requestGoogleIdToken(context)) {
             is GoogleTokenResult.Success -> tokenResult.idToken
             is GoogleTokenResult.Failure -> return AuthResult.Error(tokenResult.message)
         }
 
-        // 2. Exchange the ID token for a Firebase user session.
         return try {
             val credential = GoogleAuthProvider.getCredential(idToken, null)
             firebaseAuth.signInWithCredential(credential).await()
@@ -116,8 +118,6 @@ class AuthRepository(
         return try {
             val credentialManager = CredentialManager.create(context)
 
-            // setFilterByAuthorizedAccounts(false) so first-time users see all
-            // Google accounts on the device, not only ones already linked to us.
             val googleIdOption = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(false)
                 .setServerClientId(WEB_CLIENT_ID)
@@ -141,10 +141,8 @@ class AuthRepository(
                 GoogleTokenResult.Failure("Unexpected credential type from Google.")
             }
         } catch (e: GetCredentialCancellationException) {
-            // User tapped away / closed the sheet — not really an error.
             GoogleTokenResult.Failure("Sign-in cancelled.")
         } catch (e: NoCredentialException) {
-            // No Google account on the device.
             GoogleTokenResult.Failure("No Google account available on this device.")
         } catch (e: GoogleIdTokenParsingException) {
             GoogleTokenResult.Failure("Could not read Google credentials.")
