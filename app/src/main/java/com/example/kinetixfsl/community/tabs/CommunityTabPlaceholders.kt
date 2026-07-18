@@ -28,10 +28,6 @@ fun CommunityProfilePlaceholder(modifier: Modifier = Modifier) =
     LabeledPlaceholder("Community Profile", "Your posts, comments, karma.", modifier)
 
 @Composable
-fun CreatePostPlaceholder(modifier: Modifier = Modifier) =
-    LabeledPlaceholder("Create Post", "Image, video, title, body upload flow.", modifier)
-
-@Composable
 fun NotificationsPlaceholder(modifier: Modifier = Modifier) =
     LabeledPlaceholder("Notifications", "Replies, votes, mentions land here.", modifier)
 

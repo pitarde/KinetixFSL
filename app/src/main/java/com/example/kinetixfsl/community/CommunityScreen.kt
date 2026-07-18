@@ -32,8 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.tabs.CommunityProfilePlaceholder
-import com.example.kinetixfsl.community.tabs.CreatePostPlaceholder
 import com.example.kinetixfsl.community.tabs.NotificationsPlaceholder
 import com.example.kinetixfsl.ui.home.KinetixDrawerContent
 import com.example.kinetixfsl.ui.theme.KinetixIndigo
@@ -58,6 +58,8 @@ fun CommunityScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(CommunityTab.HOME) }
+    // When non-null, the CommentScreen overlays the feed for this post.
+    var commentPost: Post? by remember { mutableStateOf(null) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -82,12 +84,29 @@ fun CommunityScreen(
             }
         },
     ) {
-        CommunityScaffold(
-            selectedTab = selectedTab,
-            onTabSelected = { selectedTab = it },
-            onMenuClick = { scope.launch { drawerState.open() } },
-            modifier = modifier,
-        )
+        // Main content area — scaffold + comment overlay stacked.
+        Box(modifier = modifier.fillMaxSize()) {
+            CommunityScaffold(
+                selectedTab = selectedTab,
+                onTabSelected = { selectedTab = it },
+                onMenuClick = { scope.launch { drawerState.open() } },
+                onSelectCommunity = { /* TODO: navigate to Post-to screen */ },
+                onCommentClick = { post -> commentPost = post },
+            )
+
+            // Comment overlay — draws on top of everything when a post is selected.
+            val activeCommentPost = commentPost
+            if (activeCommentPost != null) {
+                val commentVm = remember(activeCommentPost.id) {
+                    CommentViewModel(postId = activeCommentPost.id)
+                }
+                CommentScreen(
+                    post = activeCommentPost,
+                    viewModel = commentVm,
+                    onClose = { commentPost = null },
+                )
+            }
+        }
     }
 }
 
@@ -96,6 +115,8 @@ private fun CommunityScaffold(
     selectedTab: CommunityTab,
     onTabSelected: (CommunityTab) -> Unit,
     onMenuClick: () -> Unit,
+    onSelectCommunity: () -> Unit,
+    onCommentClick: (Post) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -108,9 +129,14 @@ private fun CommunityScaffold(
 
         Box(modifier = Modifier.weight(1f)) {
             when (selectedTab) {
-                CommunityTab.HOME -> CommunityFeedContent()
+                CommunityTab.HOME -> CommunityFeedContent(
+                    onCommentClick = onCommentClick,
+                )
                 CommunityTab.PROFILE -> CommunityProfilePlaceholder()
-                CommunityTab.CREATE -> CreatePostPlaceholder()
+                CommunityTab.CREATE -> CreatePostScreen(
+                    onClose = { onTabSelected(CommunityTab.HOME) },
+                    onSelectCommunity = { onSelectCommunity() },
+                )
                 CommunityTab.NOTIFICATIONS -> NotificationsPlaceholder()
             }
         }
