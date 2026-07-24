@@ -94,7 +94,11 @@ fun KinetixNavHost(
         composable(Route.REGISTER) {
             RegisterScreen(
                 onRegisterSuccess = {
+<<<<<<< HEAD
                     navController.navigate(Route.LOGIN) {
+=======
+                    navController.navigate(Route.HOME) {
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                         popUpTo(Route.LOGIN) { inclusive = true }
                     }
                 },

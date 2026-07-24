@@ -42,6 +42,15 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kinetixfsl.community.model.Comment
 import com.example.kinetixfsl.community.model.Post
+<<<<<<< HEAD
+=======
+import com.example.kinetixfsl.ui.theme.KinetixError
+import com.example.kinetixfsl.ui.theme.KinetixIndigo
+import com.example.kinetixfsl.ui.theme.KinetixIndigo10
+import com.example.kinetixfsl.ui.theme.KinetixInk
+import com.example.kinetixfsl.ui.theme.KinetixMuted
+import com.example.kinetixfsl.ui.theme.KinetixOutline
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 import com.example.kinetixfsl.ui.theme.KinetixWhite
 
 /**
@@ -63,7 +72,11 @@ fun CommentScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
+<<<<<<< HEAD
             .background(MaterialTheme.colorScheme.background)
+=======
+            .background(KinetixWhite)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             .statusBarsPadding()
             .imePadding(),
     ) {
@@ -77,7 +90,11 @@ fun CommentScreen(
             Icon(
                 imageVector = ArrowBackIcon,
                 contentDescription = "Back",
+<<<<<<< HEAD
                 tint = MaterialTheme.colorScheme.onSurface,
+=======
+                tint = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier
                     .size(28.dp)
                     .clickable(onClick = onClose),
@@ -86,24 +103,40 @@ fun CommentScreen(
             Text(
                 text = "Comments",
                 style = MaterialTheme.typography.titleLarge,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurface,
+=======
+                color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.Bold,
             )
         }
 
+<<<<<<< HEAD
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+=======
+        HorizontalDivider(color = KinetixOutline)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 
         // ---- Post summary ----
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+<<<<<<< HEAD
                 .background(MaterialTheme.colorScheme.primaryContainer)
+=======
+                .background(KinetixIndigo10)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 .padding(16.dp),
         ) {
             Text(
                 text = post.title,
                 style = MaterialTheme.typography.titleMedium,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurface,
+=======
+                color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.Bold,
             )
             if (post.body.isNotBlank()) {
@@ -111,20 +144,32 @@ fun CommentScreen(
                 Text(
                     text = post.body,
                     style = MaterialTheme.typography.bodyMedium,
+<<<<<<< HEAD
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+=======
+                    color = KinetixMuted,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     maxLines = 2,
                 )
             }
         }
 
+<<<<<<< HEAD
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+=======
+        HorizontalDivider(color = KinetixOutline)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 
         // ---- Comments list ----
         Box(modifier = Modifier.weight(1f)) {
             when {
                 state.isLoading -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+<<<<<<< HEAD
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+=======
+                        CircularProgressIndicator(color = KinetixIndigo)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     }
                 }
                 state.comments.isEmpty() -> {
@@ -137,7 +182,11 @@ fun CommentScreen(
                         Text(
                             "No comments yet. Be the first!",
                             style = MaterialTheme.typography.bodyMedium,
+<<<<<<< HEAD
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+=======
+                            color = KinetixMuted,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                         )
                     }
                 }
@@ -148,7 +197,11 @@ fun CommentScreen(
                     ) {
                         items(state.comments, key = { it.id }) { comment ->
                             CommentRow(comment = comment)
+<<<<<<< HEAD
                             HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+=======
+                            HorizontalDivider(color = KinetixOutline)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                         }
                     }
                 }
@@ -160,17 +213,29 @@ fun CommentScreen(
             Text(
                 text = state.errorMessage!!,
                 style = MaterialTheme.typography.labelMedium,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.error,
+=======
+                color = KinetixError,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
         }
 
         // ---- Input bar ----
+<<<<<<< HEAD
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
+=======
+        HorizontalDivider(color = KinetixOutline)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(KinetixWhite)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 .navigationBarsPadding()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -179,14 +244,23 @@ fun CommentScreen(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(24.dp))
+<<<<<<< HEAD
                     .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(24.dp))
+=======
+                    .border(1.dp, KinetixOutline, RoundedCornerShape(24.dp))
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     .padding(horizontal = 16.dp, vertical = 12.dp),
             ) {
                 BasicTextField(
                     value = state.commentText,
                     onValueChange = viewModel::onCommentTextChange,
+<<<<<<< HEAD
                     textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+=======
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = KinetixInk),
+                    cursorBrush = SolidColor(KinetixIndigo),
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     modifier = Modifier.fillMaxWidth(),
                     decorationBox = { inner ->
                         Box {
@@ -194,7 +268,11 @@ fun CommentScreen(
                                 Text(
                                     "Write a comment...",
                                     style = MaterialTheme.typography.bodyMedium,
+<<<<<<< HEAD
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+=======
+                                    color = KinetixMuted,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                                 )
                             }
                             inner()
@@ -211,7 +289,11 @@ fun CommentScreen(
                 modifier = Modifier
                     .size(42.dp)
                     .clip(CircleShape)
+<<<<<<< HEAD
                     .background(if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+=======
+                    .background(if (canSend) KinetixIndigo else KinetixOutline)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     .clickable(enabled = canSend) { viewModel.sendComment() },
                 contentAlignment = Alignment.Center,
             ) {
@@ -247,14 +329,23 @@ private fun CommentRow(comment: Comment) {
             modifier = Modifier
                 .size(32.dp)
                 .clip(CircleShape)
+<<<<<<< HEAD
                 .background(MaterialTheme.colorScheme.primaryContainer)
                 .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+=======
+                .background(KinetixIndigo10)
+                .border(1.dp, KinetixOutline, CircleShape),
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 comment.authorName.firstOrNull()?.uppercase() ?: "?",
                 style = MaterialTheme.typography.labelMedium,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.primary,
+=======
+                color = KinetixIndigo,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.Bold,
             )
         }
@@ -266,21 +357,33 @@ private fun CommentRow(comment: Comment) {
                 Text(
                     comment.authorName.ifBlank { "Unknown" },
                     style = MaterialTheme.typography.labelLarge,
+<<<<<<< HEAD
                     color = MaterialTheme.colorScheme.onSurface,
+=======
+                    color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     fontWeight = FontWeight.SemiBold,
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
                     comment.createdAt.relativeToNow(),
                     style = MaterialTheme.typography.labelMedium,
+<<<<<<< HEAD
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+=======
+                    color = KinetixMuted,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 )
             }
             Spacer(Modifier.height(4.dp))
             Text(
                 comment.body,
                 style = MaterialTheme.typography.bodyMedium,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurface,
+=======
+                color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             )
         }
     }

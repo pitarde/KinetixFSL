@@ -32,7 +32,16 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+<<<<<<< HEAD
 import com.example.kinetixfsl.ui.theme.KinetixNavy
+=======
+import com.example.kinetixfsl.ui.theme.KinetixIndigo
+import com.example.kinetixfsl.ui.theme.KinetixIndigo10
+import com.example.kinetixfsl.ui.theme.KinetixInk
+import com.example.kinetixfsl.ui.theme.KinetixMuted
+import com.example.kinetixfsl.ui.theme.KinetixNavy
+import com.example.kinetixfsl.ui.theme.KinetixOutline
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 import com.example.kinetixfsl.ui.theme.KinetixWhite
 
 /**
@@ -68,12 +77,20 @@ fun DashboardContent(
         Text(
             text = "Good morning,",
             style = MaterialTheme.typography.bodyLarge,
+<<<<<<< HEAD
             color = MaterialTheme.colorScheme.onBackground,
+=======
+            color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         )
         Text(
             text = state.displayName,
             style = MaterialTheme.typography.headlineLarge,
+<<<<<<< HEAD
             color = MaterialTheme.colorScheme.onBackground,
+=======
+            color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             fontWeight = FontWeight.Bold,
         )
 
@@ -86,7 +103,11 @@ fun DashboardContent(
         Text(
             text = "CONTINUE LEARNING",
             style = MaterialTheme.typography.labelMedium,
+<<<<<<< HEAD
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+=======
+            color = KinetixMuted,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             fontWeight = FontWeight.Bold,
         )
 
@@ -183,7 +204,11 @@ private fun ModuleCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
+<<<<<<< HEAD
             .background(MaterialTheme.colorScheme.surface)
+=======
+            .background(KinetixWhite)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
@@ -192,13 +217,21 @@ private fun ModuleCard(
                 Text(
                     text = module.title,
                     style = MaterialTheme.typography.titleMedium,
+<<<<<<< HEAD
                     color = MaterialTheme.colorScheme.onSurface,
+=======
+                    color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
                     text = module.subtitle,
                     style = MaterialTheme.typography.titleMedium,
+<<<<<<< HEAD
                     color = MaterialTheme.colorScheme.onSurface,
+=======
+                    color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     fontWeight = FontWeight.Bold,
                 )
             }
@@ -214,14 +247,23 @@ private fun ModuleCard(
                     .weight(1f)
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp)),
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.outline,
+=======
+                color = KinetixIndigo,
+                trackColor = KinetixOutline,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             )
             Spacer(Modifier.size(12.dp))
             Text(
                 text = module.xpLabel,
                 style = MaterialTheme.typography.labelMedium,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+=======
+                color = KinetixMuted,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -233,13 +275,21 @@ private fun StatusPill(status: ModuleStatus) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
+<<<<<<< HEAD
             .background(MaterialTheme.colorScheme.primaryContainer)
+=======
+            .background(KinetixIndigo10)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Text(
             text = status.label,
             style = MaterialTheme.typography.labelMedium,
+<<<<<<< HEAD
             color = MaterialTheme.colorScheme.primary,
+=======
+            color = KinetixIndigo,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             fontWeight = FontWeight.SemiBold,
         )
     }

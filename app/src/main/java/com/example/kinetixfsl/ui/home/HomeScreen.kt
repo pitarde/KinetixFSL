@@ -39,6 +39,15 @@ import com.example.kinetixfsl.ui.home.tabs.GameTabPlaceholder
 import com.example.kinetixfsl.ui.home.tabs.ModulesTabPlaceholder
 import com.example.kinetixfsl.ui.home.tabs.ProfileTabPlaceholder
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+<<<<<<< HEAD
+=======
+import com.example.kinetixfsl.ui.theme.KinetixIndigo
+import com.example.kinetixfsl.ui.theme.KinetixInk
+import com.example.kinetixfsl.ui.theme.KinetixMuted
+import com.example.kinetixfsl.ui.theme.KinetixOutline
+import com.example.kinetixfsl.ui.theme.KinetixSurface
+import com.example.kinetixfsl.ui.theme.KinetixWhite
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 import kotlinx.coroutines.launch
 
 /**
@@ -48,10 +57,13 @@ import kotlinx.coroutines.launch
  * The drawer only opens from the Home tab (it's the only tab with the hamburger).
  * Other tabs get a simple centered title bar instead. This matches how most apps
  * feel: the drawer belongs to Home, not to Camera / Game / etc.
+<<<<<<< HEAD
  *
  * Every color reference below comes from MaterialTheme.colorScheme rather than a
  * fixed brand constant, so the whole screen (including the drawer and bottom nav)
  * follows the system's dark/light setting automatically.
+=======
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
  */
 @Composable
 fun HomeScreen(
@@ -66,9 +78,15 @@ fun HomeScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
+<<<<<<< HEAD
             // No drawerContainerColor override — ModalDrawerSheet already defaults
             // to MaterialTheme.colorScheme.surface, which flips with the theme.
             ModalDrawerSheet {
+=======
+            ModalDrawerSheet(
+                drawerContainerColor = KinetixWhite,
+            ) {
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 KinetixDrawerContent(
                     // All drawer clicks close the drawer for now — real destinations
                     // hook in later, one feature at a time.
@@ -120,7 +138,11 @@ private fun HomeScaffold(
     Column(
         modifier = modifier
             .fillMaxSize()
+<<<<<<< HEAD
             .background(MaterialTheme.colorScheme.background)
+=======
+            .background(KinetixSurface)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             .statusBarsPadding(),
     ) {
         HomeTopBar(
@@ -164,7 +186,11 @@ private fun HomeTopBar(
             Icon(
                 imageVector = HomeIcons.Menu,
                 contentDescription = "Open menu",
+<<<<<<< HEAD
                 tint = MaterialTheme.colorScheme.onBackground,
+=======
+                tint = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .size(32.dp)
@@ -174,7 +200,11 @@ private fun HomeTopBar(
             Text(
                 text = tab.label,
                 style = MaterialTheme.typography.titleLarge,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onBackground,
+=======
+                color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.Center),
             )
@@ -182,7 +212,11 @@ private fun HomeTopBar(
     }
 }
 
+<<<<<<< HEAD
 /** The five-icon bottom nav. Selected icon takes the theme's primary, rest are muted. */
+=======
+/** The five-icon bottom nav. Selected icon takes the brand indigo, rest are muted. */
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 @Composable
 private fun HomeBottomNav(
     selectedTab: HomeTab,
@@ -191,9 +225,15 @@ private fun HomeBottomNav(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+<<<<<<< HEAD
             .background(MaterialTheme.colorScheme.surface),
     ) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+=======
+            .background(KinetixWhite),
+    ) {
+        HorizontalDivider(color = KinetixOutline)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -221,11 +261,15 @@ private fun NavItem(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+<<<<<<< HEAD
     val tint = if (selected) {
         MaterialTheme.colorScheme.primary
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
+=======
+    val tint = if (selected) KinetixIndigo else KinetixMuted
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
     Column(
         modifier = Modifier
             .clickable(onClick = onClick)
@@ -241,6 +285,7 @@ private fun NavItem(
     }
 }
 
+<<<<<<< HEAD
 @Preview(showBackground = true, showSystemUi = true, name = "Home - Light")
 @Composable
 private fun HomeScreenPreviewLight() {
@@ -253,6 +298,12 @@ private fun HomeScreenPreviewLight() {
 @Composable
 private fun HomeScreenPreviewDark() {
     KinetixFSLTheme(darkTheme = true) {
+=======
+@Preview(showBackground = true, showSystemUi = true)
+@Composable
+private fun HomeScreenPreview() {
+    KinetixFSLTheme {
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         HomeScreen(onSignOut = {}, onNavigateToCommunity = {})
     }
 }

@@ -44,8 +44,19 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.kinetixfsl.R
+<<<<<<< HEAD
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import com.example.kinetixfsl.ui.theme.KinetixPrimaryButton
+=======
+import com.example.kinetixfsl.ui.theme.KinetixError
+import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+import com.example.kinetixfsl.ui.theme.KinetixIndigo
+import com.example.kinetixfsl.ui.theme.KinetixInk
+import com.example.kinetixfsl.ui.theme.KinetixMuted
+import com.example.kinetixfsl.ui.theme.KinetixOutline
+import com.example.kinetixfsl.ui.theme.KinetixPrimaryButton
+import com.example.kinetixfsl.ui.theme.KinetixWhite
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 
 /**
  * The Create Account screen. Collects name/email/password/confirm + a terms
@@ -110,14 +121,22 @@ private fun RegisterContent(
         Text(
             text = "Create Account",
             style = MaterialTheme.typography.displayLarge,
+<<<<<<< HEAD
             color = MaterialTheme.colorScheme.primary,
+=======
+            color = KinetixIndigo,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(8.dp))
         Text(
             text = "Join KinetixFSL and start learning.",
             style = MaterialTheme.typography.bodyMedium,
+<<<<<<< HEAD
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+=======
+            color = KinetixMuted,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             textAlign = TextAlign.Center,
         )
 
@@ -206,6 +225,7 @@ private fun RegisterContent(
                 checked = state.agreedToTerms,
                 onCheckedChange = { onToggleTerms() },
                 colors = CheckboxDefaults.colors(
+<<<<<<< HEAD
                     checkedColor = MaterialTheme.colorScheme.primary,
                     uncheckedColor = MaterialTheme.colorScheme.outline,
                     checkmarkColor = MaterialTheme.colorScheme.onPrimary,
@@ -220,11 +240,30 @@ private fun RegisterContent(
                     }
                     append(" and ")
                     withStyle(SpanStyle(color = primaryColor, fontWeight = FontWeight.SemiBold)) {
+=======
+                    checkedColor = KinetixIndigo,
+                    uncheckedColor = KinetixOutline,
+                    checkmarkColor = KinetixWhite,
+                ),
+            )
+            Text(
+                text = buildAnnotatedString {
+                    append("I agree to the ")
+                    withStyle(SpanStyle(color = KinetixIndigo, fontWeight = FontWeight.SemiBold)) {
+                        append("Terms of Service")
+                    }
+                    append(" and ")
+                    withStyle(SpanStyle(color = KinetixIndigo, fontWeight = FontWeight.SemiBold)) {
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                         append("Privacy Policy.")
                     }
                 },
                 style = MaterialTheme.typography.bodyMedium,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurface,
+=======
+                color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             )
         }
 
@@ -234,7 +273,11 @@ private fun RegisterContent(
             Text(
                 text = state.errorMessage,
                 style = MaterialTheme.typography.labelMedium,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.error,
+=======
+                color = KinetixError,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 4.dp),
@@ -259,12 +302,20 @@ private fun RegisterContent(
             Text(
                 text = "Already have an account? ",
                 style = MaterialTheme.typography.bodyMedium,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurface,
+=======
+                color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             )
             Text(
                 text = "Login",
                 style = MaterialTheme.typography.bodyMedium,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.primary,
+=======
+                color = KinetixIndigo,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.clickable(onClick = onLoginClick),
             )
@@ -279,7 +330,11 @@ private fun PasswordEye(visible: Boolean, onToggle: () -> Unit) {
     Icon(
         imageVector = if (visible) RegisterIcons.EyeOpen else RegisterIcons.EyeClosed,
         contentDescription = if (visible) "Hide password" else "Show password",
+<<<<<<< HEAD
         tint = MaterialTheme.colorScheme.onSurfaceVariant,
+=======
+        tint = KinetixMuted,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         modifier = Modifier
             .size(22.dp)
             .clickable(onClick = onToggle),
@@ -291,7 +346,11 @@ private fun FieldLabel(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelLarge,
+<<<<<<< HEAD
         color = MaterialTheme.colorScheme.onSurface,
+=======
+        color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         fontWeight = FontWeight.Bold,
         modifier = Modifier
             .fillMaxWidth()
@@ -319,14 +378,22 @@ private fun RegisterTextField(
             Text(
                 text = placeholder,
                 style = MaterialTheme.typography.bodyMedium,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+=======
+                color = KinetixMuted,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             )
         },
         leadingIcon = {
             Icon(
                 imageVector = leadingIcon,
                 contentDescription = null,
+<<<<<<< HEAD
                 tint = MaterialTheme.colorScheme.onSurface,
+=======
+                tint = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier.size(22.dp),
             )
         },
@@ -337,6 +404,7 @@ private fun RegisterTextField(
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         visualTransformation = visualTransformation,
         colors = OutlinedTextFieldDefaults.colors(
+<<<<<<< HEAD
             focusedContainerColor = MaterialTheme.colorScheme.surface,
             unfocusedContainerColor = MaterialTheme.colorScheme.surface,
             errorContainerColor = MaterialTheme.colorScheme.surface,
@@ -344,6 +412,15 @@ private fun RegisterTextField(
             unfocusedBorderColor = MaterialTheme.colorScheme.outline,
             errorBorderColor = MaterialTheme.colorScheme.error,
             cursorColor = MaterialTheme.colorScheme.primary,
+=======
+            focusedContainerColor = KinetixWhite,
+            unfocusedContainerColor = KinetixWhite,
+            errorContainerColor = KinetixWhite,
+            focusedBorderColor = KinetixIndigo,
+            unfocusedBorderColor = KinetixOutline,
+            errorBorderColor = KinetixError,
+            cursorColor = KinetixIndigo,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         ),
     )
 }

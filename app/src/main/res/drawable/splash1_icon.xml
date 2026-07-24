@@ -3,6 +3,15 @@
     android:height="2000dp"
     android:viewportWidth="1500"
     android:viewportHeight="1500">
+<<<<<<< HEAD
+=======
+  <path
+      android:pathData="M-150,-150h1800v1800h-1800z"
+      android:fillColor="#ffffff"/>
+  <path
+      android:pathData="M-150,-150h1800v1800h-1800z"
+      android:fillColor="#ffffff"/>
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
   <group>
     <clip-path
         android:pathData="M980,178L1222.7,178L1222.7,929L980,929ZM980,178"/>

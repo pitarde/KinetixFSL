@@ -34,8 +34,13 @@ fun KinetixPrimaryButton(
             .height(56.dp),
         shape = RoundedCornerShape(28.dp),
         colors = ButtonDefaults.buttonColors(
+<<<<<<< HEAD
             containerColor = MaterialTheme.colorScheme.primary,
             contentColor = MaterialTheme.colorScheme.onPrimary,
+=======
+            containerColor = KinetixIndigo,
+            contentColor = KinetixWhite,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         ),
     ) {
         Text(

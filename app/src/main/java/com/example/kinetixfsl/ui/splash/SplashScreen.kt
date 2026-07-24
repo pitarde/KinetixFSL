@@ -16,9 +16,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+<<<<<<< HEAD
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
+=======
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -52,7 +58,11 @@ fun SplashScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
+<<<<<<< HEAD
             .background(MaterialTheme.colorScheme.background),
+=======
+            .background(Color.White),
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         contentAlignment = Alignment.Center,
     ) {
         Column(

@@ -36,6 +36,14 @@ import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.tabs.CommunityProfilePlaceholder
 import com.example.kinetixfsl.community.tabs.NotificationsPlaceholder
 import com.example.kinetixfsl.ui.home.KinetixDrawerContent
+<<<<<<< HEAD
+=======
+import com.example.kinetixfsl.ui.theme.KinetixIndigo
+import com.example.kinetixfsl.ui.theme.KinetixInk
+import com.example.kinetixfsl.ui.theme.KinetixMuted
+import com.example.kinetixfsl.ui.theme.KinetixOutline
+import com.example.kinetixfsl.ui.theme.KinetixWhite
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 import kotlinx.coroutines.launch
 
 /**
@@ -59,7 +67,11 @@ fun CommunityScreen(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
+<<<<<<< HEAD
             ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surface) {
+=======
+            ModalDrawerSheet(drawerContainerColor = KinetixWhite) {
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 KinetixDrawerContent(
                     onDashboardClick = {
                         scope.launch { drawerState.close() }
@@ -117,7 +129,11 @@ private fun CommunityScaffold(
     Column(
         modifier = modifier
             .fillMaxSize()
+<<<<<<< HEAD
             .background(MaterialTheme.colorScheme.background)
+=======
+            .background(KinetixWhite)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             .statusBarsPadding(),
     ) {
         CommunityTopBar(tab = selectedTab, onMenuClick = onMenuClick)
@@ -159,7 +175,11 @@ private fun CommunityTopBar(
             Icon(
                 imageVector = CommunityIcons.Menu,
                 contentDescription = "Open menu",
+<<<<<<< HEAD
                 tint = MaterialTheme.colorScheme.onSurface,
+=======
+                tint = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .size(32.dp)
@@ -169,7 +189,11 @@ private fun CommunityTopBar(
             Text(
                 text = tab.label,
                 style = MaterialTheme.typography.titleLarge,
+<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurface,
+=======
+                color = KinetixInk,
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.Center),
             )
@@ -185,9 +209,15 @@ private fun CommunityBottomNav(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+<<<<<<< HEAD
             .background(MaterialTheme.colorScheme.surface),
     ) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+=======
+            .background(KinetixWhite),
+    ) {
+        HorizontalDivider(color = KinetixOutline)
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -215,7 +245,11 @@ private fun NavItem(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+<<<<<<< HEAD
     val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+=======
+    val tint = if (selected) KinetixIndigo else KinetixMuted
+>>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
     Column(
         modifier = Modifier
             .clickable(onClick = onClick)
