@@ -1,5 +1,6 @@
 package com.example.kinetixfsl.community
 
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -46,8 +49,12 @@ fun CommunityScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableStateOf(CommunityTab.HOME) }
-    // When non-null, the CommentScreen overlays the feed for this post.
     var commentPost: Post? by remember { mutableStateOf(null) }
+    // Shared list state so the bottom nav can scroll it to top.
+    val feedListState = rememberLazyListState()
+
+    // The ViewModel — kept here so the bottom nav can call refresh().
+    val feedViewModel = remember { CommunityFeedViewModel() }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -55,13 +62,14 @@ fun CommunityScreen(
             ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surface) {
                 KinetixDrawerContent(
                     onDashboardClick = {
-                        scope.launch { drawerState.close() }
-                        onNavigateToDashboard()
+                        scope.launch {
+                            drawerState.close()
+                            onNavigateToDashboard()
+                        }
                     },
                     onGestureToTextClick = { scope.launch { drawerState.close() } },
                     onTextToGestureClick = { scope.launch { drawerState.close() } },
                     onCommunityClick = {
-                        // Already here — just close the drawer and reset to feed.
                         selectedTab = CommunityTab.HOME
                         scope.launch { drawerState.close() }
                     },
@@ -72,17 +80,23 @@ fun CommunityScreen(
             }
         },
     ) {
-        // Main content area — scaffold + comment overlay stacked.
         Box(modifier = modifier.fillMaxSize()) {
             CommunityScaffold(
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it },
                 onMenuClick = { scope.launch { drawerState.open() } },
-                onSelectCommunity = { /* TODO: navigate to Post-to screen */ },
+                onSelectCommunity = { /* TODO */ },
                 onCommentClick = { post -> commentPost = post },
+                feedListState = feedListState,
+                feedViewModel = feedViewModel,
+                onScrollToTopAndRefresh = {
+                    scope.launch {
+                        feedListState.animateScrollToItem(0)
+                        feedViewModel.refresh()
+                    }
+                },
             )
 
-            // Comment overlay — draws on top of everything when a post is selected.
             val activeCommentPost = commentPost
             if (activeCommentPost != null) {
                 val commentVm = remember(activeCommentPost.id) {
@@ -105,6 +119,9 @@ private fun CommunityScaffold(
     onMenuClick: () -> Unit,
     onSelectCommunity: () -> Unit,
     onCommentClick: (Post) -> Unit,
+    feedListState: LazyListState,
+    feedViewModel: CommunityFeedViewModel,
+    onScrollToTopAndRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -118,6 +135,8 @@ private fun CommunityScaffold(
         Box(modifier = Modifier.weight(1f)) {
             when (selectedTab) {
                 CommunityTab.HOME -> CommunityFeedContent(
+                    viewModel = feedViewModel,
+                    listState = feedListState,
                     onCommentClick = onCommentClick,
                 )
                 CommunityTab.PROFILE -> CommunityProfilePlaceholder()
@@ -129,14 +148,19 @@ private fun CommunityScaffold(
             }
         }
 
-        CommunityBottomNav(selectedTab = selectedTab, onTabSelected = onTabSelected)
+        CommunityBottomNav(
+            selectedTab = selectedTab,
+            onTabSelected = { tab ->
+                if (tab == CommunityTab.HOME && selectedTab == CommunityTab.HOME) {
+                    onScrollToTopAndRefresh()
+                } else {
+                    onTabSelected(tab)
+                }
+            },
+        )
     }
 }
 
-/**
- * The top bar. Only the feed (Home) tab shows the hamburger — the other tabs
- * show a centred title so the user always knows where they are.
- */
 @Composable
 private fun CommunityTopBar(
     tab: CommunityTab,
@@ -169,7 +193,6 @@ private fun CommunityTopBar(
         }
     }
 }
-
 @Composable
 private fun CommunityBottomNav(
     selectedTab: CommunityTab,
@@ -200,6 +223,7 @@ private fun CommunityBottomNav(
         }
     }
 }
+
 
 @Composable
 private fun NavItem(

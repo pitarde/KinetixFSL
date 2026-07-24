@@ -1,5 +1,5 @@
 package com.example.kinetixfsl.community
-
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -66,6 +66,7 @@ import com.example.kinetixfsl.ui.theme.KinetixMint
 fun CommunityFeedContent(
     modifier: Modifier = Modifier,
     viewModel: CommunityFeedViewModel = viewModel(),
+    listState: LazyListState = rememberLazyListState(),
     onCommentClick: (Post) -> Unit = {},
     onPostClick: (Post) -> Unit = {},
 ) {
@@ -75,7 +76,6 @@ fun CommunityFeedContent(
     val context = LocalContext.current
 
     val pullState = rememberPullToRefreshState()
-    val listState = rememberLazyListState()
 
     // Track which items are visible for video autoplay.
     val visibleItemKeys by remember {

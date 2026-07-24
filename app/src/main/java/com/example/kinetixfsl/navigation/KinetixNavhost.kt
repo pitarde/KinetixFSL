@@ -224,14 +224,13 @@ fun KinetixNavHost(
         }
 
         // ---- Community: slide in from right ----
+        // ---- Community: quick fade (drawer provides the visual motion) ----
         composable(
             route = Route.COMMUNITY,
-            enterTransition = {
-                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
-            },
-            popExitTransition = {
-                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
-            },
+            enterTransition = { fadeIn(tween(200)) },
+            exitTransition = { fadeOut(tween(200)) },
+            popEnterTransition = { fadeIn(tween(200)) },
+            popExitTransition = { fadeOut(tween(200)) },
         ) {
             CommunityScreen(
                 onNavigateToDashboard = {

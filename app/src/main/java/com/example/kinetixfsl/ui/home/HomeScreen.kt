@@ -41,18 +41,6 @@ import com.example.kinetixfsl.ui.home.tabs.ProfileTabPlaceholder
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import kotlinx.coroutines.launch
 
-/**
- * The Home shell. Wraps everything the user sees after login: side drawer,
- * top bar with hamburger, the current tab's content, and the bottom nav bar.
- *
- * The drawer only opens from the Home tab (it's the only tab with the hamburger).
- * Other tabs get a simple centered title bar instead. This matches how most apps
- * feel: the drawer belongs to Home, not to Camera / Game / etc.
- *
- * Every color reference below comes from MaterialTheme.colorScheme rather than a
- * fixed brand constant, so the whole screen (including the drawer and bottom nav)
- * follows the system's dark/light setting automatically.
- */
 @Composable
 fun HomeScreen(
     onSignOut: () -> Unit,
@@ -83,8 +71,10 @@ fun HomeScreen(
                         scope.launch { drawerState.close() }
                     },
                     onCommunityClick = {
-                        scope.launch { drawerState.close() }
-                        onNavigateToCommunity()
+                        scope.launch {
+                            drawerState.close()
+                            onNavigateToCommunity()
+                        }
                     },
                     onStartCommunityClick = { /* TODO(community-create) */
                         scope.launch { drawerState.close() }
