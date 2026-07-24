@@ -1,15 +1,14 @@
 package com.example.kinetixfsl.community
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import com.example.kinetixfsl.community.upload.CloudinaryUploader
+import com.example.kinetixfsl.community.upload.PostUploadService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 
 data class CreatePostUiState(
     val title: String = "",
@@ -20,9 +19,8 @@ data class CreatePostUiState(
     val mediaUri: Uri? = null,
     /** "image" or "video" — set when the user picks a file. */
     val mediaType: String? = null,
-    val isUploading: Boolean = false,
     val errorMessage: String? = null,
-    /** True once the post has been written to Firestore — caller navigates away. */
+    /** True once the post has been handed off to the upload service. */
     val isPostCreated: Boolean = false,
 )
 
@@ -65,9 +63,9 @@ class CreatePostViewModel(
     }
 
     /**
-     * Submits the post: validates → uploads media to Cloudinary (if any) →
-     * writes the Firestore document. The feed updates automatically because
-     * it uses a snapshot listener.
+     * Hands the post off to [PostUploadService] which runs in the background.
+     * The screen closes instantly and the user sees a notification in the
+     * status bar with the upload progress.
      */
     fun submitPost(context: Context) {
         val state = _uiState.value
@@ -77,60 +75,37 @@ class CreatePostViewModel(
             return
         }
 
-        _uiState.update { it.copy(isUploading = true, errorMessage = null) }
-
-        viewModelScope.launch {
-            // Step 1: upload media to Cloudinary if the user attached something.
-            var imageUrl: String? = null
-            var videoUrl: String? = null
-
-            if (state.mediaUri != null && state.mediaType != null) {
-                when (
-                    val uploadResult = CloudinaryUploader.upload(
-                        context = context,
-                        uri = state.mediaUri,
-                        resourceType = state.mediaType,
-                    )
-                ) {
-                    is CloudinaryUploader.UploadResult.Success -> {
-                        if (state.mediaType == "image") {
-                            imageUrl = uploadResult.secureUrl
-                        } else {
-                            videoUrl = uploadResult.secureUrl
-                        }
-                    }
-                    is CloudinaryUploader.UploadResult.Error -> {
-                        _uiState.update {
-                            it.copy(isUploading = false, errorMessage = uploadResult.message)
-                        }
-                        return@launch
-                    }
-                }
+        // Take a persistent read permission on the media URI so the
+        // background service can still read it after the activity closes.
+        if (state.mediaUri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    state.mediaUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            } catch (_: SecurityException) {
+                // Not all URIs support persistable permission — that's OK,
+                // the service will still try to read it normally.
             }
-
-            // Step 2: write the post to Firestore.
-            val result = repository.createPost(
-                title = state.title,
-                body = state.body,
-                linkUrl = state.linkUrl.takeIf { it.isNotBlank() },
-                imageUrl = imageUrl,
-                videoUrl = videoUrl,
-            )
-
-            result.fold(
-                onSuccess = {
-                    _uiState.update { it.copy(isUploading = false, isPostCreated = true) }
-                },
-                onFailure = { error ->
-                    _uiState.update {
-                        it.copy(
-                            isUploading = false,
-                            errorMessage = error.localizedMessage ?: "Couldn't create post.",
-                        )
-                    }
-                },
-            )
         }
+
+        // Pack everything into an Intent and start the foreground service.
+        val intent = Intent(context, PostUploadService::class.java).apply {
+            putExtra(PostUploadService.EXTRA_TITLE, state.title)
+            putExtra(PostUploadService.EXTRA_BODY, state.body)
+            putExtra(PostUploadService.EXTRA_LINK_URL,
+                state.linkUrl.takeIf { it.isNotBlank() })
+            if (state.mediaUri != null) {
+                putExtra(PostUploadService.EXTRA_MEDIA_URI, state.mediaUri.toString())
+                putExtra(PostUploadService.EXTRA_MEDIA_TYPE, state.mediaType)
+                // Grant the service read access to the content URI.
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+        context.startForegroundService(intent)
+
+        // Signal the screen to close immediately — upload continues in background.
+        _uiState.update { it.copy(isPostCreated = true) }
     }
 
     fun onPostCreatedHandled() {

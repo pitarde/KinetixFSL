@@ -1,5 +1,10 @@
 package com.example.kinetixfsl.community
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
+
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -24,7 +29,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -44,13 +48,14 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import com.example.kinetixfsl.ui.theme.KinetixInk
 import com.example.kinetixfsl.ui.theme.KinetixWhite
+
+
 
 /**
  * The create-post screen. Matches the design: X (close), Select Community pill,
@@ -69,6 +74,16 @@ fun CreatePostScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    // Request notification permission on Android 13+ so the upload
+    // progress notification actually appears in the status bar.
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { _ ->
+        // Whether granted or denied, proceed with the post.
+        // If denied, the upload still works — they just won't see the notification.
+        viewModel.submitPost(context)
+    }
 
     if (state.isPostCreated) {
         onClose()
@@ -93,6 +108,7 @@ fun CreatePostScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
+        // ---- Top bar: X + Select Community + Post ----
         // ---- Top bar: X + Select Community + Post ----
         Row(
             modifier = Modifier
@@ -130,32 +146,34 @@ fun CreatePostScreen(
 
             Spacer(Modifier.weight(1f))
 
-            // Post button — disabled while uploading or title is empty.
-            val canPost = state.title.isNotBlank() && !state.isUploading
+            // Post button
+            val canPost = state.title.isNotBlank()
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
                     .background(if (canPost) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
-                    .clickable(enabled = canPost) { viewModel.submitPost(context) }
+                    .clickable(enabled = canPost) {
+                        // On Android 13+, check notification permission before posting.
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.POST_NOTIFICATIONS
+                            ) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            viewModel.submitPost(context)
+                        }
+                    }
                     .padding(horizontal = 20.dp, vertical = 8.dp),
             ) {
-                if (state.isUploading) {
-                    CircularProgressIndicator(
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(18.dp),
-                    )
-                } else {
-                    Text(
-                        text = "Post",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
+                Text(
+                    text = "Post",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.Bold,
+                )
             }
         }
-
         // ---- Error ----
         if (state.errorMessage != null) {
             Text(
