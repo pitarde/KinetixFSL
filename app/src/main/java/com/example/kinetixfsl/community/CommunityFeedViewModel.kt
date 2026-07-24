@@ -5,6 +5,8 @@ import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.kinetixfsl.community.model.Post
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,39 +28,103 @@ class CommunityFeedViewModel(
     private val _feedState = MutableStateFlow<FeedState>(FeedState.Loading)
     val feedState: StateFlow<FeedState> = _feedState.asStateFlow()
 
-    /**
-     * Tracks the current user's vote on each post they've interacted with.
-     * Key = postId, value = "up", "down", or absent if no vote.
-     */
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
     private val _userVotes = MutableStateFlow<Map<String, String>>(emptyMap())
     val userVotes: StateFlow<Map<String, String>> = _userVotes.asStateFlow()
+
+    private var feedJob: Job? = null
+
+    /**
+     * The locked-in display order. Post IDs in the order they should appear.
+     * Only gets regenerated on first load or explicit refresh — vote/share
+     * updates from Firestore reuse this same order so the feed stays still.
+     */
+    private var displayOrder: List<String> = emptyList()
+
+    /**
+     * When true, the next snapshot will shuffle the posts into a new random order
+     * and lock it in. When false, incoming posts are re-sorted to match the
+     * existing [displayOrder], so count updates don't cause the feed to jump.
+     */
+    private var shouldReshuffle = true
 
     init {
         observeFeed()
     }
 
     private fun observeFeed() {
-        repository.feedPosts()
-            .onEach { posts ->
-                _feedState.value = FeedState.Success(posts)
-                // Prefetch the user's votes for visible posts.
-                posts.forEach { post ->
-                    if (post.id !in _userVotes.value) {
-                        viewModelScope.launch {
-                            val dir = repository.getUserVote(post.id)
-                            if (dir != null) {
-                                _userVotes.value = _userVotes.value + (post.id to dir)
-                            }
-                        }
-                    }
-                }
-            }
+        feedJob?.cancel()
+        feedJob = repository.feedPosts()
+            .onEach { posts -> applyPosts(posts) }
             .catch { t ->
                 _feedState.value = FeedState.Error(
                     t.localizedMessage ?: "Couldn't load posts.",
                 )
             }
             .launchIn(viewModelScope)
+    }
+
+    /**
+     * Decides whether to shuffle or preserve order, then emits the result.
+     *
+     * - First load / after refresh: shuffle and lock the new order.
+     * - Vote/share/comment count update (same set of post IDs): keep the
+     *   existing order, just swap in the updated Post objects so counts render.
+     * - A post was added or deleted (ID set changed): re-shuffle to absorb it.
+     */
+    private fun applyPosts(incoming: List<Post>) {
+        val incomingIds = incoming.map { it.id }.toSet()
+        val currentIds = displayOrder.toSet()
+        val idsChanged = incomingIds != currentIds
+
+        if (shouldReshuffle || idsChanged) {
+            // Fresh shuffle.
+            val shuffled = incoming.shuffled()
+            displayOrder = shuffled.map { it.id }
+            shouldReshuffle = false
+            _feedState.value = FeedState.Success(shuffled)
+        } else {
+            // Same posts, just updated data (counts changed). Preserve order.
+            val postById = incoming.associateBy { it.id }
+            val ordered = displayOrder.mapNotNull { id -> postById[id] }
+            _feedState.value = FeedState.Success(ordered)
+        }
+
+        prefetchVotes(incoming)
+    }
+
+    private fun prefetchVotes(posts: List<Post>) {
+        posts.forEach { post ->
+            if (post.id !in _userVotes.value) {
+                viewModelScope.launch {
+                    val dir = repository.getUserVote(post.id)
+                    if (dir != null) {
+                        _userVotes.value = _userVotes.value + (post.id to dir)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Pull-to-refresh. Flags a reshuffle, clears vote cache, restarts the
+     * Firestore listener. The next snapshot will generate a new random order.
+     */
+    fun refresh() {
+        viewModelScope.launch {
+            _isRefreshing.value = true
+
+            feedJob?.cancel()
+            feedJob = null
+            shouldReshuffle = true
+
+            observeFeed()
+
+            delay(1200)
+            _isRefreshing.value = false
+        }
     }
 
     fun vote(postId: String, direction: String) {
@@ -69,13 +135,11 @@ class CommunityFeedViewModel(
             } else {
                 _userVotes.value - postId
             }
+            // The Firestore snapshot listener will fire with updated counts.
+            // applyPosts() will see the same IDs and preserve the current order.
         }
     }
 
-    /**
-     * Fires an Android share Intent with the post title and a simple text link,
-     * then increments the share count in Firestore.
-     */
     fun share(context: Context, post: Post) {
         val text = "${post.title}\n\nShared from KinetixFSL"
         val intent = Intent(Intent.ACTION_SEND).apply {
@@ -86,6 +150,7 @@ class CommunityFeedViewModel(
 
         viewModelScope.launch {
             repository.incrementShareCount(post.id)
+            // Same as vote — snapshot fires, counts update, order stays.
         }
     }
 }

@@ -15,9 +15,9 @@ import kotlinx.coroutines.tasks.await
 /**
  * The single point of contact with Firestore for community data.
  *
- * Voting uses a per-user document at `posts/{postId}/votes/{userId}` that stores
- * the direction ("up" or "down"). A Firestore transaction atomically updates both
- * the vote document and the post's counts + score, so the numbers never drift.
+ * The home feed fetches posts ordered by createdAt (to get recent ones), then
+ * the ViewModel shuffles them so every user and community gets equal visibility.
+ * Score-based sorting will be implemented inside individual communities later.
  */
 class CommunityRepository(
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
@@ -27,10 +27,13 @@ class CommunityRepository(
     // Feed
     // -------------------------------------------------------------------------
 
-    /** Ordered by score (highest first), then newest as tiebreaker. */
+    /**
+     * Fetches recent posts ordered by creation time (newest first).
+     * The ViewModel is responsible for shuffling these into a random display order.
+     * Single-field ordering — no composite Firestore index needed.
+     */
     fun feedPosts(limit: Long = FEED_PAGE_SIZE): Flow<List<Post>> = callbackFlow {
         val registration = firestore.collection(POSTS)
-            .orderBy(FIELD_SCORE, Query.Direction.DESCENDING)
             .orderBy(FIELD_CREATED_AT, Query.Direction.DESCENDING)
             .limit(limit)
             .addSnapshotListener { snapshot, error ->
@@ -86,10 +89,6 @@ class CommunityRepository(
     // Voting
     // -------------------------------------------------------------------------
 
-    /**
-     * Returns the current user's vote direction on [postId], or null if they
-     * haven't voted. Used to colour the arrows on mount.
-     */
     suspend fun getUserVote(postId: String): String? {
         val uid = auth.currentUser?.uid ?: return null
         return try {
@@ -99,14 +98,6 @@ class CommunityRepository(
         } catch (_: Exception) { null }
     }
 
-    /**
-     * Casts or toggles a vote. Handles three cases atomically:
-     * 1. No existing vote → create one, increment the matching count + score.
-     * 2. Same direction again → remove the vote (undo), decrement count + score.
-     * 3. Opposite direction → flip: decrement old, increment new, adjust score by 2.
-     *
-     * Returns the new direction ("up", "down", or null if removed).
-     */
     suspend fun vote(postId: String, direction: String): String? {
         val uid = auth.currentUser?.uid ?: return null
         val postRef = firestore.collection(POSTS).document(postId)
@@ -118,7 +109,6 @@ class CommunityRepository(
                 val existing = voteDoc.getString("direction")
 
                 when {
-                    // Case 2: undo
                     existing == direction -> {
                         tx.delete(voteRef)
                         val countField = if (direction == "up") "upvoteCount" else "downvoteCount"
@@ -127,7 +117,6 @@ class CommunityRepository(
                         tx.update(postRef, FIELD_SCORE, FieldValue.increment(scoreDelta))
                         null
                     }
-                    // Case 3: flip
                     existing != null -> {
                         tx.set(voteRef, hashMapOf("direction" to direction))
                         val incField = if (direction == "up") "upvoteCount" else "downvoteCount"
@@ -138,7 +127,6 @@ class CommunityRepository(
                         tx.update(postRef, FIELD_SCORE, FieldValue.increment(scoreDelta))
                         direction
                     }
-                    // Case 1: new vote
                     else -> {
                         tx.set(voteRef, hashMapOf("direction" to direction))
                         val countField = if (direction == "up") "upvoteCount" else "downvoteCount"
@@ -156,7 +144,6 @@ class CommunityRepository(
     // Comments
     // -------------------------------------------------------------------------
 
-    /** Live stream of comments on a post, newest first. */
     fun commentsForPost(postId: String): Flow<List<Comment>> = callbackFlow {
         val reg = firestore.collection(POSTS).document(postId)
             .collection(COMMENTS)
@@ -172,7 +159,6 @@ class CommunityRepository(
         awaitClose { reg.remove() }
     }
 
-    /** Adds a comment and atomically increments the post's commentCount. */
     suspend fun addComment(postId: String, body: String): Result<Unit> {
         val user = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
         val data = hashMapOf(
@@ -198,7 +184,6 @@ class CommunityRepository(
     // Share
     // -------------------------------------------------------------------------
 
-    /** Increments shareCount. The actual Android share Intent is UI-side. */
     suspend fun incrementShareCount(postId: String) {
         try {
             firestore.collection(POSTS).document(postId)

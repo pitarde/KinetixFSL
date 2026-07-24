@@ -1,5 +1,9 @@
 package com.example.kinetixfsl.navigation
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.navigation.NavHostController
@@ -21,6 +25,10 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.FastOutSlowInEasing
+
 /** Every destination in the app. Add to this as we build each screen. */
 object Route {
     const val SPLASH = "splash"
@@ -29,7 +37,6 @@ object Route {
     const val REGISTER = "register"
     const val FORGOT_PASSWORD = "forgot_password"
 
-    // Check-email carries the address it was sent to as a URL-encoded path arg.
     private const val CHECK_EMAIL_BASE = "check_email"
     const val CHECK_EMAIL_ARG = "email"
     const val CHECK_EMAIL_PATTERN = "$CHECK_EMAIL_BASE/{$CHECK_EMAIL_ARG}"
@@ -39,6 +46,9 @@ object Route {
     const val HOME = "home"
     const val COMMUNITY = "community"
 }
+
+/** Animation duration in ms — kept consistent across all auth transitions. */
+private const val ANIM_DURATION = 450
 
 @Composable
 fun KinetixNavHost(
@@ -50,6 +60,7 @@ fun KinetixNavHost(
         navController = navController,
         startDestination = Route.SPLASH,
     ) {
+        // ---- Splash: no animation (it fades on its own) ----
         composable(Route.SPLASH) {
             SplashScreen(
                 onFinished = {
@@ -65,7 +76,12 @@ fun KinetixNavHost(
             )
         }
 
-        composable(Route.ONBOARDING) {
+        // ---- Onboarding: fade in/out ----
+        composable(
+            route = Route.ONBOARDING,
+            enterTransition = { fadeIn(tween(ANIM_DURATION)) },
+            exitTransition = { fadeOut(tween(ANIM_DURATION)) },
+        ) {
             OnboardingScreen(
                 onFinished = {
                     navController.navigate(Route.LOGIN) {
@@ -75,7 +91,22 @@ fun KinetixNavHost(
             )
         }
 
-        composable(Route.LOGIN) {
+        // ---- Login: slides in from left, slides out to left ----
+        composable(
+            route = Route.LOGIN,
+            enterTransition = {
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+            exitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
+            },
+            popEnterTransition = {
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+            popExitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+        ) {
             LoginScreen(
                 onLoginSuccess = {
                     navController.navigate(Route.HOME) {
@@ -91,7 +122,20 @@ fun KinetixNavHost(
             )
         }
 
-        composable(Route.REGISTER) {
+        // ---- Register: slides in from right (going forward from Login) ----
+        composable(
+            route = Route.REGISTER,
+            enterTransition = {
+                slideInHorizontally(tween(ANIM_DURATION, easing = FastOutSlowInEasing)) { it }            },
+            exitTransition = {
+                slideOutHorizontally(tween(ANIM_DURATION, easing = FastOutSlowInEasing)) { -it }            },
+            popEnterTransition = {
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+            popExitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+        ) {
             RegisterScreen(
                 onRegisterSuccess = {
                     navController.navigate(Route.HOME) {
@@ -104,7 +148,22 @@ fun KinetixNavHost(
             )
         }
 
-        composable(Route.FORGOT_PASSWORD) {
+        // ---- Forgot Password: slides in from right ----
+        composable(
+            route = Route.FORGOT_PASSWORD,
+            enterTransition = {
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
+            },
+            exitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
+            },
+            popEnterTransition = {
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+            popExitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+        ) {
             ForgotPasswordScreen(
                 onLinkSent = { email ->
                     navController.navigate(Route.checkEmail(email)) {
@@ -117,9 +176,19 @@ fun KinetixNavHost(
             )
         }
 
+        // ---- Check Email: slides in from right ----
         composable(
             route = Route.CHECK_EMAIL_PATTERN,
             arguments = listOf(navArgument(Route.CHECK_EMAIL_ARG) { type = NavType.StringType }),
+            enterTransition = {
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
+            },
+            exitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+            popExitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
         ) { backStackEntry ->
             val encoded = backStackEntry.arguments?.getString(Route.CHECK_EMAIL_ARG).orEmpty()
             val email = URLDecoder.decode(encoded, StandardCharsets.UTF_8.name())
@@ -134,7 +203,13 @@ fun KinetixNavHost(
             )
         }
 
-        composable(Route.HOME) {
+        // ---- Home: fade in (coming from login success) ----
+        composable(
+            route = Route.HOME,
+            enterTransition = { fadeIn(tween(ANIM_DURATION)) },
+            exitTransition = { fadeOut(tween(ANIM_DURATION)) },
+            popEnterTransition = { fadeIn(tween(ANIM_DURATION)) },
+        ) {
             HomeScreen(
                 onSignOut = {
                     authRepository.signOut()
@@ -143,17 +218,23 @@ fun KinetixNavHost(
                     }
                 },
                 onNavigateToCommunity = {
-                    // Home -> Community. No popUpTo -- back returns to Home.
                     navController.navigate(Route.COMMUNITY)
                 },
             )
         }
 
-        composable(Route.COMMUNITY) {
+        // ---- Community: slide in from right ----
+        composable(
+            route = Route.COMMUNITY,
+            enterTransition = {
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
+            },
+            popExitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+        ) {
             CommunityScreen(
                 onNavigateToDashboard = {
-                    // Drawer "Dashboard" from Community: go home. If Home is still
-                    // on the stack we just pop back; if not, we navigate fresh.
                     val popped = navController.popBackStack(Route.HOME, inclusive = false)
                     if (!popped) {
                         navController.navigate(Route.HOME) {

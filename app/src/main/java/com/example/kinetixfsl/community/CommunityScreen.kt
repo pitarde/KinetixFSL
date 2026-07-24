@@ -38,13 +38,6 @@ import com.example.kinetixfsl.community.tabs.NotificationsPlaceholder
 import com.example.kinetixfsl.ui.home.KinetixDrawerContent
 import kotlinx.coroutines.launch
 
-/**
- * The Community shell. Reuses the app-wide side drawer from Home, but with its
- * own tab state and its own bottom nav (Home = feed, Profile, Create, Notifications).
- *
- * Nav callbacks come from KinetixNavHost so the drawer's "Dashboard" link can
- * pop back to Home. All other drawer items still TODO for now.
- */
 @Composable
 fun CommunityScreen(
     onNavigateToDashboard: () -> Unit,
