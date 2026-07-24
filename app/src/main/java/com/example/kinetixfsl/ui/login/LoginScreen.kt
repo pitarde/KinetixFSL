@@ -329,7 +329,7 @@ private fun KinetixTextField(
 
 /**
  * The "continue with Google" button. Now wired to Credential Manager via the
- * ViewModel; the [enabled] flag greys it out while any sign-in is in flight.
+ * ViewModel; the [enabled] flag grays it out while any sign-in is in flight.
  */
 @Composable
 private fun GoogleButton(
