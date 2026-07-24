@@ -27,14 +27,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
-<<<<<<< HEAD
-=======
-import com.example.kinetixfsl.ui.theme.KinetixGreen
-import com.example.kinetixfsl.ui.theme.KinetixGreen10
-import com.example.kinetixfsl.ui.theme.KinetixIndigo
-import com.example.kinetixfsl.ui.theme.KinetixInk
-import com.example.kinetixfsl.ui.theme.KinetixMuted
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 import com.example.kinetixfsl.ui.theme.KinetixPrimaryButton
 
 /**
@@ -68,21 +60,13 @@ fun CheckEmailScreen(
         Box(
             modifier = Modifier
                 .size(120.dp)
-<<<<<<< HEAD
                 .background(MaterialTheme.colorScheme.tertiaryContainer, CircleShape),
-=======
-                .background(KinetixGreen10, CircleShape),
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = ForgotPasswordIcons.CheckCircle,
                 contentDescription = null,
-<<<<<<< HEAD
                 tint = MaterialTheme.colorScheme.tertiary,
-=======
-                tint = KinetixGreen,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier.size(72.dp),
             )
         }
@@ -92,39 +76,24 @@ fun CheckEmailScreen(
         Text(
             text = "Check Your Email",
             style = MaterialTheme.typography.displayLarge,
-<<<<<<< HEAD
             color = MaterialTheme.colorScheme.primary,
-=======
-            color = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             textAlign = TextAlign.Center,
         )
 
         Spacer(Modifier.height(16.dp))
 
         // Body text with the address emphasised — clearer than a plain paragraph.
-<<<<<<< HEAD
         val onSurfaceColor = MaterialTheme.colorScheme.onSurface
         Text(
             text = buildAnnotatedString {
                 append("We sent a password reset link to ")
                 withStyle(SpanStyle(color = onSurfaceColor, fontWeight = FontWeight.SemiBold)) {
-=======
-        Text(
-            text = buildAnnotatedString {
-                append("We sent a password reset link to ")
-                withStyle(SpanStyle(color = KinetixInk, fontWeight = FontWeight.SemiBold)) {
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     append(email)
                 }
                 append(". Tap the link in that email to set a new password.")
             },
             style = MaterialTheme.typography.bodyLarge,
-<<<<<<< HEAD
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-            color = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 8.dp),
         )
@@ -134,11 +103,7 @@ fun CheckEmailScreen(
         Text(
             text = "Didn't get the email? Check your spam folder.",
             style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-            color = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             textAlign = TextAlign.Center,
         )
 
@@ -160,11 +125,7 @@ fun CheckEmailScreen(
             Text(
                 text = "Try a different email",
                 style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.primary,
-=======
-                color = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .clickable(onClick = onBackToLogin)

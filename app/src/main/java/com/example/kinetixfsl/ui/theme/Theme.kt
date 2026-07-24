@@ -13,7 +13,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 private val LightColors = lightColorScheme(
-<<<<<<< HEAD
     primary = KinetixIndigo,
     onPrimary = KinetixWhite,
     primaryContainer = KinetixIndigo10,
@@ -22,16 +21,6 @@ private val LightColors = lightColorScheme(
     secondary = KinetixNavy,
     onSecondary = KinetixWhite,
     secondaryContainer = KinetixNavy10,
-=======
-    primary = KinetixNavy,
-    onPrimary = KinetixWhite,
-    primaryContainer = KinetixNavy10,
-    onPrimaryContainer = KinetixInk,
-
-    secondary = KinetixIndigo,
-    onSecondary = KinetixWhite,
-    secondaryContainer = KinetixIndigo10,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
     onSecondaryContainer = KinetixInk,
 
     tertiary = KinetixGreen,
@@ -54,7 +43,6 @@ private val LightColors = lightColorScheme(
 )
 
 private val DarkColors = darkColorScheme(
-<<<<<<< HEAD
     primary = KinetixIndigoLight,
     onPrimary = KinetixWhite,
     primaryContainer = KinetixIndigo,
@@ -69,24 +57,11 @@ private val DarkColors = darkColorScheme(
     onTertiary = KinetixWhite,
     tertiaryContainer = Color(0xFF1A3A30),
     onTertiaryContainer = KinetixGreen,
-=======
-    primary = KinetixMint,
-    onPrimary = KinetixInk,
-    primaryContainer = KinetixIndigo,
-    onPrimaryContainer = KinetixWhite,
-
-    secondary = KinetixIndigo,
-    onSecondary = KinetixWhite,
-
-    tertiary = KinetixGreen,
-    onTertiary = KinetixWhite,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 
     background = KinetixDarkBackground,
     onBackground = KinetixWhite,
     surface = KinetixDarkSurface,
     onSurface = KinetixWhite,
-<<<<<<< HEAD
     surfaceVariant = KinetixDarkSurfaceVariant,
     onSurfaceVariant = KinetixDarkMuted,
     outline = KinetixDarkOutline,
@@ -96,13 +71,6 @@ private val DarkColors = darkColorScheme(
     onError = KinetixWhite,
     errorContainer = Color(0xFF3D1C19),
     onErrorContainer = Color(0xFFFFB4AB),
-=======
-    onSurfaceVariant = KinetixMint,
-    outline = KinetixMuted,
-
-    error = KinetixError,
-    onError = KinetixWhite,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 )
 
 @Composable

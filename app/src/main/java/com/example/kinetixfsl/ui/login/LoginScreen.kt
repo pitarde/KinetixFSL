@@ -43,17 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.kinetixfsl.R
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
-<<<<<<< HEAD
 import com.example.kinetixfsl.ui.theme.KinetixPrimaryButton
-=======
-import com.example.kinetixfsl.ui.theme.KinetixError
-import com.example.kinetixfsl.ui.theme.KinetixIndigo
-import com.example.kinetixfsl.ui.theme.KinetixInk
-import com.example.kinetixfsl.ui.theme.KinetixMuted
-import com.example.kinetixfsl.ui.theme.KinetixOutline
-import com.example.kinetixfsl.ui.theme.KinetixPrimaryButton
-import com.example.kinetixfsl.ui.theme.KinetixWhite
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 
 
 /**
@@ -125,22 +115,14 @@ private fun LoginContent(
         Text(
             text = "Welcome Back!",
             style = MaterialTheme.typography.displayLarge,
-<<<<<<< HEAD
             color = MaterialTheme.colorScheme.primary,
-=======
-            color = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(8.dp))
         Text(
             text = "Sign in to continue to KinetixFSL.",
             style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-            color = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             textAlign = TextAlign.Center,
         )
 
@@ -194,11 +176,7 @@ private fun LoginContent(
                     } else {
                         "Show password"
                     },
-<<<<<<< HEAD
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-                    tint = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     modifier = Modifier
                         .size(22.dp)
                         .clickable(onClick = onToggleVisibility),
@@ -212,11 +190,7 @@ private fun LoginContent(
             Text(
                 text = state.errorMessage,
                 style = MaterialTheme.typography.labelMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.error,
-=======
-                color = KinetixError,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 4.dp),
@@ -231,11 +205,7 @@ private fun LoginContent(
                 Text(
                     text = "Forgot password?",
                     style = MaterialTheme.typography.labelLarge,
-<<<<<<< HEAD
                     color = MaterialTheme.colorScheme.primary,
-=======
-                    color = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     fontWeight = FontWeight.SemiBold,
                 )
             }
@@ -254,7 +224,6 @@ private fun LoginContent(
 
         // ---- Divider ----
         Row(verticalAlignment = Alignment.CenterVertically) {
-<<<<<<< HEAD
             HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outline)
             Text(
                 text = "or continue with",
@@ -263,16 +232,6 @@ private fun LoginContent(
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
             HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outline)
-=======
-            HorizontalDivider(Modifier.weight(1f), color = KinetixOutline)
-            Text(
-                text = "or continue with",
-                style = MaterialTheme.typography.labelMedium,
-                color = KinetixMuted,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            HorizontalDivider(Modifier.weight(1f), color = KinetixOutline)
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         }
 
         Spacer(Modifier.height(24.dp))
@@ -290,20 +249,12 @@ private fun LoginContent(
             Text(
                 text = "Don't have an account? ",
                 style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurface,
-=======
-                color = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             )
             Text(
                 text = "Sign Up",
                 style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.primary,
-=======
-                color = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.clickable(onClick = onSignUpClick),
             )
@@ -318,11 +269,7 @@ private fun FieldLabel(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelLarge,
-<<<<<<< HEAD
         color = MaterialTheme.colorScheme.onSurface,
-=======
-        color = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         fontWeight = FontWeight.Bold,
         modifier = Modifier
             .fillMaxWidth()
@@ -330,11 +277,7 @@ private fun FieldLabel(text: String) {
     )
 }
 
-<<<<<<< HEAD
 /** A rounded text field with a leading icon, styled to match the design. */
-=======
-/** A rounded white text field with a leading icon, styled to match the design. */
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 @Composable
 private fun KinetixTextField(
     value: String,
@@ -355,22 +298,14 @@ private fun KinetixTextField(
             Text(
                 text = placeholder,
                 style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-                color = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             )
         },
         leadingIcon = {
             Icon(
                 imageVector = leadingIcon,
                 contentDescription = null,
-<<<<<<< HEAD
                 tint = MaterialTheme.colorScheme.onSurface,
-=======
-                tint = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier.size(22.dp),
             )
         },
@@ -381,7 +316,6 @@ private fun KinetixTextField(
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         visualTransformation = visualTransformation,
         colors = OutlinedTextFieldDefaults.colors(
-<<<<<<< HEAD
             focusedContainerColor = MaterialTheme.colorScheme.surface,
             unfocusedContainerColor = MaterialTheme.colorScheme.surface,
             errorContainerColor = MaterialTheme.colorScheme.surface,
@@ -389,15 +323,6 @@ private fun KinetixTextField(
             unfocusedBorderColor = MaterialTheme.colorScheme.outline,
             errorBorderColor = MaterialTheme.colorScheme.error,
             cursorColor = MaterialTheme.colorScheme.primary,
-=======
-            focusedContainerColor = KinetixWhite,
-            unfocusedContainerColor = KinetixWhite,
-            errorContainerColor = KinetixWhite,
-            focusedBorderColor = KinetixIndigo,
-            unfocusedBorderColor = KinetixOutline,
-            errorBorderColor = KinetixError,
-            cursorColor = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         ),
     )
 }
@@ -417,13 +342,8 @@ private fun GoogleButton(
             .fillMaxWidth()
             .height(52.dp)
             .clickable(enabled = enabled, onClick = onClick)
-<<<<<<< HEAD
             .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(26.dp))
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(26.dp)),
-=======
-            .background(KinetixWhite, RoundedCornerShape(26.dp))
-            .border(1.dp, KinetixOutline, RoundedCornerShape(26.dp)),
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -431,22 +351,14 @@ private fun GoogleButton(
             Text(
                 text = "G",
                 style = MaterialTheme.typography.titleMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.primary,
-=======
-                color = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.size(12.dp))
             Text(
                 text = "Google",
                 style = MaterialTheme.typography.titleMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurface,
-=======
-                color = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             )
         }
     }
@@ -456,6 +368,23 @@ private fun GoogleButton(
 @Composable
 private fun LoginScreenPreview() {
     KinetixFSLTheme {
+        LoginContent(
+            state = LoginUiState(email = "test@kinetixfsl.com", password = "secret"),
+            onEmailChange = {},
+            onPasswordChange = {},
+            onToggleVisibility = {},
+            onLoginClick = {},
+            onForgotPassword = {},
+            onGoogleClick = {},
+            onSignUpClick = {},
+        )
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Login - Dark")
+@Composable
+private fun LoginScreenDarkPreview() {
+    KinetixFSLTheme(darkTheme = true) {
         LoginContent(
             state = LoginUiState(email = "test@kinetixfsl.com", password = "secret"),
             onEmailChange = {},

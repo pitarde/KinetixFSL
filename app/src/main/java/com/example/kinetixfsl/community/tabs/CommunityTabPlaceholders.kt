@@ -14,11 +14,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-<<<<<<< HEAD
-=======
-import com.example.kinetixfsl.ui.theme.KinetixIndigo
-import com.example.kinetixfsl.ui.theme.KinetixMuted
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 
 /**
  * Simple labelled placeholders for the three non-feed community tabs.
@@ -51,22 +46,14 @@ private fun LabeledPlaceholder(
             Text(
                 text = title,
                 style = MaterialTheme.typography.displayLarge,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.primary,
-=======
-                color = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(8.dp))
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-                color = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 textAlign = TextAlign.Center,
             )
         }

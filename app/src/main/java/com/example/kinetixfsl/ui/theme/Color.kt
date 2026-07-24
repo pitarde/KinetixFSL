@@ -32,12 +32,8 @@ val KinetixError10 = Color(0xFFF9E6E4)
 
 // Dark scheme surfaces (derived from Ink, not guessed)
 val KinetixDarkBackground = Color(0xFF14162F)
-<<<<<<< HEAD
 val KinetixDarkSurface = Color(0xFF1E224F)
 val KinetixDarkSurfaceVariant = Color(0xFF272A54)  // cards/components sitting on dark bg
 val KinetixDarkOutline = Color(0xFF3D4070)         // borders/dividers visible on dark bg
 val KinetixDarkMuted = Color(0xFF9A9CBB)           // secondary text readable on dark bg
 val KinetixIndigoLight = Color(0xFF8B84D7)         // brighter indigo for dark-mode accent
-=======
-val KinetixDarkSurface = Color(0xFF1E224F)
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f

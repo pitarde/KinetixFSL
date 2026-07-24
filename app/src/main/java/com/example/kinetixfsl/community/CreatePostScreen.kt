@@ -48,17 +48,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-<<<<<<< HEAD
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import com.example.kinetixfsl.ui.theme.KinetixInk
-=======
-import com.example.kinetixfsl.ui.theme.KinetixError
-import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
-import com.example.kinetixfsl.ui.theme.KinetixIndigo
-import com.example.kinetixfsl.ui.theme.KinetixInk
-import com.example.kinetixfsl.ui.theme.KinetixMuted
-import com.example.kinetixfsl.ui.theme.KinetixOutline
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 import com.example.kinetixfsl.ui.theme.KinetixWhite
 
 /**
@@ -100,11 +91,7 @@ fun CreatePostScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-<<<<<<< HEAD
             .background(MaterialTheme.colorScheme.background),
-=======
-            .background(KinetixWhite),
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
     ) {
         // ---- Top bar: X + Select Community + Post ----
         Row(
@@ -117,11 +104,7 @@ fun CreatePostScreen(
             Icon(
                 imageVector = CloseIcon,
                 contentDescription = "Close",
-<<<<<<< HEAD
                 tint = MaterialTheme.colorScheme.onSurface,
-=======
-                tint = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier
                     .size(32.dp)
                     .clickable(onClick = onClose),
@@ -133,22 +116,14 @@ fun CreatePostScreen(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
-<<<<<<< HEAD
                     .background(MaterialTheme.colorScheme.primary)
-=======
-                    .background(KinetixIndigo)
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     .clickable(onClick = onSelectCommunity)
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 Text(
                     text = "Select Community",
                     style = MaterialTheme.typography.labelLarge,
-<<<<<<< HEAD
                     color = MaterialTheme.colorScheme.onPrimary,
-=======
-                    color = KinetixWhite,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     fontWeight = FontWeight.SemiBold,
                 )
             }
@@ -160,21 +135,13 @@ fun CreatePostScreen(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
-<<<<<<< HEAD
                     .background(if (canPost) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
-=======
-                    .background(if (canPost) KinetixIndigo else KinetixOutline)
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     .clickable(enabled = canPost) { viewModel.submitPost(context) }
                     .padding(horizontal = 20.dp, vertical = 8.dp),
             ) {
                 if (state.isUploading) {
                     CircularProgressIndicator(
-<<<<<<< HEAD
                         color = MaterialTheme.colorScheme.onPrimary,
-=======
-                        color = KinetixWhite,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                         strokeWidth = 2.dp,
                         modifier = Modifier.size(18.dp),
                     )
@@ -182,11 +149,7 @@ fun CreatePostScreen(
                     Text(
                         text = "Post",
                         style = MaterialTheme.typography.labelLarge,
-<<<<<<< HEAD
                         color = MaterialTheme.colorScheme.onPrimary,
-=======
-                        color = KinetixWhite,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                         fontWeight = FontWeight.Bold,
                     )
                 }
@@ -198,11 +161,7 @@ fun CreatePostScreen(
             Text(
                 text = state.errorMessage!!,
                 style = MaterialTheme.typography.labelMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.error,
-=======
-                color = KinetixError,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
             )
         }
@@ -223,11 +182,7 @@ fun CreatePostScreen(
                 placeholder = "Title",
                 textStyle = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.Bold,
-<<<<<<< HEAD
                     color = MaterialTheme.colorScheme.onSurface,
-=======
-                    color = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 ),
             )
 
@@ -238,11 +193,7 @@ fun CreatePostScreen(
                 value = state.body,
                 onValueChange = viewModel::onBodyChange,
                 placeholder = "Body text (optional)",
-<<<<<<< HEAD
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-=======
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = KinetixInk),
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             )
 
 
@@ -253,23 +204,14 @@ fun CreatePostScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-<<<<<<< HEAD
                         .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
-=======
-                        .border(1.dp, KinetixOutline, RoundedCornerShape(12.dp))
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                 ) {
                     BasicTextField(
                         value = state.linkUrl,
                         onValueChange = viewModel::onLinkUrlChange,
-<<<<<<< HEAD
                         textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.primary),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-=======
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = KinetixIndigo),
-                        cursorBrush = SolidColor(KinetixIndigo),
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         decorationBox = { inner ->
@@ -278,11 +220,7 @@ fun CreatePostScreen(
                                     Text(
                                         "Paste your link here",
                                         style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-                                        color = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                                     )
                                 }
                                 inner()
@@ -305,11 +243,7 @@ fun CreatePostScreen(
                             .fillMaxWidth()
                             .height(220.dp)
                             .clip(RoundedCornerShape(12.dp))
-<<<<<<< HEAD
                             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)),
-=======
-                            .border(1.dp, KinetixOutline, RoundedCornerShape(12.dp)),
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     )
 
                     // Small X to remove the media.
@@ -355,19 +289,11 @@ fun CreatePostScreen(
         }
 
         // ---- Bottom toolbar: link, image, video ----
-<<<<<<< HEAD
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
-=======
-        HorizontalDivider(color = KinetixOutline)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(KinetixWhite)
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.Start,
@@ -414,22 +340,14 @@ private fun PlainTextField(
         value = value,
         onValueChange = onValueChange,
         textStyle = textStyle,
-<<<<<<< HEAD
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-=======
-        cursorBrush = SolidColor(KinetixIndigo),
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         modifier = Modifier.fillMaxWidth(),
         decorationBox = { innerTextField ->
             Box {
                 if (value.isEmpty()) {
                     Text(
                         text = placeholder,
-<<<<<<< HEAD
                         style = textStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-=======
-                        style = textStyle.copy(color = KinetixMuted),
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     )
                 }
                 innerTextField()
@@ -447,11 +365,7 @@ private fun ToolbarIcon(
     Icon(
         imageVector = icon,
         contentDescription = description,
-<<<<<<< HEAD
         tint = MaterialTheme.colorScheme.onSurface,
-=======
-        tint = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         modifier = Modifier
             .size(28.dp)
             .clickable(onClick = onClick),

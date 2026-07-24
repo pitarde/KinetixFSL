@@ -32,19 +32,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-<<<<<<< HEAD
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import com.example.kinetixfsl.ui.theme.KinetixPrimaryButton
-=======
-import com.example.kinetixfsl.ui.theme.KinetixError
-import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
-import com.example.kinetixfsl.ui.theme.KinetixIndigo
-import com.example.kinetixfsl.ui.theme.KinetixInk
-import com.example.kinetixfsl.ui.theme.KinetixMuted
-import com.example.kinetixfsl.ui.theme.KinetixOutline
-import com.example.kinetixfsl.ui.theme.KinetixPrimaryButton
-import com.example.kinetixfsl.ui.theme.KinetixWhite
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 
 /**
  * Step 1 of password reset: the user types the email tied to their account and
@@ -102,11 +91,7 @@ private fun ForgotPasswordContent(
             Icon(
                 imageVector = ForgotPasswordIcons.ArrowBack,
                 contentDescription = "Back",
-<<<<<<< HEAD
                 tint = MaterialTheme.colorScheme.onSurface,
-=======
-                tint = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier.size(24.dp),
             )
         }
@@ -121,11 +106,7 @@ private fun ForgotPasswordContent(
             Text(
                 text = "Forgot Password?",
                 style = MaterialTheme.typography.displayLarge,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.primary,
-=======
-                color = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(12.dp))
@@ -133,11 +114,7 @@ private fun ForgotPasswordContent(
                 text = "Enter the email tied to your account and we'll " +
                         "send you a link to reset your password.",
                 style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-                color = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 8.dp),
             )
@@ -160,11 +137,7 @@ private fun ForgotPasswordContent(
             Text(
                 text = state.errorMessage,
                 style = MaterialTheme.typography.labelMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.error,
-=======
-                color = KinetixError,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 4.dp),
@@ -190,11 +163,7 @@ private fun ForgotPasswordContent(
             Text(
                 text = "Back to Login",
                 style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.primary,
-=======
-                color = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.clickable(onClick = onBackClick),
             )
@@ -209,11 +178,7 @@ private fun FieldLabel(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.labelLarge,
-<<<<<<< HEAD
         color = MaterialTheme.colorScheme.onSurface,
-=======
-        color = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         fontWeight = FontWeight.Bold,
         modifier = Modifier
             .fillMaxWidth()
@@ -238,22 +203,14 @@ private fun ForgotPasswordTextField(
             Text(
                 text = placeholder,
                 style = MaterialTheme.typography.bodyMedium,
-<<<<<<< HEAD
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-                color = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             )
         },
         leadingIcon = {
             Icon(
                 imageVector = leadingIcon,
                 contentDescription = null,
-<<<<<<< HEAD
                 tint = MaterialTheme.colorScheme.onSurface,
-=======
-                tint = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 modifier = Modifier.size(22.dp),
             )
         },
@@ -262,7 +219,6 @@ private fun ForgotPasswordTextField(
         shape = RoundedCornerShape(14.dp),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
         colors = OutlinedTextFieldDefaults.colors(
-<<<<<<< HEAD
             focusedContainerColor = MaterialTheme.colorScheme.surface,
             unfocusedContainerColor = MaterialTheme.colorScheme.surface,
             errorContainerColor = MaterialTheme.colorScheme.surface,
@@ -270,15 +226,6 @@ private fun ForgotPasswordTextField(
             unfocusedBorderColor = MaterialTheme.colorScheme.outline,
             errorBorderColor = MaterialTheme.colorScheme.error,
             cursorColor = MaterialTheme.colorScheme.primary,
-=======
-            focusedContainerColor = KinetixWhite,
-            unfocusedContainerColor = KinetixWhite,
-            errorContainerColor = KinetixWhite,
-            focusedBorderColor = KinetixIndigo,
-            unfocusedBorderColor = KinetixOutline,
-            errorBorderColor = KinetixError,
-            cursorColor = KinetixIndigo,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
         ),
     )
 }

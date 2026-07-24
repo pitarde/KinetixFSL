@@ -32,13 +32,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
-<<<<<<< HEAD
-=======
-import com.example.kinetixfsl.ui.theme.KinetixIndigo
-import com.example.kinetixfsl.ui.theme.KinetixInk
-import com.example.kinetixfsl.ui.theme.KinetixMuted
-import com.example.kinetixfsl.ui.theme.KinetixOutline
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
 import com.example.kinetixfsl.ui.theme.KinetixPrimaryButton
 import kotlinx.coroutines.launch
 
@@ -71,11 +64,7 @@ fun OnboardingScreen(
                     Text(
                         text = "Skip",
                         style = MaterialTheme.typography.labelLarge,
-<<<<<<< HEAD
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-                        color = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                     )
                 }
             } else {
@@ -142,11 +131,7 @@ private fun OnboardingPageContent(
         Text(
             text = page.title,
             style = MaterialTheme.typography.displayLarge,
-<<<<<<< HEAD
             color = MaterialTheme.colorScheme.onBackground,
-=======
-            color = KinetixInk,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             textAlign = TextAlign.Center,
         )
 
@@ -155,11 +140,7 @@ private fun OnboardingPageContent(
         Text(
             text = page.body,
             style = MaterialTheme.typography.bodyLarge,
-<<<<<<< HEAD
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-=======
-            color = KinetixMuted,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
@@ -184,11 +165,7 @@ private fun PagerDots(
                 label = "dotWidth",
             )
             val color by animateColorAsState(
-<<<<<<< HEAD
                 targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-=======
-                targetValue = if (selected) KinetixIndigo else KinetixOutline,
->>>>>>> 9c469b77aa869ad39b82860faa4861e04e46126f
                 label = "dotColor",
             )
             Box(
