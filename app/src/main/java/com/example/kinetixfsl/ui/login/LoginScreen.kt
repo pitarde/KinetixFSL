@@ -4,7 +4,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -45,16 +45,6 @@ import com.example.kinetixfsl.R
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import com.example.kinetixfsl.ui.theme.KinetixPrimaryButton
 
-
-/**
- * The login screen. Email/password sign-in and Google Sign-In (via Credential
- * Manager) both go through the shared [LoginViewModel]. On success,
- * [onLoginSuccess] fires.
- *
- * @param onLoginSuccess       navigate to Home
- * @param onNavigateToSignUp   navigate to the register screen
- * @param onForgotPassword     navigate to password reset (not-yet-built)
- */
 @Composable
 fun LoginScreen(
     onLoginSuccess: () -> Unit,
@@ -86,10 +76,6 @@ fun LoginScreen(
     )
 }
 
-/**
- * The stateless UI. Split from [LoginScreen] so the @Preview can render it with
- * fake state and no Firebase.
- */
 @Composable
 private fun LoginContent(
     state: LoginUiState,
@@ -107,6 +93,7 @@ private fun LoginContent(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
+            .imePadding()
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
