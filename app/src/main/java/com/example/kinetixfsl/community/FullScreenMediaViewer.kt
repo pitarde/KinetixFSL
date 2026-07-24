@@ -32,9 +32,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.example.kinetixfsl.KinetixApplication
 
 /**
  * Full-screen overlay for viewing images or videos. Draws on top of everything
@@ -95,18 +99,26 @@ private fun FullScreenImage(imageUrl: String) {
     )
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun FullScreenVideo(videoUrl: String) {
     val context = LocalContext.current
 
     val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(videoUrl))
-            repeatMode = Player.REPEAT_MODE_ONE
-            volume = 1f // sound on in full screen
-            prepare()
-            play()
-        }
+        // Use cache for full screen as well
+        val cacheDataSourceFactory = CacheDataSource.Factory()
+            .setCache(KinetixApplication.videoCache)
+            .setUpstreamDataSourceFactory(DefaultDataSource.Factory(context))
+
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(videoUrl))
+                repeatMode = Player.REPEAT_MODE_ONE
+                volume = 1f // sound on in full screen
+                prepare()
+                play()
+            }
     }
 
     DisposableEffect(Unit) {
