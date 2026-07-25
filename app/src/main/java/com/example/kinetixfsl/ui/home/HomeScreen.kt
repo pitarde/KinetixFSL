@@ -25,8 +25,8 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,9 +34,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.kinetixfsl.modules.ModulesScreen
 import com.example.kinetixfsl.ui.home.tabs.CameraTabPlaceholder
 import com.example.kinetixfsl.ui.home.tabs.GameTabPlaceholder
-import com.example.kinetixfsl.ui.home.tabs.ModulesTabPlaceholder
 import com.example.kinetixfsl.ui.home.tabs.ProfileTabPlaceholder
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import kotlinx.coroutines.launch
@@ -45,29 +45,29 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     onSignOut: () -> Unit,
     onNavigateToCommunity: () -> Unit,
+    onNavigateToSignList: (categoryId: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var selectedTab by remember { mutableStateOf(HomeTab.HOME) }
+
+    // rememberSaveable keeps the selected tab alive across navigation
+    // (navigate to SignList → press back → still on Modules tab, not Home).
+    var selectedTab by rememberSaveable { mutableStateOf(HomeTab.HOME) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            // No drawerContainerColor override — ModalDrawerSheet already defaults
-            // to MaterialTheme.colorScheme.surface, which flips with the theme.
             ModalDrawerSheet {
                 KinetixDrawerContent(
-                    // All drawer clicks close the drawer for now — real destinations
-                    // hook in later, one feature at a time.
                     onDashboardClick = {
                         selectedTab = HomeTab.HOME
                         scope.launch { drawerState.close() }
                     },
-                    onGestureToTextClick = { /* TODO(gesture-to-text) */
+                    onGestureToTextClick = {
                         scope.launch { drawerState.close() }
                     },
-                    onTextToGestureClick = { /* TODO(text-to-gesture) */
+                    onTextToGestureClick = {
                         scope.launch { drawerState.close() }
                     },
                     onCommunityClick = {
@@ -76,13 +76,13 @@ fun HomeScreen(
                             onNavigateToCommunity()
                         }
                     },
-                    onStartCommunityClick = { /* TODO(community-create) */
+                    onStartCommunityClick = {
                         scope.launch { drawerState.close() }
                     },
-                    onDiscoverCommunitiesClick = { /* TODO(community-discover) */
+                    onDiscoverCommunitiesClick = {
                         scope.launch { drawerState.close() }
                     },
-                    onAboutClick = { /* TODO(about) */
+                    onAboutClick = {
                         scope.launch { drawerState.close() }
                     },
                 )
@@ -94,6 +94,7 @@ fun HomeScreen(
             onTabSelected = { selectedTab = it },
             onMenuClick = { scope.launch { drawerState.open() } },
             onSignOut = onSignOut,
+            onNavigateToSignList = onNavigateToSignList,
             modifier = modifier,
         )
     }
@@ -105,6 +106,7 @@ private fun HomeScaffold(
     onTabSelected: (HomeTab) -> Unit,
     onMenuClick: () -> Unit,
     onSignOut: () -> Unit,
+    onNavigateToSignList: (categoryId: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -121,7 +123,11 @@ private fun HomeScaffold(
         Box(modifier = Modifier.weight(1f)) {
             when (selectedTab) {
                 HomeTab.HOME -> DashboardContent()
-                HomeTab.MODULES -> ModulesTabPlaceholder()
+                HomeTab.MODULES -> ModulesScreen(
+                    onCategoryClick = { category ->
+                        onNavigateToSignList(category.id)
+                    },
+                )
                 HomeTab.CAMERA -> CameraTabPlaceholder()
                 HomeTab.GAME -> GameTabPlaceholder()
                 HomeTab.PROFILE -> ProfileTabPlaceholder(onSignOut = onSignOut)
@@ -235,7 +241,7 @@ private fun NavItem(
 @Composable
 private fun HomeScreenPreviewLight() {
     KinetixFSLTheme(darkTheme = false) {
-        HomeScreen(onSignOut = {}, onNavigateToCommunity = {})
+        HomeScreen(onSignOut = {}, onNavigateToCommunity = {}, onNavigateToSignList = {})
     }
 }
 
@@ -243,6 +249,6 @@ private fun HomeScreenPreviewLight() {
 @Composable
 private fun HomeScreenPreviewDark() {
     KinetixFSLTheme(darkTheme = true) {
-        HomeScreen(onSignOut = {}, onNavigateToCommunity = {})
+        HomeScreen(onSignOut = {}, onNavigateToCommunity = {}, onNavigateToSignList = {})
     }
 }

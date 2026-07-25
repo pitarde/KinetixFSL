@@ -14,6 +14,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.kinetixfsl.auth.AuthRepository
 import com.example.kinetixfsl.community.CommunityScreen
+import com.example.kinetixfsl.modules.LearningRoomScreen
+import com.example.kinetixfsl.modules.SignListScreen
+import com.example.kinetixfsl.modules.model.FslSignData
 import com.example.kinetixfsl.ui.forgotpassword.CheckEmailScreen
 import com.example.kinetixfsl.ui.forgotpassword.ForgotPasswordScreen
 import com.example.kinetixfsl.ui.home.HomeScreen
@@ -45,10 +48,27 @@ object Route {
 
     const val HOME = "home"
     const val COMMUNITY = "community"
+
+    // ── Modules routes ──────────────────────────────────────
+    private const val SIGN_LIST_BASE = "sign_list"
+    const val SIGN_LIST_ARG = "categoryId"
+    const val SIGN_LIST_PATTERN = "$SIGN_LIST_BASE/{$SIGN_LIST_ARG}"
+    fun signList(categoryId: String): String = "$SIGN_LIST_BASE/$categoryId"
+
+    private const val LEARNING_ROOM_BASE = "learning_room"
+    const val LEARNING_ROOM_SIGN_ARG = "signIndex"
+    const val LEARNING_ROOM_PATTERN =
+        "$LEARNING_ROOM_BASE/{$SIGN_LIST_ARG}/{$LEARNING_ROOM_SIGN_ARG}"
+    fun learningRoom(categoryId: String, signIndex: Int): String =
+        "$LEARNING_ROOM_BASE/$categoryId/$signIndex"
 }
 
 /** Animation duration in ms — kept consistent across all auth transitions. */
 private const val ANIM_DURATION = 450
+
+/** Shorter fade for the modules flow — feels snappier. */
+private const val MODULES_FADE = 100
+private const val MODULES_OUT_FADE = 250
 
 @Composable
 fun KinetixNavHost(
@@ -126,9 +146,11 @@ fun KinetixNavHost(
         composable(
             route = Route.REGISTER,
             enterTransition = {
-                slideInHorizontally(tween(ANIM_DURATION, easing = FastOutSlowInEasing)) { it }            },
+                slideInHorizontally(tween(ANIM_DURATION, easing = FastOutSlowInEasing)) { it }
+            },
             exitTransition = {
-                slideOutHorizontally(tween(ANIM_DURATION, easing = FastOutSlowInEasing)) { -it }            },
+                slideOutHorizontally(tween(ANIM_DURATION, easing = FastOutSlowInEasing)) { -it }
+            },
             popEnterTransition = {
                 slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
             },
@@ -220,10 +242,12 @@ fun KinetixNavHost(
                 onNavigateToCommunity = {
                     navController.navigate(Route.COMMUNITY)
                 },
+                onNavigateToSignList = { categoryId ->
+                    navController.navigate(Route.signList(categoryId))
+                },
             )
         }
 
-        // ---- Community: slide in from right ----
         // ---- Community: quick fade (drawer provides the visual motion) ----
         composable(
             route = Route.COMMUNITY,
@@ -242,6 +266,75 @@ fun KinetixNavHost(
                     }
                 },
             )
+        }
+
+        // ---- Sign List: fade in/out ----
+        composable(
+            route = Route.SIGN_LIST_PATTERN,
+            arguments = listOf(
+                navArgument(Route.SIGN_LIST_ARG) { type = NavType.StringType },
+            ),
+            enterTransition = { fadeIn(tween(MODULES_FADE)) },
+            exitTransition = { fadeOut(tween(MODULES_OUT_FADE)) },
+            popEnterTransition = { fadeIn(tween(MODULES_FADE)) },
+            popExitTransition = { fadeOut(tween(MODULES_OUT_FADE)) },
+        ) { backStackEntry ->
+            val categoryId = backStackEntry.arguments?.getString(Route.SIGN_LIST_ARG).orEmpty()
+            val category = remember(categoryId) { FslSignData.findCategory(categoryId) }
+
+            if (category != null) {
+                SignListScreen(
+                    category = category,
+                    onBack = { navController.popBackStack() },
+                    onSignClick = { signIndex: Int ->
+                        navController.navigate(Route.learningRoom(categoryId, signIndex))
+                    },
+                )
+            }
+        }
+
+        // ---- Learning Room: fade in/out ----
+        composable(
+            route = Route.LEARNING_ROOM_PATTERN,
+            arguments = listOf(
+                navArgument(Route.SIGN_LIST_ARG) { type = NavType.StringType },
+                navArgument(Route.LEARNING_ROOM_SIGN_ARG) { type = NavType.IntType },
+            ),
+            enterTransition = { fadeIn(tween(MODULES_FADE)) },
+            exitTransition = { fadeOut(tween(MODULES_OUT_FADE)) },
+            popEnterTransition = { fadeIn(tween(MODULES_FADE)) },
+            popExitTransition = { fadeOut(tween(MODULES_OUT_FADE)) },
+        ) { backStackEntry ->
+            val categoryId = backStackEntry.arguments?.getString(Route.SIGN_LIST_ARG).orEmpty()
+            val signIndex = backStackEntry.arguments?.getInt(Route.LEARNING_ROOM_SIGN_ARG) ?: 0
+            val category = remember(categoryId) { FslSignData.findCategory(categoryId) }
+
+            if (category != null) {
+                val isLastSign = signIndex >= category.signCount - 1
+
+                LearningRoomScreen(
+                    category = category,
+                    signIndex = signIndex,
+                    onBack = { navController.popBackStack() },
+                    onNext = if (isLastSign) {
+                        null
+                    } else {
+                        {
+                            // Fade to next sign (replaces current)
+                            navController.navigate(
+                                Route.learningRoom(categoryId, signIndex + 1)
+                            ) {
+                                popUpTo(
+                                    Route.learningRoom(categoryId, signIndex)
+                                ) { inclusive = true }
+                            }
+                        }
+                    },
+                    onPractice = {
+                        // TODO: Navigate to Camera Practice screen (Sprint 2)
+                    },
+                )
+            }
         }
     }
 }
