@@ -32,6 +32,8 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.FastOutSlowInEasing
 
+import com.example.kinetixfsl.detection.CameraPracticeScreen
+
 /** Every destination in the app. Add to this as we build each screen. */
 object Route {
     const val SPLASH = "splash"
@@ -61,6 +63,14 @@ object Route {
         "$LEARNING_ROOM_BASE/{$SIGN_LIST_ARG}/{$LEARNING_ROOM_SIGN_ARG}"
     fun learningRoom(categoryId: String, signIndex: Int): String =
         "$LEARNING_ROOM_BASE/$categoryId/$signIndex"
+
+    // ── Practice route ──────────────────────────────────────
+    private const val PRACTICE_BASE = "practice"
+    const val PRACTICE_SIGN_ARG = "signIndex"
+    const val PRACTICE_PATTERN =
+        "$PRACTICE_BASE/{$SIGN_LIST_ARG}/{$PRACTICE_SIGN_ARG}"
+    fun practice(categoryId: String, signIndex: Int): String =
+        "$PRACTICE_BASE/$categoryId/$signIndex"
 }
 
 /** Animation duration in ms — kept consistent across all auth transitions. */
@@ -331,9 +341,57 @@ fun KinetixNavHost(
                         }
                     },
                     onPractice = {
-                        // TODO: Navigate to Camera Practice screen (Sprint 2)
+                        navController.navigate(Route.practice(categoryId, signIndex))
                     },
                 )
+            }
+
+
+        }
+
+        // ---- Camera Practice: real-time sign detection ----
+        composable(
+            route = Route.PRACTICE_PATTERN,
+            arguments = listOf(
+                navArgument(Route.SIGN_LIST_ARG) { type = NavType.StringType },
+                navArgument(Route.PRACTICE_SIGN_ARG) { type = NavType.IntType },
+            ),
+            enterTransition = { fadeIn(tween(MODULES_FADE)) },
+            exitTransition = { fadeOut(tween(MODULES_FADE)) },
+            popEnterTransition = { fadeIn(tween(MODULES_FADE)) },
+            popExitTransition = { fadeOut(tween(MODULES_FADE)) },
+        ) { backStackEntry ->
+            val categoryId = backStackEntry.arguments?.getString(Route.SIGN_LIST_ARG).orEmpty()
+            val signIndex = backStackEntry.arguments?.getInt(Route.PRACTICE_SIGN_ARG) ?: 0
+            val category = remember(categoryId) { FslSignData.findCategory(categoryId) }
+
+            if (category != null) {
+                val sign = category.signs.getOrNull(signIndex)
+                val displayPrefix = when (categoryId) {
+                    "alphabet" -> "Letter"
+                    "numbers" -> "Number"
+                    else -> ""
+                }
+                val isLastSign = signIndex >= category.signCount - 1
+
+                if (sign != null) {
+                    CameraPracticeScreen(
+                        targetLabel = sign.name,
+                        displayName = "$displayPrefix ${sign.name}".trim(),
+                        onBack = { navController.popBackStack() },
+                        onProceed = if (isLastSign) null else {
+                            {
+                                // Go to the Learning Room for the next sign
+                                navController.navigate(
+                                    Route.learningRoom(categoryId, signIndex + 1)
+                                ) {
+                                    // Pop back to the sign list so the back stack is clean
+                                    popUpTo(Route.signList(categoryId))
+                                }
+                            }
+                        },
+                    )
+                }
             }
         }
     }

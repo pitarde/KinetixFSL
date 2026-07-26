@@ -37,6 +37,10 @@ android {
     buildFeatures {
         compose = true
     }
+    androidResources {
+        noCompress += "tflite"
+        noCompress += "task"
+    }
 }
 
 dependencies {
@@ -82,4 +86,15 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    // CameraX
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
+    // MediaPipe (hand landmark detection)
+    implementation(libs.mediapipe.tasks.vision)
+
+    // TFLite (sign classification)
+    implementation(libs.tensorflow.lite)
 }
