@@ -1,6 +1,7 @@
 package com.example.kinetixfsl.detection
 
 import android.content.Context
+import android.util.Log
 import org.tensorflow.lite.Interpreter
 import java.io.FileInputStream
 import java.nio.MappedByteBuffer
@@ -8,10 +9,19 @@ import java.nio.channels.FileChannel
 
 /**
  * Classifies dynamic FSL signs (J, Z, Ñ, NG) using a sequence of
- * landmark frames fed to an LSTM model.
+ * landmark frames fed to a 1D-CNN model.
  *
- * Buffers [SEQUENCE_LENGTH] frames and classifies the full motion.
- * If the model predicts "NONE", the result is treated as a non-match.
+ * ## Early classification
+ *
+ * Instead of waiting for all [SEQUENCE_LENGTH] frames, the classifier
+ * starts attempting classification once [MIN_FRAMES_FOR_EARLY] frames
+ * have been buffered. Remaining slots are zero-padded (same as the
+ * training script's `pad_or_truncate`). Each new frame triggers a
+ * fresh attempt, so the user gets confirmed as soon as the motion is
+ * recognizable — typically well before the full 30 frames.
+ *
+ * If the buffer fills completely without a confident match the caller
+ * should reset and let the user try again.
  */
 class DynamicSignClassifier(context: Context) {
 
@@ -31,10 +41,18 @@ class DynamicSignClassifier(context: Context) {
         val confidence: Float,
     )
 
-    val isReady: Boolean get() = buffer.size >= SEQUENCE_LENGTH
+    /** True once enough frames are buffered to start classifying. */
+    val canClassify: Boolean get() = buffer.size >= MIN_FRAMES_FOR_EARLY
+
+    /** True when the buffer is completely full. */
+    val isFull: Boolean get() = buffer.size >= SEQUENCE_LENGTH
+
     val frameCount: Int get() = buffer.size
     val progress: Float get() = buffer.size.toFloat() / SEQUENCE_LENGTH
 
+    /**
+     * Adds a frame. Keeps accepting frames until the buffer is full.
+     */
     fun addFrame(features: FloatArray) {
         require(features.size == NUM_FEATURES) {
             "Expected $NUM_FEATURES features, got ${features.size}"
@@ -45,14 +63,28 @@ class DynamicSignClassifier(context: Context) {
     }
 
     /**
-     * Classifies the buffered sequence.
-     * Returns the top prediction. If "NONE" is predicted, the label
-     * is returned as "NONE" — the caller should treat this as a non-match.
+     * Classifies the current buffer contents.
+     *
+     * If fewer than [SEQUENCE_LENGTH] frames are present, the remaining
+     * slots are zero-padded — this mirrors the training augmentation
+     * where short recordings were padded the same way.
+     *
+     * Can be called as soon as [canClassify] is true, and again after
+     * each subsequent [addFrame].
      */
     fun classify(): Result {
-        check(isReady) { "Buffer not full. Need $SEQUENCE_LENGTH frames, have ${buffer.size}" }
+        check(canClassify) {
+            "Need at least $MIN_FRAMES_FOR_EARLY frames, have ${buffer.size}"
+        }
 
-        val input = Array(1) { Array(SEQUENCE_LENGTH) { i -> buffer[i] } }
+        // Build the (1, SEQUENCE_LENGTH, 63) input tensor.
+        // Frames beyond buffer.size are left as zeros (padding).
+        val input = Array(1) {
+            Array(SEQUENCE_LENGTH) { i ->
+                if (i < buffer.size) buffer[i]
+                else ZERO_FRAME
+            }
+        }
         val output = Array(1) { FloatArray(labels.size) }
 
         synchronized(this) {
@@ -61,6 +93,10 @@ class DynamicSignClassifier(context: Context) {
 
         val probs = output[0]
         val maxIdx = probs.indices.maxByOrNull { probs[it] } ?: 0
+
+        Log.d(TAG, "classify() frames=${buffer.size}/$SEQUENCE_LENGTH " +
+                "-> ${labels[maxIdx]} ${(probs[maxIdx] * 100).toInt()}%")
+
         return Result(
             label = labels[maxIdx],
             confidence = probs[maxIdx],
@@ -103,7 +139,19 @@ class DynamicSignClassifier(context: Context) {
             .filter { it.isNotEmpty() }
 
     companion object {
-        const val SEQUENCE_LENGTH = 30  // must match training
+        private const val TAG = "DynamicClassifier"
+
+        const val SEQUENCE_LENGTH = 30   // must match training
         private const val NUM_FEATURES = 63
+
+        /**
+         * Minimum frames before the first classification attempt.
+         * At 5 fps capture, 15 frames ≈ 3 seconds of motion —
+         * enough for the model to see the core gesture.
+         */
+        const val MIN_FRAMES_FOR_EARLY = 15
+
+        /** Reusable zero-filled frame for padding. */
+        private val ZERO_FRAME = FloatArray(NUM_FEATURES)
     }
 }

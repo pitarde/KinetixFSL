@@ -1,5 +1,6 @@
 package com.example.kinetixfsl.community
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -60,6 +61,9 @@ fun CommentScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Phone back button closes comments and returns to the feed.
+    BackHandler(onBack = onClose)
 
     Column(
         modifier = modifier

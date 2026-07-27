@@ -25,9 +25,25 @@ android {
 
     buildTypes {
         release {
-            optimization {
-                enable = false
-            }
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+    }
+
+    // Only package the ABI your test device needs.
+    // Most modern Android phones are arm64-v8a.
+    // For Play Store release, use App Bundles (.aab) instead — Google
+    // Play automatically strips unused ABIs per device.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a")
+            isUniversalApk = false
         }
     }
     compileOptions {
@@ -74,7 +90,7 @@ dependencies {
     // Image loading
     implementation(libs.coil.compose)
 
-    // Video playback
+    // Video playback + compression for community uploads
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.transformer)
@@ -97,6 +113,7 @@ dependencies {
     implementation(libs.mediapipe.tasks.vision)
 
     // TFLite (sign classification)
+    // NOTE: Do NOT add tensorflow-lite-select-tf-ops here — it adds
+    // ~150MB of native libs. Our models only use standard TFLite ops.
     implementation(libs.tensorflow.lite)
-    implementation(libs.tensorflow.lite.select)
 }

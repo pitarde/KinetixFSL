@@ -13,6 +13,7 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -69,9 +71,10 @@ private const val FRAME_INTERVAL_MS = 200L
  * Camera Practice screen — supports both static and dynamic signs.
  *
  * Static signs: classified per frame (Dense model).
- * Dynamic signs: buffers 20 frames, then classifies the sequence (LSTM model).
+ * Dynamic signs: early classification — starts attempting after 15 frames,
+ *   confirms as soon as the motion is recognized with high confidence.
  *
- * @param isDynamic If true, uses DynamicSignClassifier (LSTM) instead of
+ * @param isDynamic If true, uses DynamicSignClassifier (1D-CNN) instead of
  *                  SignClassifier (Dense).
  */
 @Composable
@@ -114,6 +117,9 @@ fun CameraPracticeScreen(
     // Dynamic-specific state
     var dynamicProgress by remember { mutableFloatStateOf(0f) }
     var dynamicStatus by remember { mutableStateOf("Waiting for hand...") }
+
+    // Landmark overlay state — raw MediaPipe normalized coords (0..1)
+    var landmarkPoints by remember { mutableStateOf<List<Triple<Float, Float, Float>>?>(null) }
 
     // ── ML helpers ──────────────────────────────────────────
     var staticClassifier by remember { mutableStateOf<SignClassifier?>(null) }
@@ -174,56 +180,71 @@ fun CameraPracticeScreen(
 
                             val lh = landmarkHelper ?: return@CameraPreview
                             val rotated = rotateBitmap(bitmap, rotationDegrees)
-                            val features = lh.detectAndNormalize(rotated)
+                            val result = lh.detectAndNormalizeWithLandmarks(rotated)
                             if (rotated !== bitmap) rotated.recycle()
                             bitmap.recycle()
 
+                            val features = result?.first
+                            val rawLandmarks = result?.second
+
+                            // Update landmark overlay (even if null — clears old dots)
+                            landmarkPoints = rawLandmarks
+
                             if (features != null) {
                                 if (isDynamic) {
-                                    // ── Dynamic: buffer frames ──
+                                    // ── Dynamic: buffer + early classify ──
                                     val dc = dynamicClassifier ?: return@CameraPreview
                                     dc.addFrame(features)
                                     dynamicProgress = dc.progress
-                                    dynamicStatus =
-                                        "Recording motion... ${dc.frameCount}/${DynamicSignClassifier.SEQUENCE_LENGTH}"
 
-                                    if (dc.isReady) {
-                                        val result = dc.classify()
+                                    if (dc.canClassify &&
+                                        (dc.frameCount % 3 == 0 || dc.isFull)
+                                    ) {
+                                        // Classify every 3rd frame to avoid lag.
+                                        // Always classify on the final frame.
+                                        val classResult = dc.classify()
                                         attempts++
-                                        detectedLabel = result.label
-                                        confidence = result.confidence
+                                        detectedLabel = classResult.label
+                                        confidence = classResult.confidence
+
+                                        dynamicStatus =
+                                            "Analyzing... ${dc.frameCount}/${DynamicSignClassifier.SEQUENCE_LENGTH}"
 
                                         Log.d(TAG, "DYNAMIC Target=$targetLabel | " +
-                                                "Predicted=${result.label} | " +
-                                                "Confidence=${(result.confidence * 100).toInt()}%")
+                                                "Predicted=${classResult.label} | " +
+                                                "Confidence=${(classResult.confidence * 100).toInt()}% | " +
+                                                "Frames=${dc.frameCount}")
 
-                                        if (result.label == targetLabel &&
-                                            result.confidence >= CONFIRM_THRESHOLD
+                                        if (classResult.label == targetLabel &&
+                                            classResult.confidence >= CONFIRM_THRESHOLD
                                         ) {
                                             isConfirmed = true
                                             finishTime = System.currentTimeMillis()
-                                        } else {
-                                            // Reset and try again
+                                        } else if (dc.isFull) {
+                                            // Buffer full without a match — reset
                                             dc.reset()
                                             dynamicProgress = 0f
                                             dynamicStatus = "Not matched — try again"
                                         }
+                                    } else {
+                                        dynamicStatus =
+                                            "Recording motion... ${dc.frameCount}/${DynamicSignClassifier.MIN_FRAMES_FOR_EARLY}"
                                     }
                                 } else {
                                     // ── Static: classify per frame ──
                                     val sc = staticClassifier ?: return@CameraPreview
-                                    val result = sc.classify(features)
+                                    val classResult = sc.classify(features)
                                     attempts++
-                                    detectedLabel = result.label
-                                    confidence = result.confidence
+                                    detectedLabel = classResult.label
+                                    confidence = classResult.confidence
 
                                     Log.d(TAG, "STATIC Target=$targetLabel | " +
-                                            "Predicted=${result.label} | " +
-                                            "Confidence=${(result.confidence * 100).toInt()}% | " +
+                                            "Predicted=${classResult.label} | " +
+                                            "Confidence=${(classResult.confidence * 100).toInt()}% | " +
                                             "Hits=$consecutiveHits")
 
-                                    if (result.label == targetLabel &&
-                                        result.confidence >= CONFIRM_THRESHOLD
+                                    if (classResult.label == targetLabel &&
+                                        classResult.confidence >= CONFIRM_THRESHOLD
                                     ) {
                                         consecutiveHits++
                                         if (consecutiveHits >= CONFIRM_FRAMES) {
@@ -236,6 +257,7 @@ fun CameraPracticeScreen(
                                 }
                             } else {
                                 // No hand detected
+                                landmarkPoints = null
                                 if (isDynamic) {
                                     dynamicStatus = "No hand detected — show your hand"
                                 }
@@ -244,6 +266,14 @@ fun CameraPracticeScreen(
                                 consecutiveHits = 0
                             }
                         },
+                    )
+
+                    // ── Hand landmark overlay ───────────────
+                    // landmarks come from the already-flipped bitmap, so their
+                    // x coords already match the mirrored preview — no extra flip.
+                    HandLandmarkOverlay(
+                        landmarks = landmarkPoints,
+                        mirrorX = false,
                     )
                 }
 
@@ -391,7 +421,7 @@ fun CameraPracticeScreen(
                         "Ensure good lighting and clear view of your hands.",
                         "Perform the sign movement slowly and clearly.",
                         "Keep your hands within the camera frame throughout the motion.",
-                        "Wait for the progress bar to fill, then the model will evaluate.",
+                        "The sign will be confirmed as soon as it's recognized — no need to wait for the full bar.",
                     )
                 } else {
                     listOf(
@@ -430,7 +460,7 @@ fun CameraPracticeScreen(
                         LogLine("Time finished", "${elapsed}sec")
                         LogLine("Accurate percentage", "${(confidence * 100).toInt()}%")
                         LogLine("Confidence", "${(confidence * 100).toInt()}%")
-                        LogLine("Type", if (isDynamic) "Dynamic (LSTM)" else "Static (Dense)")
+                        LogLine("Type", if (isDynamic) "Dynamic (1D-CNN)" else "Static (Dense)")
                     }
                 }
             }
@@ -458,6 +488,77 @@ fun CameraPracticeScreen(
                     fontWeight = FontWeight.SemiBold,
                 )
             }
+        }
+    }
+}
+
+// ── Hand Landmark Overlay ──────────────────────────────────────
+
+/**
+ * MediaPipe hand connections — pairs of landmark indices that should
+ * be connected by lines, matching the skeleton drawn in Python's
+ * mp_draw.draw_landmarks().
+ */
+private val HAND_CONNECTIONS = listOf(
+    // Thumb
+    0 to 1, 1 to 2, 2 to 3, 3 to 4,
+    // Index finger
+    0 to 5, 5 to 6, 6 to 7, 7 to 8,
+    // Middle finger
+    0 to 9, 9 to 10, 10 to 11, 11 to 12,
+    // Ring finger
+    0 to 13, 13 to 14, 14 to 15, 15 to 16,
+    // Pinky
+    0 to 17, 17 to 18, 18 to 19, 19 to 20,
+    // Palm
+    5 to 9, 9 to 13, 13 to 17,
+)
+
+/**
+ * Draws the 21-point hand skeleton on top of the camera preview.
+ *
+ * @param landmarks  List of 21 (x, y, z) triples in MediaPipe's 0..1
+ *                   normalized coordinate space. Null = no hand detected.
+ * @param isFrontCamera  If true, x is mirrored (1 - x) so the overlay
+ *                       matches the mirrored preview the user sees.
+ */
+@Composable
+private fun HandLandmarkOverlay(
+    landmarks: List<Triple<Float, Float, Float>>?,
+    mirrorX: Boolean,
+) {
+    if (landmarks == null) return
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val w = size.width
+        val h = size.height
+
+        fun toScreen(lm: Triple<Float, Float, Float>): Offset {
+            val x = if (mirrorX) (1f - lm.first) * w else lm.first * w
+            val y = lm.second * h
+            return Offset(x, y)
+        }
+
+        // Draw connections (white lines)
+        for ((a, b) in HAND_CONNECTIONS) {
+            val pA = toScreen(landmarks[a])
+            val pB = toScreen(landmarks[b])
+            drawLine(
+                color = Color.White,
+                start = pA,
+                end = pB,
+                strokeWidth = 3f,
+            )
+        }
+
+        // Draw landmark dots (red circles)
+        for (lm in landmarks) {
+            val p = toScreen(lm)
+            drawCircle(
+                color = Color.Red,
+                radius = 6f,
+                center = p,
+            )
         }
     }
 }

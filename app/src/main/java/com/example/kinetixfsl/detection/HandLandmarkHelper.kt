@@ -49,7 +49,6 @@ class HandLandmarkHelper(context: Context) {
      */
     fun detectAndNormalize(bitmap: Bitmap, isFrontCamera: Boolean = true): FloatArray? {
         val processedBitmap = if (isFrontCamera) {
-            // Front camera is mirrored — flip so landmarks match training data
             val matrix = Matrix().apply { preScale(-1f, 1f) }
             Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, false)
         } else {
@@ -65,10 +64,43 @@ class HandLandmarkHelper(context: Context) {
     }
 
     /**
+     * Detects hand landmarks and returns both the normalized feature vector
+     * AND the raw landmark positions for drawing an overlay.
+     *
+     * @return Pair of (63-dim features, 21 raw (x, y, z) triples in 0..1 space),
+     *         or null if no hand was detected.
+     */
+    fun detectAndNormalizeWithLandmarks(
+        bitmap: Bitmap,
+        isFrontCamera: Boolean = true,
+    ): Pair<FloatArray, List<Triple<Float, Float, Float>>>? {
+        val processedBitmap = if (isFrontCamera) {
+            val matrix = Matrix().apply { preScale(-1f, 1f) }
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, false)
+        } else {
+            bitmap
+        }
+
+        val mpImage = BitmapImageBuilder(processedBitmap).build()
+        val result: HandLandmarkerResult = handLandmarker.detect(mpImage)
+
+        if (result.landmarks().isEmpty()) return null
+
+        val features = normalizeLandmarks(result)
+
+        // Raw landmarks in MediaPipe's normalized 0..1 coordinate space
+        val rawLandmarks = result.landmarks()[0].map { lm ->
+            Triple(lm.x(), lm.y(), lm.z())
+        }
+
+        return Pair(features, rawLandmarks)
+    }
+
+    /**
      * Normalizes raw MediaPipe landmarks into the 63-dim feature vector.
      *
      * Matches the Python training pipeline exactly:
-     *   cords -= wrist
+     *   coords -= wrist
      *   coords /= ||coords[9]||   (distance to middle finger MCP)
      *   flatten to [x0, y0, z0, x1, y1, z1, ..., x20, y20, z20]
      */

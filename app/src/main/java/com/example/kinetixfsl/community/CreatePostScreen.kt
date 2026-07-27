@@ -1,5 +1,6 @@
 package com.example.kinetixfsl.community
 
+import androidx.activity.compose.BackHandler
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -85,9 +86,12 @@ fun CreatePostScreen(
         viewModel.submitPost(context)
     }
 
+    // Phone back button closes create-post and returns to the feed.
+    BackHandler(onBack = onClose)
+
     if (state.isPostCreated) {
-        onClose()
         viewModel.onPostCreatedHandled()
+        onClose()
     }
 
     // Photo picker launchers — the modern Android way (no permissions needed).

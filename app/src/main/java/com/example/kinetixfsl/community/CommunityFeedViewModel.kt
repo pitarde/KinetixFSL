@@ -34,6 +34,10 @@ class CommunityFeedViewModel(
     private val _userVotes = MutableStateFlow<Map<String, String>>(emptyMap())
     val userVotes: StateFlow<Map<String, String>> = _userVotes.asStateFlow()
 
+    /** Current search query. Empty = show all posts. */
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
     private var feedJob: Job? = null
 
     /**
@@ -43,15 +47,31 @@ class CommunityFeedViewModel(
      */
     private var displayOrder: List<String> = emptyList()
 
+    /** All posts from the latest Firestore snapshot (unfiltered). */
+    private var allPosts: List<Post> = emptyList()
+
     /**
-     * When true, the next snapshot will shuffle the posts into a new random order
-     * and lock it in. When false, incoming posts are re-sorted to match the
-     * existing [displayOrder], so count updates don't cause the feed to jump.
+     * When true, the next snapshot will reorder posts and lock the order.
+     * When false, incoming posts are re-sorted to match the existing
+     * [displayOrder], so count updates don't cause the feed to jump.
      */
-    private var shouldReshuffle = true
+    private var shouldReorder = true
+
+    /**
+     * When true, the next reorder uses random shuffle.
+     * When false, the next reorder uses newest-first.
+     * Refresh always sets this to true (shuffle). New-post detection always
+     * uses newest-first so the new post appears at the top without refreshing.
+     */
+    private var nextOrderIsRandom = false
 
     init {
         observeFeed()
+    }
+
+    fun onSearchQueryChange(query: String) {
+        _searchQuery.value = query
+        emitFiltered()
     }
 
     private fun observeFeed() {
@@ -67,32 +87,62 @@ class CommunityFeedViewModel(
     }
 
     /**
-     * Decides whether to shuffle or preserve order, then emits the result.
+     * Feed ordering logic:
      *
-     * - First load / after refresh: shuffle and lock the new order.
-     * - Vote/share/comment count update (same set of post IDs): keep the
-     *   existing order, just swap in the updated Post objects so counts render.
-     * - A post was added or deleted (ID set changed): re-shuffle to absorb it.
+     * - First load: newest-first so new posts are visible immediately.
+     * - New post arrives (ID set changes): newest-first so the new post
+     *   appears at the top *without* the user having to refresh.
+     * - Pull-to-refresh: always shuffles randomly to balance old and new.
+     * - Vote/share/comment count update (same IDs): preserve current order.
      */
     private fun applyPosts(incoming: List<Post>) {
+        allPosts = incoming
+
         val incomingIds = incoming.map { it.id }.toSet()
         val currentIds = displayOrder.toSet()
         val idsChanged = incomingIds != currentIds
 
-        if (shouldReshuffle || idsChanged) {
-            // Fresh shuffle.
-            val shuffled = incoming.shuffled()
-            displayOrder = shuffled.map { it.id }
-            shouldReshuffle = false
-            _feedState.value = FeedState.Success(shuffled)
+        if (shouldReorder) {
+            // Explicit refresh — always shuffle randomly.
+            if (nextOrderIsRandom) {
+                val shuffled = incoming.shuffled()
+                displayOrder = shuffled.map { it.id }
+            } else {
+                val sorted = incoming.sortedByDescending { it.createdAt }
+                displayOrder = sorted.map { it.id }
+            }
+            shouldReorder = false
+        } else if (idsChanged) {
+            // A post was added or deleted — show newest first so the
+            // new post appears at the top automatically.
+            val sorted = incoming.sortedByDescending { it.createdAt }
+            displayOrder = sorted.map { it.id }
+        }
+        // Otherwise: same IDs, just count updates — keep current order.
+
+        emitFiltered()
+        prefetchVotes(incoming)
+    }
+
+    /**
+     * Applies the search filter to the current display order and emits.
+     */
+    private fun emitFiltered() {
+        val query = _searchQuery.value.trim().lowercase()
+        val postById = allPosts.associateBy { it.id }
+        val ordered = displayOrder.mapNotNull { id -> postById[id] }
+
+        val filtered = if (query.isEmpty()) {
+            ordered
         } else {
-            // Same posts, just updated data (counts changed). Preserve order.
-            val postById = incoming.associateBy { it.id }
-            val ordered = displayOrder.mapNotNull { id -> postById[id] }
-            _feedState.value = FeedState.Success(ordered)
+            ordered.filter { post ->
+                post.title.lowercase().contains(query) ||
+                        post.body.lowercase().contains(query) ||
+                        post.authorName.lowercase().contains(query)
+            }
         }
 
-        prefetchVotes(incoming)
+        _feedState.value = FeedState.Success(filtered)
     }
 
     private fun prefetchVotes(posts: List<Post>) {
@@ -109,8 +159,9 @@ class CommunityFeedViewModel(
     }
 
     /**
-     * Pull-to-refresh. Flags a reshuffle, clears vote cache, restarts the
-     * Firestore listener. The next snapshot will generate a new random order.
+     * Pull-to-refresh. Always shuffles the feed randomly to balance
+     * old and new posts. New posts that arrive between refreshes
+     * automatically go to the top without needing a refresh.
      */
     fun refresh() {
         viewModelScope.launch {
@@ -118,7 +169,8 @@ class CommunityFeedViewModel(
 
             feedJob?.cancel()
             feedJob = null
-            shouldReshuffle = true
+            shouldReorder = true
+            nextOrderIsRandom = true
 
             observeFeed()
 
@@ -135,8 +187,6 @@ class CommunityFeedViewModel(
             } else {
                 _userVotes.value - postId
             }
-            // The Firestore snapshot listener will fire with updated counts.
-            // applyPosts() will see the same IDs and preserve the current order.
         }
     }
 
@@ -150,7 +200,6 @@ class CommunityFeedViewModel(
 
         viewModelScope.launch {
             repository.incrementShareCount(post.id)
-            // Same as vote — snapshot fires, counts update, order stays.
         }
     }
 }

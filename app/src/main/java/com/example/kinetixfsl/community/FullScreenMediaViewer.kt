@@ -2,6 +2,7 @@ package com.example.kinetixfsl.community
 
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -53,6 +54,9 @@ fun FullScreenMediaViewer(
     videoUrl: String? = null,
     onClose: () -> Unit,
 ) {
+    // Phone back button closes the viewer and returns to the feed.
+    BackHandler(onBack = onClose)
+
     Box(
         modifier = Modifier
             .fillMaxSize()

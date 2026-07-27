@@ -7,6 +7,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -73,6 +76,7 @@ fun CommunityFeedContent(
     val state by viewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     val pullState = rememberPullToRefreshState()
@@ -109,7 +113,12 @@ fun CommunityFeedContent(
                     .background(MaterialTheme.colorScheme.background),
                 contentPadding = PaddingValues(vertical = 12.dp),
             ) {
-                item { SearchBar() }
+                item {
+                    SearchBar(
+                        query = searchQuery,
+                        onQueryChange = viewModel::onSearchQueryChange,
+                    )
+                }
                 item { Spacer(Modifier.height(8.dp)) }
 
                 when (val current = state) {
@@ -223,14 +232,86 @@ private fun Dot(color: androidx.compose.ui.graphics.Color, scale: Float) {
 // ---- Search, Loading, Empty, Error ----
 
 @Composable
-private fun SearchBar() {
+private fun SearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+) {
     Box(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-            .clip(RoundedCornerShape(28.dp)).background(MaterialTheme.colorScheme.primaryContainer)
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(28.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer)
             .padding(horizontal = 20.dp, vertical = 14.dp),
     ) {
-        Text("Search your sign", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        BasicTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+            singleLine = true,
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            modifier = Modifier.fillMaxWidth(),
+            decorationBox = { inner ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = SearchIcon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(Modifier.weight(1f)) {
+                        if (query.isEmpty()) {
+                            Text(
+                                "Search posts, users...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        inner()
+                    }
+                    if (query.isNotEmpty()) {
+                        Icon(
+                            imageVector = ClearIcon,
+                            contentDescription = "Clear search",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clickable { onQueryChange("") },
+                        )
+                    }
+                }
+            },
+        )
     }
+}
+
+private val SearchIcon: ImageVector by lazy {
+    ImageVector.Builder("Search", 24.dp, 24.dp, 24f, 24f).apply {
+        path(
+            stroke = SolidColor(androidx.compose.ui.graphics.Color.Black),
+            strokeLineWidth = 2.2f,
+        ) {
+            // Circle: two half-arcs forming a full circle (center 11,11 r=7)
+            moveTo(18f, 11f)
+            arcTo(7f, 7f, 0f, isMoreThanHalf = true, isPositiveArc = true, 4f, 11f)
+            arcTo(7f, 7f, 0f, isMoreThanHalf = true, isPositiveArc = true, 18f, 11f)
+            // Handle
+            moveTo(16f, 16f)
+            lineTo(21f, 21f)
+        }
+    }.build()
+}
+
+private val ClearIcon: ImageVector by lazy {
+    ImageVector.Builder("Clear", 24.dp, 24.dp, 24f, 24f).apply {
+        path(stroke = SolidColor(androidx.compose.ui.graphics.Color.Black), strokeLineWidth = 2.2f) {
+            moveTo(7f, 7f); lineTo(17f, 17f)
+            moveTo(17f, 7f); lineTo(7f, 17f)
+        }
+    }.build()
 }
 
 @Composable

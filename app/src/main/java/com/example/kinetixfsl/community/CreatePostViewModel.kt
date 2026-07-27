@@ -109,6 +109,7 @@ class CreatePostViewModel(
     }
 
     fun onPostCreatedHandled() {
-        _uiState.update { it.copy(isPostCreated = false) }
+        // Reset the entire form so it's clean when the user returns.
+        _uiState.value = CreatePostUiState()
     }
 }
