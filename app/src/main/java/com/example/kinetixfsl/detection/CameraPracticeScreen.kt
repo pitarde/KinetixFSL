@@ -184,7 +184,8 @@ fun CameraPracticeScreen(
                                     val dc = dynamicClassifier ?: return@CameraPreview
                                     dc.addFrame(features)
                                     dynamicProgress = dc.progress
-                                    dynamicStatus = "Recording motion... ${dc.frameCount}/20"
+                                    dynamicStatus =
+                                        "Recording motion... ${dc.frameCount}/${DynamicSignClassifier.SEQUENCE_LENGTH}"
 
                                     if (dc.isReady) {
                                         val result = dc.classify()

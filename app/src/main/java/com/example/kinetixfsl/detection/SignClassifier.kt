@@ -80,9 +80,17 @@ class SignClassifier(context: Context) {
         )
     }
 
+    /**
+     * Reads one label per line.
+     *
+     * Explicit UTF-8 and `trim()` guard against non-ASCII labels and
+     * Windows CRLF line endings, either of which would make a label
+     * fail to compare equal to its target string.
+     */
     private fun loadLabels(context: Context, filename: String): List<String> =
         context.assets.open(filename)
-            .bufferedReader()
+            .bufferedReader(Charsets.UTF_8)
             .readLines()
-            .filter { it.isNotBlank() }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
 }

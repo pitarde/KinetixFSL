@@ -86,14 +86,24 @@ class DynamicSignClassifier(context: Context) {
         )
     }
 
+    /**
+     * Reads one label per line.
+     *
+     * Explicit UTF-8 is required: the label list contains "Ñ", and the
+     * platform default charset is not guaranteed to decode it.
+     * `trim()` is required because the file may be saved with Windows
+     * CRLF endings — an untrimmed "Z\r" never equals the target "Z",
+     * so every match silently fails.
+     */
     private fun loadLabels(context: Context, filename: String): List<String> =
         context.assets.open(filename)
-            .bufferedReader()
+            .bufferedReader(Charsets.UTF_8)
             .readLines()
-            .filter { it.isNotBlank() }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
 
     companion object {
-        private const val SEQUENCE_LENGTH = 30  // must match training
+        const val SEQUENCE_LENGTH = 30  // must match training
         private const val NUM_FEATURES = 63
     }
 }
