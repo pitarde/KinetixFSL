@@ -36,6 +36,7 @@ android {
     }
     buildFeatures {
         compose = true
+        mlModelBinding = true
     }
     androidResources {
         noCompress += "tflite"
@@ -97,4 +98,5 @@ dependencies {
 
     // TFLite (sign classification)
     implementation(libs.tensorflow.lite)
+    implementation(libs.tensorflow.lite.select)
 }

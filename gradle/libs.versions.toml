@@ -34,6 +34,8 @@ mediapipe-tasks-vision = { group = "com.google.mediapipe", name = "tasks-vision"
 # TFLite (sign classification)
 tensorflow-lite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tflite" }
 
+tensorflow-lite-select = { group = "org.tensorflow", name = "tensorflow-lite-select-tf-ops", version.ref = "tflite" }
+
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }

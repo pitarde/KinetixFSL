@@ -378,6 +378,7 @@ fun KinetixNavHost(
                     CameraPracticeScreen(
                         targetLabel = sign.name,
                         displayName = "$displayPrefix ${sign.name}".trim(),
+                        isDynamic = sign.isDynamic,
                         onBack = { navController.popBackStack() },
                         onProceed = if (isLastSign) null else {
                             {

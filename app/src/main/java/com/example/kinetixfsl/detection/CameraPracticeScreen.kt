@@ -33,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -60,40 +61,37 @@ import java.util.concurrent.Executors
 
 private const val TAG = "CameraPractice"
 
-/** Confidence threshold to confirm a sign. */
 private const val CONFIRM_THRESHOLD = 0.65f
-
-/** How many consecutive high-confidence frames needed to confirm. */
 private const val CONFIRM_FRAMES = 4
-
-/** Minimum milliseconds between processing frames (~5 fps). */
 private const val FRAME_INTERVAL_MS = 200L
 
 /**
- * Camera Practice screen — live sign detection matching the Figma.
+ * Camera Practice screen — supports both static and dynamic signs.
  *
- * Two states:
- * 1. **Detecting**: camera preview + "Show the sign for Letter X" prompt
- * 2. **Confirmed**: "Sign Confirmed" + detection log + "Proceed" button
+ * Static signs: classified per frame (Dense model).
+ * Dynamic signs: buffers 20 frames, then classifies the sequence (LSTM model).
+ *
+ * @param isDynamic If true, uses DynamicSignClassifier (LSTM) instead of
+ *                  SignClassifier (Dense).
  */
 @Composable
 fun CameraPracticeScreen(
     targetLabel: String,
     displayName: String,
+    isDynamic: Boolean,
     onBack: () -> Unit,
     onProceed: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
 
-    // ── Permission handling ─────────────────────────────────
+    // ── Permission ──────────────────────────────────────────
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
                     == PackageManager.PERMISSION_GRANTED
         )
     }
-
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> hasCameraPermission = granted }
@@ -113,15 +111,25 @@ fun CameraPracticeScreen(
     var startTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var finishTime by remember { mutableLongStateOf(0L) }
 
-    // ── ML helpers (created once, cleaned up on dispose) ────
-    var classifier by remember { mutableStateOf<SignClassifier?>(null) }
+    // Dynamic-specific state
+    var dynamicProgress by remember { mutableFloatStateOf(0f) }
+    var dynamicStatus by remember { mutableStateOf("Waiting for hand...") }
+
+    // ── ML helpers ──────────────────────────────────────────
+    var staticClassifier by remember { mutableStateOf<SignClassifier?>(null) }
+    var dynamicClassifier by remember { mutableStateOf<DynamicSignClassifier?>(null) }
     var landmarkHelper by remember { mutableStateOf<HandLandmarkHelper?>(null) }
 
     LaunchedEffect(Unit) {
         try {
-            classifier = SignClassifier(context)
             landmarkHelper = HandLandmarkHelper(context)
-            Log.d(TAG, "ML models loaded successfully")
+            if (isDynamic) {
+                dynamicClassifier = DynamicSignClassifier(context)
+                Log.d(TAG, "Loaded DYNAMIC classifier for: $targetLabel")
+            } else {
+                staticClassifier = SignClassifier(context)
+                Log.d(TAG, "Loaded STATIC classifier for: $targetLabel")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load ML models", e)
         }
@@ -129,7 +137,8 @@ fun CameraPracticeScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            classifier?.close()
+            staticClassifier?.close()
+            dynamicClassifier?.close()
             landmarkHelper?.close()
         }
     }
@@ -142,7 +151,6 @@ fun CameraPracticeScreen(
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        // Top bar
         PracticeTopBar(onBack = onBack)
 
         Column(
@@ -151,7 +159,7 @@ fun CameraPracticeScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp),
         ) {
-            // ── Camera / result area ────────────────────────
+            // ── Camera area ─────────────────────────────────
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -165,41 +173,71 @@ fun CameraPracticeScreen(
                             if (isConfirmed) return@CameraPreview
 
                             val lh = landmarkHelper ?: return@CameraPreview
-                            val cl = classifier ?: return@CameraPreview
-
-                            // Apply rotation from CameraX so landmarks are upright
                             val rotated = rotateBitmap(bitmap, rotationDegrees)
-
                             val features = lh.detectAndNormalize(rotated)
-
-                            // Recycle bitmaps to prevent OOM
                             if (rotated !== bitmap) rotated.recycle()
                             bitmap.recycle()
 
                             if (features != null) {
-                                val result = cl.classify(features)
-                                attempts++
-                                detectedLabel = result.label
-                                confidence = result.confidence
+                                if (isDynamic) {
+                                    // ── Dynamic: buffer frames ──
+                                    val dc = dynamicClassifier ?: return@CameraPreview
+                                    dc.addFrame(features)
+                                    dynamicProgress = dc.progress
+                                    dynamicStatus = "Recording motion... ${dc.frameCount}/20"
 
-                                // Debug: see what the model is predicting
-                                Log.d(TAG, "Target=$targetLabel | " +
-                                        "Predicted=${result.label} | " +
-                                        "Confidence=${(result.confidence * 100).toInt()}% | " +
-                                        "Hits=$consecutiveHits")
+                                    if (dc.isReady) {
+                                        val result = dc.classify()
+                                        attempts++
+                                        detectedLabel = result.label
+                                        confidence = result.confidence
 
-                                if (result.label == targetLabel &&
-                                    result.confidence >= CONFIRM_THRESHOLD
-                                ) {
-                                    consecutiveHits++
-                                    if (consecutiveHits >= CONFIRM_FRAMES) {
-                                        isConfirmed = true
-                                        finishTime = System.currentTimeMillis()
+                                        Log.d(TAG, "DYNAMIC Target=$targetLabel | " +
+                                                "Predicted=${result.label} | " +
+                                                "Confidence=${(result.confidence * 100).toInt()}%")
+
+                                        if (result.label == targetLabel &&
+                                            result.confidence >= CONFIRM_THRESHOLD
+                                        ) {
+                                            isConfirmed = true
+                                            finishTime = System.currentTimeMillis()
+                                        } else {
+                                            // Reset and try again
+                                            dc.reset()
+                                            dynamicProgress = 0f
+                                            dynamicStatus = "Not matched — try again"
+                                        }
                                     }
                                 } else {
-                                    consecutiveHits = 0
+                                    // ── Static: classify per frame ──
+                                    val sc = staticClassifier ?: return@CameraPreview
+                                    val result = sc.classify(features)
+                                    attempts++
+                                    detectedLabel = result.label
+                                    confidence = result.confidence
+
+                                    Log.d(TAG, "STATIC Target=$targetLabel | " +
+                                            "Predicted=${result.label} | " +
+                                            "Confidence=${(result.confidence * 100).toInt()}% | " +
+                                            "Hits=$consecutiveHits")
+
+                                    if (result.label == targetLabel &&
+                                        result.confidence >= CONFIRM_THRESHOLD
+                                    ) {
+                                        consecutiveHits++
+                                        if (consecutiveHits >= CONFIRM_FRAMES) {
+                                            isConfirmed = true
+                                            finishTime = System.currentTimeMillis()
+                                        }
+                                    } else {
+                                        consecutiveHits = 0
+                                    }
                                 }
                             } else {
+                                // No hand detected
+                                if (isDynamic) {
+                                    dynamicStatus = "No hand detected — show your hand"
+                                }
                                 confidence = 0f
                                 detectedLabel = ""
                                 consecutiveHits = 0
@@ -208,7 +246,7 @@ fun CameraPracticeScreen(
                     )
                 }
 
-                // "Detecting..." or "Sign Confirmed" badge
+                // Status badge
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -228,7 +266,7 @@ fun CameraPracticeScreen(
                     )
                 }
 
-                // Show what the model currently sees (debug info)
+                // Debug overlay — what the model sees
                 if (!isConfirmed && detectedLabel.isNotEmpty()) {
                     Box(
                         modifier = Modifier
@@ -246,7 +284,7 @@ fun CameraPracticeScreen(
                     }
                 }
 
-                // Confirmed overlay text
+                // Confirmed overlay
                 if (isConfirmed) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -288,10 +326,31 @@ fun CameraPracticeScreen(
                 )
             }
 
+            // ── Dynamic: motion progress bar ────────────────
+            if (isDynamic && !isConfirmed) {
+                Spacer(Modifier.height(12.dp))
+
+                Text(
+                    text = dynamicStatus,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Spacer(Modifier.height(4.dp))
+                LinearProgressIndicator(
+                    progress = { dynamicProgress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp)),
+                    color = Color(0xFF4CAF50),
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                )
+            }
+
             Spacer(Modifier.height(20.dp))
 
             if (!isConfirmed) {
-                // ── "Show the sign for..." prompt ───────────
+                // ── Sign prompt ─────────────────────────────
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -326,11 +385,20 @@ fun CameraPracticeScreen(
                 )
                 Spacer(Modifier.height(8.dp))
 
-                val tips = listOf(
-                    "Ensure good lighting and clear view of your hands.",
-                    "Perform sign slow and clear.",
-                    "Keep your hands within the camera frame.",
-                )
+                val tips = if (isDynamic) {
+                    listOf(
+                        "Ensure good lighting and clear view of your hands.",
+                        "Perform the sign movement slowly and clearly.",
+                        "Keep your hands within the camera frame throughout the motion.",
+                        "Wait for the progress bar to fill, then the model will evaluate.",
+                    )
+                } else {
+                    listOf(
+                        "Ensure good lighting and clear view of your hands.",
+                        "Perform sign slow and clear.",
+                        "Keep your hands within the camera frame.",
+                    )
+                }
                 tips.forEachIndexed { index, tip ->
                     Text(
                         text = "${index + 1}. $tip",
@@ -340,9 +408,8 @@ fun CameraPracticeScreen(
                     )
                 }
             } else {
-                // ── Detection log (shown after confirmation) ─
+                // ── Detection log ───────────────────────────
                 val elapsed = ((finishTime - startTime) / 1000).toInt()
-
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -358,11 +425,11 @@ fun CameraPracticeScreen(
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(Modifier.height(8.dp))
-
                         LogLine("Attempts", "$attempts")
                         LogLine("Time finished", "${elapsed}sec")
                         LogLine("Accurate percentage", "${(confidence * 100).toInt()}%")
                         LogLine("Confidence", "${(confidence * 100).toInt()}%")
+                        LogLine("Type", if (isDynamic) "Dynamic (LSTM)" else "Static (Dense)")
                     }
                 }
             }
@@ -370,7 +437,7 @@ fun CameraPracticeScreen(
             Spacer(Modifier.height(24.dp))
         }
 
-        // ── Bottom button (only when confirmed) ─────────────
+        // ── Proceed button ──────────────────────────────────
         if (isConfirmed && onProceed != null) {
             Button(
                 onClick = onProceed,
@@ -394,7 +461,7 @@ fun CameraPracticeScreen(
     }
 }
 
-// ── Top bar ─────────────────────────────────────────────────────
+// ── Shared composables ──────────────────────────────────────────
 
 @Composable
 private fun PracticeTopBar(onBack: () -> Unit) {
@@ -423,8 +490,6 @@ private fun PracticeTopBar(onBack: () -> Unit) {
     }
 }
 
-// ── Detection log line ──────────────────────────────────────────
-
 @Composable
 private fun LogLine(label: String, value: String) {
     Text(
@@ -435,21 +500,11 @@ private fun LogLine(label: String, value: String) {
     )
 }
 
-// ── Bitmap rotation ─────────────────────────────────────────────
-
-/**
- * Rotates a bitmap by the given degrees. CameraX reports rotation
- * needed to make the image upright — we must apply it before
- * passing to MediaPipe, otherwise landmarks are extracted from
- * a sideways image and won't match the training data.
- */
 private fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
     if (degrees == 0) return bitmap
     val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
     return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
 }
-
-// ── CameraX preview with throttled frame analysis ───────────────
 
 @Composable
 private fun CameraPreview(
@@ -478,7 +533,6 @@ private fun CameraPreview(
                     .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                     .build()
 
-                // Throttled: only process a frame every FRAME_INTERVAL_MS
                 var lastProcessedTime = 0L
 
                 imageAnalysis.setAnalyzer(executor) { imageProxy ->
@@ -495,7 +549,6 @@ private fun CameraPreview(
 
                     if (bitmap != null) {
                         onFrame(bitmap, rotation)
-                        // bitmap is recycled inside onFrame after use
                     }
                 }
 
@@ -518,9 +571,6 @@ private fun CameraPreview(
     )
 }
 
-/**
- * Converts an [ImageProxy] with RGBA_8888 format to a [Bitmap].
- */
 private fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
     return try {
         val buffer = imageProxy.planes[0].buffer
