@@ -114,6 +114,58 @@ def augment(X: np.ndarray, y: np.ndarray, copies: int) -> tuple[np.ndarray, np.n
     return np.concatenate(Xs), np.concatenate(ys)
 
 
+# ── Runtime-compatibility guard ─────────────────────────────────────
+
+# Highest builtin-op version the Android app's TFLite runtime can parse.
+# The app pins org.tensorflow:tensorflow-lite 2.16.1 in
+# gradle/libs.versions.toml. The shipped fsl_alphabet.tflite uses
+# FULLY_CONNECTED v9, which that runtime handles; v12 (emitted by
+# dynamic-range quantization on TF >= 2.19) crashes it.
+MAX_SUPPORTED_OP_VERSION = 9
+
+
+def check_opcode_versions(tflite_path: str) -> None:
+    """Fail loudly if the exported model uses ops the phone can't run.
+
+    A model that converts fine on the desktop can still be unloadable on
+    the device. Catching it here beats discovering it as a blank camera
+    screen with a generic error message.
+    """
+    try:
+        import tflite  # pip install tflite
+    except ImportError:
+        print("\n  (skipping opcode check — `pip install tflite` to enable it)")
+        return
+
+    names = {v: k for k, v in vars(tflite.BuiltinOperator).items()
+             if isinstance(v, int)}
+    model = tflite.Model.GetRootAsModel(open(tflite_path, "rb").read(), 0)
+
+    print("\nOperator versions in the exported model:")
+    bad = []
+    for i in range(model.OperatorCodesLength()):
+        oc = model.OperatorCodes(i)
+        op_name = names.get(oc.BuiltinCode(), str(oc.BuiltinCode()))
+        version = oc.Version()
+        flag = "" if version <= MAX_SUPPORTED_OP_VERSION else "  <-- TOO NEW"
+        print(f"    {op_name} v{version}{flag}")
+        if version > MAX_SUPPORTED_OP_VERSION:
+            bad.append((op_name, version))
+
+    if bad:
+        raise SystemExit(
+            "\nERROR: this model cannot load on the app's TFLite runtime.\n"
+            + "".join(f"  {n} v{v} > max supported v{MAX_SUPPORTED_OP_VERSION}\n"
+                      for n, v in bad)
+            + "\nThe app would show 'This module's recognition model isn't\n"
+              "available yet'. Remove converter.optimizations (quantization\n"
+              "is what bumps the op version), or raise the tflite version in\n"
+              "gradle/libs.versions.toml to match.\n"
+        )
+
+    print(f"  All ops <= v{MAX_SUPPORTED_OP_VERSION} — loadable by the app.")
+
+
 # ── Model ───────────────────────────────────────────────────────────
 
 def build_model(num_classes: int) -> tf.keras.Model:
@@ -252,14 +304,32 @@ def main() -> None:
         f.write("labels: " + ", ".join(labels) + "\n")
         f.write(np.array2string(cm))
 
+    # Keep the Keras model so the .tflite can be re-converted later
+    # (different opset, different settings) without retraining.
+    keras_path = os.path.join(OUT_DIR, "fsl_numbers.keras")
+    model.save(keras_path)
+
     # ── Export ──
+    #
+    # DO NOT enable converter.optimizations here.
+    #
+    # Dynamic-range quantization on TF >= 2.19 emits FULLY_CONNECTED
+    # *version 12*, which the app's TFLite runtime (2.16.1, see
+    # gradle/libs.versions.toml) cannot parse. It fails at Interpreter
+    # construction with:
+    #     Didn't find op for builtin opcode 'FULLY_CONNECTED' version '12'
+    # and the practice screen just reports the model as unavailable.
+    #
+    # The model is ~25 KB as plain float32 anyway, so quantization buys
+    # nothing here. The guard below catches it if anyone re-enables it.
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
     tflite_model = converter.convert()
 
     tflite_path = os.path.join(OUT_DIR, "fsl_numbers.tflite")
     with open(tflite_path, "wb") as f:
         f.write(tflite_model)
+
+    check_opcode_versions(tflite_path)
 
     labels_path = os.path.join(OUT_DIR, "fsl_numbers_labels.txt")
     with open(labels_path, "w", encoding="utf-8") as f:
@@ -281,9 +351,9 @@ def main() -> None:
             mismatches += 1
 
     print(f"\nTFLite parity check: {len(probe) - mismatches}/{len(probe)} agree with Keras")
-    if mismatches > len(probe) * 0.02:
-        print("  WARNING: quantization changed predictions on >2% of samples.")
-        print("  Re-run with converter.optimizations disabled if this hurts on-device.")
+    if mismatches:
+        print("  NOTE: float32 conversion should be near-exact. Any sizeable")
+        print("  disagreement here means something is wrong with the export.")
 
     print(f"""
 Done.

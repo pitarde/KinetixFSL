@@ -81,9 +81,98 @@ object FslSignData {
         SignCategory(
             id = "numbers",
             title = "Numbers in Filipino",
-            signs = (0..9).map { digit ->
-                SignEntry(id = "num_$digit", name = digit.toString())
-            },
+            signs = listOf(
+                SignEntry(
+                    id = "num_0",
+                    name = "0",
+                    steps = listOf(
+                        "Curve your fingers into a circle shape.",
+                        "Touch the tip of your thumb to the tip of your middle finger.",
+                        "Hold the sign up with the palm facing outward.",
+                    ),
+                ),
+                SignEntry(
+                    id = "num_1",
+                    name = "1",
+                    steps = listOf(
+                        "Make a fist with your dominant hand.",
+                        "Extend only your index finger, pointing up.",
+                        "Keep your palm facing toward you.",
+                    ),
+                ),
+                SignEntry(
+                    id = "num_2",
+                    name = "2",
+                    steps = listOf(
+                        "Make a fist with your dominant hand.",
+                        "Extend your index and middle fingers, spread apart.",
+                        "Keep your palm facing toward you.",
+                    ),
+                ),
+                SignEntry(
+                    id = "num_3",
+                    name = "3",
+                    steps = listOf(
+                        "Make a fist with your dominant hand.",
+                        "Extend your thumb, index, and middle fingers, spread apart.",
+                        "Keep your palm facing toward you.",
+                    ),
+                ),
+                SignEntry(
+                    id = "num_4",
+                    name = "4",
+                    steps = listOf(
+                        "Make a fist with your dominant hand.",
+                        "Extend all four fingers (index, middle, ring, pinky) spread apart.",
+                        "Keep your thumb folded across your palm.",
+                        "Palm faces toward you.",
+                    ),
+                ),
+                SignEntry(
+                    id = "num_5",
+                    name = "5",
+                    steps = listOf(
+                        "Open your hand fully with all five fingers spread apart.",
+                        "Keep your palm facing toward you.",
+                    ),
+                ),
+                SignEntry(
+                    id = "num_6",
+                    name = "6",
+                    steps = listOf(
+                        "Hold your hand up with your palm facing outward.",
+                        "Fold your pinky finger down to touch the tip of your thumb.",
+                        "Keep your remaining three fingers (index, middle, ring) extended and spread.",
+                    ),
+                ),
+                SignEntry(
+                    id = "num_7",
+                    name = "7",
+                    steps = listOf(
+                        "Hold your hand up with your palm facing outward.",
+                        "Fold your ring finger down to touch the tip of your thumb.",
+                        "Keep your remaining three fingers (index, middle, pinky) extended and spread.",
+                    ),
+                ),
+                SignEntry(
+                    id = "num_8",
+                    name = "8",
+                    steps = listOf(
+                        "Hold your hand up with your palm facing outward.",
+                        "Fold your middle finger down to touch the tip of your thumb.",
+                        "Keep your remaining three fingers (index, ring, pinky) extended and spread.",
+                    ),
+                ),
+                SignEntry(
+                    id = "num_9",
+                    name = "9",
+                    steps = listOf(
+                        "Hold your hand up with your palm facing outward.",
+                        "Fold your index finger down to touch the tip of your thumb.",
+                        "Keep your remaining three fingers (middle, ring, pinky) extended and spread.",
+                    ),
+                ),
+            ),
         ),
 
         // ── 3. Greetings & Courtesies ────────────────────────────

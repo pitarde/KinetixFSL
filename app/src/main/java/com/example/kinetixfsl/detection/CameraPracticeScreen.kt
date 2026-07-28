@@ -143,9 +143,14 @@ fun CameraPracticeScreen(
                 Log.d(TAG, "Loaded STATIC classifier for: $targetLabel ($categoryId)")
             }
         } catch (e: Exception) {
-            // Most likely cause: the module's .tflite isn't in assets/ yet.
+            // Two very different failures land here and they need different fixes:
+            //   - asset missing        -> the .tflite was never copied into assets/
+            //   - op version too new   -> model converted with a TF newer than the
+            //                             runtime in gradle/libs.versions.toml
+            // Showing the real reason saves a long guessing session.
             Log.e(TAG, "Failed to load ML models for category '$categoryId'", e)
-            modelError = "This module's recognition model isn't available yet."
+            modelError = "Model failed to load for \"$categoryId\".\n" +
+                    (e.message?.take(220) ?: e::class.java.simpleName)
         }
     }
 
