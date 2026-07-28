@@ -7,27 +7,38 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 
 /**
- * Loads `fsl_alphabet.tflite` from assets and classifies a 63-dim
- * landmark feature vector into one of the trained FSL alphabet labels.
+ * Loads a static-sign TFLite model from assets and classifies a 63-dim
+ * landmark feature vector into one of its trained labels.
+ *
+ * Each learning module ships its own model rather than sharing one big
+ * classifier — FSL number handshapes collide with several letters (2/V,
+ * 5/open-B), and a per-module model means the practice screen can only ever
+ * predict a sign that belongs to the module the learner is actually in.
+ *
+ * Use the [forCategory] factory to get the right model for a module id.
  *
  * Thread-safe: the [Interpreter] is called under a synchronized lock.
  * Create one instance and reuse it for the lifetime of the camera session.
  */
-class SignClassifier(context: Context) {
+class SignClassifier(
+    context: Context,
+    modelAsset: String = ALPHABET_MODEL,
+    labelsAsset: String = ALPHABET_LABELS,
+) {
 
     private val interpreter: Interpreter
     private val labels: List<String>
 
     init {
-        val model = loadModel(context, "fsl_alphabet.tflite")
+        val model = loadModel(context, modelAsset)
         interpreter = Interpreter(model)
-        labels = loadLabels(context, "fsl_alphabet_labels.txt")
+        labels = loadLabels(context, labelsAsset)
     }
 
     /**
      * Result of a single classification.
      *
-     * @param label      Predicted letter (e.g. "A", "Ñ", "NG").
+     * @param label      Predicted sign (e.g. "A", "NG", "7", "NONE").
      * @param confidence Softmax probability, 0.0–1.0.
      */
     data class Result(
@@ -93,4 +104,25 @@ class SignClassifier(context: Context) {
             .readLines()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
+
+    companion object {
+        const val ALPHABET_MODEL = "fsl_alphabet.tflite"
+        const val ALPHABET_LABELS = "fsl_alphabet_labels.txt"
+
+        const val NUMBERS_MODEL = "fsl_numbers.tflite"
+        const val NUMBERS_LABELS = "fsl_numbers_labels.txt"
+
+        /**
+         * Builds the classifier for a module id from [FslSignData].
+         *
+         * Unknown categories fall back to the alphabet model — the word-sign
+         * categories are all dynamic and never reach this code path today,
+         * but a future static word module would need its own entry here.
+         */
+        fun forCategory(context: Context, categoryId: String): SignClassifier =
+            when (categoryId) {
+                "numbers" -> SignClassifier(context, NUMBERS_MODEL, NUMBERS_LABELS)
+                else -> SignClassifier(context, ALPHABET_MODEL, ALPHABET_LABELS)
+            }
+    }
 }

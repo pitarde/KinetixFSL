@@ -74,14 +74,18 @@ private const val FRAME_INTERVAL_MS = 200L
  * Dynamic signs: early classification — starts attempting after 15 frames,
  *   confirms as soon as the motion is recognized with high confidence.
  *
- * @param isDynamic If true, uses DynamicSignClassifier (1D-CNN) instead of
- *                  SignClassifier (Dense).
+ * @param isDynamic  If true, uses DynamicSignClassifier (1D-CNN) instead of
+ *                   SignClassifier (Dense).
+ * @param categoryId Module id from FslSignData ("alphabet", "numbers", ...).
+ *                   Selects which static model to load; ignored when
+ *                   [isDynamic] is true, since all dynamic signs share one model.
  */
 @Composable
 fun CameraPracticeScreen(
     targetLabel: String,
     displayName: String,
     isDynamic: Boolean,
+    categoryId: String,
     onBack: () -> Unit,
     onProceed: (() -> Unit)?,
     modifier: Modifier = Modifier,
@@ -126,18 +130,22 @@ fun CameraPracticeScreen(
     var dynamicClassifier by remember { mutableStateOf<DynamicSignClassifier?>(null) }
     var landmarkHelper by remember { mutableStateOf<HandLandmarkHelper?>(null) }
 
-    LaunchedEffect(Unit) {
+    var modelError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(isDynamic, categoryId) {
         try {
             landmarkHelper = HandLandmarkHelper(context)
             if (isDynamic) {
                 dynamicClassifier = DynamicSignClassifier(context)
                 Log.d(TAG, "Loaded DYNAMIC classifier for: $targetLabel")
             } else {
-                staticClassifier = SignClassifier(context)
-                Log.d(TAG, "Loaded STATIC classifier for: $targetLabel")
+                staticClassifier = SignClassifier.forCategory(context, categoryId)
+                Log.d(TAG, "Loaded STATIC classifier for: $targetLabel ($categoryId)")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load ML models", e)
+            // Most likely cause: the module's .tflite isn't in assets/ yet.
+            Log.e(TAG, "Failed to load ML models for category '$categoryId'", e)
+            modelError = "This module's recognition model isn't available yet."
         }
     }
 
@@ -315,6 +323,24 @@ fun CameraPracticeScreen(
                     }
                 }
 
+                // Model failed to load (e.g. asset not bundled yet)
+                modelError?.let { message ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.75f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 24.dp),
+                        )
+                    }
+                }
+
                 // Confirmed overlay
                 if (isConfirmed) {
                     Box(
@@ -483,7 +509,11 @@ fun CameraPracticeScreen(
                 ),
             ) {
                 Text(
-                    text = "Proceed to the next letter",
+                    text = when (categoryId) {
+                        "alphabet" -> "Proceed to the next letter"
+                        "numbers" -> "Proceed to the next number"
+                        else -> "Proceed to the next sign"
+                    },
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )

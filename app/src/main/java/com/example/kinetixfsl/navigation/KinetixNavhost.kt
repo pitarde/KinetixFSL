@@ -379,6 +379,7 @@ fun KinetixNavHost(
                         targetLabel = sign.name,
                         displayName = "$displayPrefix ${sign.name}".trim(),
                         isDynamic = sign.isDynamic,
+                        categoryId = categoryId,
                         onBack = { navController.popBackStack() },
                         onProceed = if (isLastSign) null else {
                             {

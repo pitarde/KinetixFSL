@@ -1,0 +1,15 @@
+# FSL Numbers training environment — verified against Python 3.12 / Windows x64.
+#
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# mediapipe is pinned to >=1.0.0 because 1.0.0 REMOVED the legacy
+# `mp.solutions` API. The collection script uses the Tasks API instead, which
+# is what the Android app uses too — so the landmarks match exactly.
+
+mediapipe>=1.0.0
+opencv-python>=4.11
+numpy>=2.0
+pandas>=2.2
+scikit-learn>=1.5
+matplotlib>=3.9
+tensorflow>=2.19
