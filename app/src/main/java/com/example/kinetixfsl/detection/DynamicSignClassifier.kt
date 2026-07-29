@@ -23,17 +23,28 @@ import java.nio.channels.FileChannel
  * If the buffer fills completely without a confident match the caller
  * should reset and let the user try again.
  */
-class DynamicSignClassifier(context: Context) {
+class DynamicSignClassifier(
+    context: Context,
+    modelAsset: String = LETTERS_MODEL,
+    labelsAsset: String = LETTERS_LABELS,
+    /**
+     * Floats per frame. 63 for the one-handed letter model (J, Z, Ñ, NG),
+     * 126 for the two-handed word-sign models. Must match the second
+     * dimension the .tflite was trained with, or `interpreter.run` throws.
+     */
+    val numFeatures: Int = SINGLE_HAND_FEATURES,
+) {
 
     private val interpreter: Interpreter
     private val labels: List<String>
 
     private val buffer = ArrayList<FloatArray>(SEQUENCE_LENGTH)
+    private val zeroFrame = FloatArray(numFeatures)
 
     init {
-        val model = loadModel(context, "fsl_dynamic.tflite")
+        val model = loadModel(context, modelAsset)
         interpreter = Interpreter(model)
-        labels = loadLabels(context, "fsl_dynamic_labels.txt")
+        labels = loadLabels(context, labelsAsset)
     }
 
     data class Result(
@@ -54,8 +65,8 @@ class DynamicSignClassifier(context: Context) {
      * Adds a frame. Keeps accepting frames until the buffer is full.
      */
     fun addFrame(features: FloatArray) {
-        require(features.size == NUM_FEATURES) {
-            "Expected $NUM_FEATURES features, got ${features.size}"
+        require(features.size == numFeatures) {
+            "Expected $numFeatures features, got ${features.size}"
         }
         if (buffer.size < SEQUENCE_LENGTH) {
             buffer.add(features)
@@ -77,12 +88,12 @@ class DynamicSignClassifier(context: Context) {
             "Need at least $MIN_FRAMES_FOR_EARLY frames, have ${buffer.size}"
         }
 
-        // Build the (1, SEQUENCE_LENGTH, 63) input tensor.
+        // Build the (1, SEQUENCE_LENGTH, numFeatures) input tensor.
         // Frames beyond buffer.size are left as zeros (padding).
         val input = Array(1) {
             Array(SEQUENCE_LENGTH) { i ->
                 if (i < buffer.size) buffer[i]
-                else ZERO_FRAME
+                else zeroFrame
             }
         }
         val output = Array(1) { FloatArray(labels.size) }
@@ -142,7 +153,9 @@ class DynamicSignClassifier(context: Context) {
         private const val TAG = "DynamicClassifier"
 
         const val SEQUENCE_LENGTH = 30   // must match training
-        private const val NUM_FEATURES = 63
+
+        const val SINGLE_HAND_FEATURES = 63
+        const val TWO_HAND_FEATURES = 126
 
         /**
          * Minimum frames before the first classification attempt.
@@ -151,7 +164,47 @@ class DynamicSignClassifier(context: Context) {
          */
         const val MIN_FRAMES_FOR_EARLY = 15
 
-        /** Reusable zero-filled frame for padding. */
-        private val ZERO_FRAME = FloatArray(NUM_FEATURES)
+        // One-handed dynamic letters: J, Z, Ñ, NG (+ NONE).
+        const val LETTERS_MODEL = "fsl_dynamic.tflite"
+        const val LETTERS_LABELS = "fsl_dynamic_labels.txt"
+
+        // Two-handed word signs, one model per module.
+        const val GREETINGS_MODEL = "fsl_greetings.tflite"
+        const val GREETINGS_LABELS = "fsl_greetings_labels.txt"
+
+        private data class Spec(
+            val model: String,
+            val labels: String,
+            val features: Int,
+        )
+
+        /**
+         * Single source of truth for which model a module uses.
+         *
+         * [isTwoHanded] and [forCategory] must never disagree: the screen
+         * asks the first which extractor to run, and the second builds the
+         * classifier that consumes it. If one said 126 and the other built
+         * a 63-dim model, `addFrame` would throw on the very first frame,
+         * inside the camera analyzer callback.
+         *
+         * Add a branch here as each word-sign module gets its model.
+         * Modules without one yet fall back to the one-handed letters
+         * model, whose labels (J, Z, Ñ, NG) simply never match a word
+         * sign — the screen shows low confidence instead of crashing.
+         */
+        private fun specFor(categoryId: String): Spec = when (categoryId) {
+            "greetings" -> Spec(GREETINGS_MODEL, GREETINGS_LABELS, TWO_HAND_FEATURES)
+            else -> Spec(LETTERS_MODEL, LETTERS_LABELS, SINGLE_HAND_FEATURES)
+        }
+
+        /** True when [categoryId] uses the two-handed (126-dim) encoding. */
+        fun isTwoHanded(categoryId: String): Boolean =
+            specFor(categoryId).features == TWO_HAND_FEATURES
+
+        /** Builds the dynamic classifier for a module id. */
+        fun forCategory(context: Context, categoryId: String): DynamicSignClassifier =
+            specFor(categoryId).let {
+                DynamicSignClassifier(context, it.model, it.labels, it.features)
+            }
     }
 }

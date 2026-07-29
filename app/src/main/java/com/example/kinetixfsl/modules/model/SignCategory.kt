@@ -181,9 +181,9 @@ object FslSignData {
             title = "Greetings & Courtesies",
             signs = listOf(
                 SignEntry(id = "greet_kamusta", name = "Kamusta", isDynamic = true),
-                SignEntry(id = "greet_welcome", name = "Welcome", isDynamic = true),
                 SignEntry(id = "greet_salamat", name = "Salamat", isDynamic = true),
-                SignEntry(id = "greet_pakiusap", name = "Pakiusap", isDynamic = true),
+                SignEntry(id = "greet_walang_anuman", name = "Walang Anuman", isDynamic = true),
+                SignEntry(id = "greet_ayos_lang_ako", name = "Ayos lang ako", isDynamic = true),
             ),
         ),
 

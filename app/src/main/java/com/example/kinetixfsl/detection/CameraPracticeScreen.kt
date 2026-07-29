@@ -122,8 +122,14 @@ fun CameraPracticeScreen(
     var dynamicProgress by remember { mutableFloatStateOf(0f) }
     var dynamicStatus by remember { mutableStateOf("Waiting for hand...") }
 
-    // Landmark overlay state — raw MediaPipe normalized coords (0..1)
-    var landmarkPoints by remember { mutableStateOf<List<Triple<Float, Float, Float>>?>(null) }
+    // Landmark overlay state — raw MediaPipe normalized coords (0..1),
+    // one inner list per detected hand.
+    var landmarkPoints by remember {
+        mutableStateOf<List<List<Triple<Float, Float, Float>>>?>(null)
+    }
+
+    // Word-sign modules track both hands; dynamic letters stay one-handed.
+    val twoHanded = isDynamic && DynamicSignClassifier.isTwoHanded(categoryId)
 
     // ── ML helpers ──────────────────────────────────────────
     var staticClassifier by remember { mutableStateOf<SignClassifier?>(null) }
@@ -134,10 +140,14 @@ fun CameraPracticeScreen(
 
     LaunchedEffect(isDynamic, categoryId) {
         try {
-            landmarkHelper = HandLandmarkHelper(context)
+            landmarkHelper = HandLandmarkHelper(
+                context,
+                numHands = if (twoHanded) 2 else 1,
+            )
             if (isDynamic) {
-                dynamicClassifier = DynamicSignClassifier(context)
-                Log.d(TAG, "Loaded DYNAMIC classifier for: $targetLabel")
+                dynamicClassifier = DynamicSignClassifier.forCategory(context, categoryId)
+                Log.d(TAG, "Loaded DYNAMIC classifier for: $targetLabel " +
+                        "($categoryId, ${if (twoHanded) "2-hand" else "1-hand"})")
             } else {
                 staticClassifier = SignClassifier.forCategory(context, categoryId)
                 Log.d(TAG, "Loaded STATIC classifier for: $targetLabel ($categoryId)")
@@ -189,94 +199,115 @@ fun CameraPracticeScreen(
                 if (hasCameraPermission && !isConfirmed) {
                     CameraPreview(
                         onFrame = { bitmap, rotationDegrees ->
-                            if (isConfirmed) return@CameraPreview
+                            if (isConfirmed) {
+                                bitmap.recycle()
+                                return@CameraPreview
+                            }
 
-                            val lh = landmarkHelper ?: return@CameraPreview
-                            val rotated = rotateBitmap(bitmap, rotationDegrees)
-                            val result = lh.detectAndNormalizeWithLandmarks(rotated)
-                            if (rotated !== bitmap) rotated.recycle()
-                            bitmap.recycle()
+                            val lh = landmarkHelper
+                            if (lh == null) {
+                                bitmap.recycle()
+                                return@CameraPreview
+                            }
 
-                            val features = result?.first
-                            val rawLandmarks = result?.second
+                            try {
+                                val rotated = rotateBitmap(bitmap, rotationDegrees)
 
-                            // Update landmark overlay (even if null — clears old dots)
-                            landmarkPoints = rawLandmarks
+                                // Two-handed word signs need the 126-dim encoding;
+                                // everything else keeps the original 63-dim path.
+                                val features: FloatArray?
+                                val rawLandmarks: List<List<Triple<Float, Float, Float>>>?
+                                if (twoHanded) {
+                                    val r = lh.detectTwoHandsWithLandmarks(rotated)
+                                    features = r?.first
+                                    rawLandmarks = r?.second
+                                } else {
+                                    val r = lh.detectAndNormalizeWithLandmarks(rotated)
+                                    features = r?.first
+                                    rawLandmarks = r?.second?.let { listOf(it) }
+                                }
 
-                            if (features != null) {
-                                if (isDynamic) {
-                                    // ── Dynamic: buffer + early classify ──
-                                    val dc = dynamicClassifier ?: return@CameraPreview
-                                    dc.addFrame(features)
-                                    dynamicProgress = dc.progress
+                                if (rotated !== bitmap) rotated.recycle()
+                                bitmap.recycle()
 
-                                    if (dc.canClassify &&
-                                        (dc.frameCount % 3 == 0 || dc.isFull)
-                                    ) {
-                                        // Classify every 3rd frame to avoid lag.
-                                        // Always classify on the final frame.
-                                        val classResult = dc.classify()
+                                // Update landmark overlay (even if null — clears old dots)
+                                landmarkPoints = rawLandmarks
+
+                                if (features != null) {
+                                    if (isDynamic) {
+                                        // ── Dynamic: buffer + early classify ──
+                                        val dc = dynamicClassifier ?: return@CameraPreview
+                                        dc.addFrame(features)
+                                        dynamicProgress = dc.progress
+
+                                        if (dc.canClassify &&
+                                            (dc.frameCount % 3 == 0 || dc.isFull)
+                                        ) {
+                                            val classResult = dc.classify()
+                                            attempts++
+                                            detectedLabel = classResult.label
+                                            confidence = classResult.confidence
+
+                                            dynamicStatus =
+                                                "Analyzing... ${dc.frameCount}/${DynamicSignClassifier.SEQUENCE_LENGTH}"
+
+                                            Log.d(TAG, "DYNAMIC Target=$targetLabel | " +
+                                                    "Predicted=${classResult.label} | " +
+                                                    "Confidence=${(classResult.confidence * 100).toInt()}% | " +
+                                                    "Frames=${dc.frameCount}")
+
+                                            if (classResult.label == targetLabel &&
+                                                classResult.confidence >= CONFIRM_THRESHOLD
+                                            ) {
+                                                isConfirmed = true
+                                                finishTime = System.currentTimeMillis()
+                                            } else if (dc.isFull) {
+                                                dc.reset()
+                                                dynamicProgress = 0f
+                                                dynamicStatus = "Not matched — try again"
+                                            }
+                                        } else {
+                                            dynamicStatus =
+                                                "Recording motion... ${dc.frameCount}/${DynamicSignClassifier.MIN_FRAMES_FOR_EARLY}"
+                                        }
+                                    } else {
+                                        // ── Static: classify per frame ──
+                                        val sc = staticClassifier ?: return@CameraPreview
+                                        val classResult = sc.classify(features)
                                         attempts++
                                         detectedLabel = classResult.label
                                         confidence = classResult.confidence
 
-                                        dynamicStatus =
-                                            "Analyzing... ${dc.frameCount}/${DynamicSignClassifier.SEQUENCE_LENGTH}"
-
-                                        Log.d(TAG, "DYNAMIC Target=$targetLabel | " +
+                                        Log.d(TAG, "STATIC Target=$targetLabel | " +
                                                 "Predicted=${classResult.label} | " +
                                                 "Confidence=${(classResult.confidence * 100).toInt()}% | " +
-                                                "Frames=${dc.frameCount}")
+                                                "Hits=$consecutiveHits")
 
                                         if (classResult.label == targetLabel &&
                                             classResult.confidence >= CONFIRM_THRESHOLD
                                         ) {
-                                            isConfirmed = true
-                                            finishTime = System.currentTimeMillis()
-                                        } else if (dc.isFull) {
-                                            // Buffer full without a match — reset
-                                            dc.reset()
-                                            dynamicProgress = 0f
-                                            dynamicStatus = "Not matched — try again"
+                                            consecutiveHits++
+                                            if (consecutiveHits >= CONFIRM_FRAMES) {
+                                                isConfirmed = true
+                                                finishTime = System.currentTimeMillis()
+                                            }
+                                        } else {
+                                            consecutiveHits = 0
                                         }
-                                    } else {
-                                        dynamicStatus =
-                                            "Recording motion... ${dc.frameCount}/${DynamicSignClassifier.MIN_FRAMES_FOR_EARLY}"
                                     }
                                 } else {
-                                    // ── Static: classify per frame ──
-                                    val sc = staticClassifier ?: return@CameraPreview
-                                    val classResult = sc.classify(features)
-                                    attempts++
-                                    detectedLabel = classResult.label
-                                    confidence = classResult.confidence
-
-                                    Log.d(TAG, "STATIC Target=$targetLabel | " +
-                                            "Predicted=${classResult.label} | " +
-                                            "Confidence=${(classResult.confidence * 100).toInt()}% | " +
-                                            "Hits=$consecutiveHits")
-
-                                    if (classResult.label == targetLabel &&
-                                        classResult.confidence >= CONFIRM_THRESHOLD
-                                    ) {
-                                        consecutiveHits++
-                                        if (consecutiveHits >= CONFIRM_FRAMES) {
-                                            isConfirmed = true
-                                            finishTime = System.currentTimeMillis()
-                                        }
-                                    } else {
-                                        consecutiveHits = 0
+                                    // No hand detected
+                                    landmarkPoints = null
+                                    if (isDynamic) {
+                                        dynamicStatus = "No hand detected — show your hand"
                                     }
+                                    confidence = 0f
+                                    detectedLabel = ""
+                                    consecutiveHits = 0
                                 }
-                            } else {
-                                // No hand detected
-                                landmarkPoints = null
-                                if (isDynamic) {
-                                    dynamicStatus = "No hand detected — show your hand"
-                                }
-                                confidence = 0f
-                                detectedLabel = ""
-                                consecutiveHits = 0
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Frame processing error", e)
+                                bitmap.recycle()
                             }
                         },
                     )
@@ -285,7 +316,7 @@ fun CameraPracticeScreen(
                     // landmarks come from the already-flipped bitmap, so their
                     // x coords already match the mirrored preview — no extra flip.
                     HandLandmarkOverlay(
-                        landmarks = landmarkPoints,
+                        hands = landmarkPoints,
                         mirrorX = false,
                     )
                 }
@@ -559,10 +590,10 @@ private val HAND_CONNECTIONS = listOf(
  */
 @Composable
 private fun HandLandmarkOverlay(
-    landmarks: List<Triple<Float, Float, Float>>?,
+    hands: List<List<Triple<Float, Float, Float>>>?,
     mirrorX: Boolean,
 ) {
-    if (landmarks == null) return
+    if (hands.isNullOrEmpty()) return
 
     Canvas(modifier = Modifier.fillMaxSize()) {
         val w = size.width
@@ -574,26 +605,27 @@ private fun HandLandmarkOverlay(
             return Offset(x, y)
         }
 
-        // Draw connections (white lines)
-        for ((a, b) in HAND_CONNECTIONS) {
-            val pA = toScreen(landmarks[a])
-            val pB = toScreen(landmarks[b])
-            drawLine(
-                color = Color.White,
-                start = pA,
-                end = pB,
-                strokeWidth = 3f,
-            )
-        }
+        for (landmarks in hands) {
+            if (landmarks.size < 21) continue
 
-        // Draw landmark dots (red circles)
-        for (lm in landmarks) {
-            val p = toScreen(lm)
-            drawCircle(
-                color = Color.Red,
-                radius = 6f,
-                center = p,
-            )
+            // Draw connections (white lines)
+            for ((a, b) in HAND_CONNECTIONS) {
+                drawLine(
+                    color = Color.White,
+                    start = toScreen(landmarks[a]),
+                    end = toScreen(landmarks[b]),
+                    strokeWidth = 3f,
+                )
+            }
+
+            // Draw landmark dots (red circles)
+            for (lm in landmarks) {
+                drawCircle(
+                    color = Color.Red,
+                    radius = 6f,
+                    center = toScreen(lm),
+                )
+            }
         }
     }
 }

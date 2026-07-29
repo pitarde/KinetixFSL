@@ -1,4 +1,5 @@
-# FSL Numbers training environment — verified against Python 3.12 / Windows x64.
+# FSL training environment — verified against Python 3.12 / Windows x64.
+# Covers both the static (numbers) and dynamic (greetings) pipelines.
 #
 #   .venv\Scripts\python.exe -m pip install -r requirements.txt
 #
@@ -13,3 +14,8 @@ pandas>=2.2
 scikit-learn>=1.5
 matplotlib>=3.9
 tensorflow>=2.19
+
+# Reads operator versions out of the exported .tflite. Without it the
+# training scripts skip the compatibility guard and you can ship a model
+# the phone's TFLite 2.16.1 runtime cannot load.
+tflite>=2.10
