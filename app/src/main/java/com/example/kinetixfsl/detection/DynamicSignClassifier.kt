@@ -172,6 +172,10 @@ class DynamicSignClassifier(
         const val GREETINGS_MODEL = "fsl_greetings.tflite"
         const val GREETINGS_LABELS = "fsl_greetings_labels.txt"
 
+        // Basic Responses: Oo, Hindi, Hintay, Sige.
+        const val RESPONSES_MODEL = "fsl_responses.tflite"
+        const val RESPONSES_LABELS = "fsl_responses_labels.txt"
+
         private data class Spec(
             val model: String,
             val labels: String,
@@ -194,6 +198,7 @@ class DynamicSignClassifier(
          */
         private fun specFor(categoryId: String): Spec = when (categoryId) {
             "greetings" -> Spec(GREETINGS_MODEL, GREETINGS_LABELS, TWO_HAND_FEATURES)
+            "responses" -> Spec(RESPONSES_MODEL, RESPONSES_LABELS, TWO_HAND_FEATURES)
             else -> Spec(LETTERS_MODEL, LETTERS_LABELS, SINGLE_HAND_FEATURES)
         }
 

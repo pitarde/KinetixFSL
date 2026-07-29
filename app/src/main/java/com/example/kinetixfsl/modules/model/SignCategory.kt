@@ -192,10 +192,50 @@ object FslSignData {
             id = "responses",
             title = "Basic Responses",
             signs = listOf(
-                SignEntry(id = "resp_oo", name = "Oo", isDynamic = true),
-                SignEntry(id = "resp_hindi", name = "Hindi", isDynamic = true),
-                SignEntry(id = "resp_hintay", name = "Hintay", isDynamic = true),
-                SignEntry(id = "resp_sige", name = "Sige", isDynamic = true),
+                SignEntry(
+                    id = "resp_oo",
+                    name = "Oo",
+                    isDynamic = true,
+                    steps = listOf(
+                        "Make a fist with your dominant hand, palm facing forward.",
+                        "Keep your thumb resting along the side of your index finger.",
+                        "Nod the fist down and up from the wrist, like a head nodding \"yes\".",
+                        "Repeat the nod two or three times, then return to rest.",
+                    ),
+                ),
+                SignEntry(
+                    id = "resp_hindi",
+                    name = "Hindi",
+                    isDynamic = true,
+                    steps = listOf(
+                        "Hold your dominant hand up, palm facing forward.",
+                        "Extend your index and middle fingers together with your thumb out.",
+                        "Snap the two fingers down to meet the thumb, closing the hand.",
+                        "Do it once, crisply, then return to rest.",
+                    ),
+                ),
+                SignEntry(
+                    id = "resp_hintay",
+                    name = "Hintay",
+                    isDynamic = true,
+                    steps = listOf(
+                        "Raise both hands in front of you, palms facing up.",
+                        "Spread your fingers apart, dominant hand slightly ahead of the other.",
+                        "Wiggle your fingers while holding the hands in place.",
+                        "Keep both hands inside the frame for the whole motion.",
+                    ),
+                ),
+                SignEntry(
+                    id = "resp_sige",
+                    name = "Sige",
+                    isDynamic = true,
+                    steps = listOf(
+                        "Make a fist with your dominant hand, palm facing forward.",
+                        "Extend your thumb straight up.",
+                        "Move the hand slightly forward and down in a short, firm motion.",
+                        "Return to a neutral rest position.",
+                    ),
+                ),
             ),
         ),
 
