@@ -31,12 +31,46 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.KinetixFSL.Splash"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+                Shared post links, e.g.
+                https://kinetix-upload.pitardeken2024.workers.dev/p/{postId}
+
+                autoVerify only takes effect once /.well-known/assetlinks.json
+                on that host lists this app's signing SHA-256. Until then Android
+                shows the app/browser chooser, which still works.
+                Keep the host in sync with ShareLinks.HOST.
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:scheme="https"
+                    android:host="kinetix-upload.pitardeken2024.workers.dev"
+                    android:pathPrefix="/p/" />
+            </intent-filter>
+
+            <!-- What the web page's "Open in app" button fires. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:scheme="kinetix"
+                    android:host="post" />
             </intent-filter>
         </activity>
 

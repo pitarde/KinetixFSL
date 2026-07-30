@@ -4,25 +4,36 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
+import com.example.kinetixfsl.community.model.MAX_POST_MEDIA
 import com.example.kinetixfsl.community.upload.PostUploadService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
+/** One photo or video the user picked, before it's uploaded. */
+data class PickedMedia(
+    val uri: Uri,
+    /** "image" or "video". */
+    val type: String,
+)
+
 data class CreatePostUiState(
     val title: String = "",
     val body: String = "",
     val linkUrl: String = "",
     val isLinkFieldVisible: Boolean = false,
-    /** The local URI the user picked from the gallery (image or video). */
-    val mediaUri: Uri? = null,
-    /** "image" or "video" — set when the user picks a file. */
-    val mediaType: String? = null,
+    /**
+     * Everything the user attached, in pick order. Images and videos can be
+     * mixed freely, capped at [MAX_POST_MEDIA].
+     */
+    val media: List<PickedMedia> = emptyList(),
     val errorMessage: String? = null,
     /** True once the post has been handed off to the upload service. */
     val isPostCreated: Boolean = false,
-)
+) {
+    val canAddMore: Boolean get() = media.size < MAX_POST_MEDIA
+}
 
 class CreatePostViewModel(
     private val repository: CommunityRepository = CommunityRepository(),
@@ -43,23 +54,37 @@ class CreatePostViewModel(
     fun toggleLinkField() =
         _uiState.update { it.copy(isLinkFieldVisible = !it.isLinkFieldVisible) }
 
-    /** Called when the user picks an image from the gallery. */
-    fun onImagePicked(uri: Uri) {
-        _uiState.update {
-            it.copy(mediaUri = uri, mediaType = "image", errorMessage = null)
+    /**
+     * Appends everything the user just picked, skipping duplicates and
+     * stopping at [MAX_POST_MEDIA]. Picking again adds to the selection
+     * rather than replacing it, so images and videos can be mixed by going
+     * back to the picker.
+     */
+    fun onMediaPicked(picked: List<PickedMedia>) {
+        if (picked.isEmpty()) return
+
+        _uiState.update { state ->
+            val existing = state.media.map { it.uri }.toSet()
+            val room = MAX_POST_MEDIA - state.media.size
+            val additions = picked
+                .filter { it.uri !in existing }
+                .take(room.coerceAtLeast(0))
+
+            val dropped = picked.size - additions.size
+            state.copy(
+                media = state.media + additions,
+                errorMessage = if (dropped > 0 && room <= picked.size) {
+                    "You can attach up to $MAX_POST_MEDIA items."
+                } else {
+                    null
+                },
+            )
         }
     }
 
-    /** Called when the user picks a video from the gallery. */
-    fun onVideoPicked(uri: Uri) {
-        _uiState.update {
-            it.copy(mediaUri = uri, mediaType = "video", errorMessage = null)
-        }
-    }
-
-    /** Clears the selected media (user tapped the "x" on the preview). */
-    fun clearMedia() {
-        _uiState.update { it.copy(mediaUri = null, mediaType = null) }
+    /** Removes one attached item (user tapped the "x" on its thumbnail). */
+    fun removeMedia(item: PickedMedia) {
+        _uiState.update { it.copy(media = it.media - item, errorMessage = null) }
     }
 
     /**
@@ -75,12 +100,12 @@ class CreatePostViewModel(
             return
         }
 
-        // Take a persistent read permission on the media URI so the
-        // background service can still read it after the activity closes.
-        if (state.mediaUri != null) {
+        // Take persistent read permission on each URI so the background
+        // service can still read them after the activity closes.
+        state.media.forEach { item ->
             try {
                 context.contentResolver.takePersistableUriPermission(
-                    state.mediaUri,
+                    item.uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
             } catch (_: SecurityException) {
@@ -95,10 +120,16 @@ class CreatePostViewModel(
             putExtra(PostUploadService.EXTRA_BODY, state.body)
             putExtra(PostUploadService.EXTRA_LINK_URL,
                 state.linkUrl.takeIf { it.isNotBlank() })
-            if (state.mediaUri != null) {
-                putExtra(PostUploadService.EXTRA_MEDIA_URI, state.mediaUri.toString())
-                putExtra(PostUploadService.EXTRA_MEDIA_TYPE, state.mediaType)
-                // Grant the service read access to the content URI.
+            if (state.media.isNotEmpty()) {
+                putStringArrayListExtra(
+                    PostUploadService.EXTRA_MEDIA_URIS,
+                    ArrayList(state.media.map { it.uri.toString() }),
+                )
+                putStringArrayListExtra(
+                    PostUploadService.EXTRA_MEDIA_TYPES,
+                    ArrayList(state.media.map { it.type }),
+                )
+                // Grant the service read access to the content URIs.
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
         }

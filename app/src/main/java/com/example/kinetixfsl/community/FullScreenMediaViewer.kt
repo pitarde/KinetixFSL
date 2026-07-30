@@ -109,20 +109,13 @@ private fun FullScreenVideo(videoUrl: String) {
     val context = LocalContext.current
 
     val exoPlayer = remember {
-        // Use cache for full screen as well
-        val cacheDataSourceFactory = CacheDataSource.Factory()
-            .setCache(KinetixApplication.videoCache)
-            .setUpstreamDataSourceFactory(DefaultDataSource.Factory(context))
-
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
-            .build().apply {
-                setMediaItem(MediaItem.fromUri(videoUrl))
-                repeatMode = Player.REPEAT_MODE_ONE
-                volume = 1f // sound on in full screen
-                prepare()
-                play()
-            }
+        buildCachedPlayer(context).apply {
+            setMediaItem(MediaItem.fromUri(videoUrl))
+            repeatMode = Player.REPEAT_MODE_ONE
+            volume = 1f // sound on in full screen
+            prepare()
+            play()
+        }
     }
 
     DisposableEffect(Unit) {

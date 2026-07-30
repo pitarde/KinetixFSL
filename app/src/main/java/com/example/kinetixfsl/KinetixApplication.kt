@@ -9,27 +9,95 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.example.kinetixfsl.community.upload.PostUploadService
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreSettings
+import com.google.firebase.firestore.PersistentCacheSettings
 import java.io.File
 
 @OptIn(UnstableApi::class)
-class KinetixApplication : Application() {
+class KinetixApplication : Application(), ImageLoaderFactory {
 
     companion object {
         lateinit var videoCache: SimpleCache
             private set
+
+        /** On-disk budget for feed images. */
+        private const val IMAGE_DISK_CACHE_BYTES = 200L * 1024 * 1024
+
+        /** On-disk budget for streamed video. */
+        private const val VIDEO_CACHE_BYTES = 200L * 1024 * 1024
     }
 
     override fun onCreate() {
         super.onCreate()
 
-        // Initialize ExoPlayer video cache: 100MB
+        configureFirestoreCache()
+
         val cacheDir = File(cacheDir, "video_cache")
-        val evictor = LeastRecentlyUsedCacheEvictor(100 * 1024 * 1024L)
+        val evictor = LeastRecentlyUsedCacheEvictor(VIDEO_CACHE_BYTES)
         videoCache = SimpleCache(cacheDir, evictor, StandaloneDatabaseProvider(this))
 
         // Create the notification channel for post uploads.
         createUploadNotificationChannel()
+    }
+
+    /**
+     * Coil's default loader honours HTTP cache headers, and our R2 objects were
+     * uploaded without a `Cache-Control` header — so every image counted as
+     * non-cacheable and got re-downloaded on each scroll. Unnoticeable on WiFi,
+     * crippling on mobile data where every request pays a fresh handshake at
+     * high latency.
+     *
+     * `respectCacheHeaders(false)` makes the client cache regardless, which
+     * also repairs the images already sitting in the bucket without them —
+     * the Worker fix only applies to new uploads.
+     *
+     * This is safe here because upload keys are unique: the bytes at a given
+     * URL never change, so a stale cache entry is impossible.
+     */
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .respectCacheHeaders(false)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(IMAGE_DISK_CACHE_BYTES)
+                    .build()
+            }
+            .crossfade(true)
+            .build()
+    }
+
+    /**
+     * Gives Firestore an unbounded on-disk cache. Snapshot listeners then serve
+     * the last known feed immediately from disk and refresh from the server
+     * behind it, so opening the app on a slow connection shows posts at once
+     * instead of a spinner. Must run before anything touches Firestore.
+     */
+    private fun configureFirestoreCache() {
+        try {
+            FirebaseFirestore.getInstance().firestoreSettings =
+                FirebaseFirestoreSettings.Builder()
+                    .setLocalCacheSettings(
+                        PersistentCacheSettings.newBuilder()
+                            .setSizeBytes(FirebaseFirestoreSettings.CACHE_SIZE_UNLIMITED)
+                            .build()
+                    )
+                    .build()
+        } catch (_: IllegalStateException) {
+            // Already in use — settings are immutable at that point, and the
+            // defaults are fine. Nothing to do.
+        }
     }
 
     private fun createUploadNotificationChannel() {

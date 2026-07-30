@@ -2,8 +2,10 @@ package com.example.kinetixfsl.community
 
 import com.example.kinetixfsl.community.model.Comment
 import com.example.kinetixfsl.community.model.Post
+import com.example.kinetixfsl.community.model.PostMedia
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -39,10 +41,7 @@ class CommunityRepository(
             .addSnapshotListener { snapshot, error ->
                 if (error != null) { close(error); return@addSnapshotListener }
                 if (snapshot == null) return@addSnapshotListener
-                val posts = snapshot.documents.mapNotNull { doc ->
-                    doc.toObject(Post::class.java)?.copy(id = doc.id)
-                }
-                trySend(posts)
+                trySend(snapshot.documents.mapNotNull { it.toPostOrNull() })
             }
         awaitClose { registration.remove() }
     }
@@ -55,10 +54,18 @@ class CommunityRepository(
         title: String,
         body: String,
         linkUrl: String? = null,
-        imageUrl: String? = null,
-        videoUrl: String? = null,
+        media: List<PostMedia> = emptyList(),
+        previewUrl: String? = null,
+        previewBlur: String? = null,
     ): Result<String> {
         val user = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
+
+        // The legacy single-media fields still get the first image and the
+        // first video, so the share page and any older build keep rendering
+        // something sensible for a multi-media post.
+        val imageUrl = media.firstOrNull { !it.isVideo }?.url
+        val videoUrl = media.firstOrNull { it.isVideo }?.url
+
         val data = hashMapOf(
             "authorId" to user.uid,
             "authorName" to (user.displayName?.takeIf { it.isNotBlank() }
@@ -69,6 +76,11 @@ class CommunityRepository(
             "linkUrl" to linkUrl?.trim()?.takeIf { it.isNotBlank() },
             "imageUrl" to imageUrl,
             "videoUrl" to videoUrl,
+            "media" to media.map {
+                hashMapOf("url" to it.url, "type" to it.type, "thumbUrl" to it.thumbUrl)
+            },
+            "previewUrl" to previewUrl,
+            "previewBlur" to previewBlur,
             "upvoteCount" to 0L,
             "downvoteCount" to 0L,
             "commentCount" to 0L,
@@ -151,21 +163,43 @@ class CommunityRepository(
             .addSnapshotListener { snap, err ->
                 if (err != null) { close(err); return@addSnapshotListener }
                 if (snap == null) return@addSnapshotListener
-                val comments = snap.documents.mapNotNull { doc ->
-                    doc.toObject(Comment::class.java)?.copy(id = doc.id)
-                }
-                trySend(comments)
+                trySend(
+                    snap.documents.mapNotNull { doc ->
+                        try {
+                            doc.toObject(Comment::class.java)?.copy(id = doc.id)
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+                )
             }
         awaitClose { reg.remove() }
     }
 
-    suspend fun addComment(postId: String, body: String): Result<Unit> {
+    /**
+     * Adds a comment. [imageUrl] is the already-uploaded R2 URL of the single
+     * optional image the commenter attached — null when the comment is text only.
+     */
+    /**
+     * Adds a comment, or a reply when [parentId] is the id of the top-level
+     * comment being replied to. Replies go in the same subcollection, so the
+     * existing listener picks them up without a second query.
+     */
+    suspend fun addComment(
+        postId: String,
+        body: String,
+        imageUrl: String? = null,
+        parentId: String? = null,
+    ): Result<Unit> {
         val user = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
         val data = hashMapOf(
             "authorId" to user.uid,
             "authorName" to (user.displayName?.takeIf { it.isNotBlank() }
                 ?: user.email?.substringBefore('@') ?: "Anonymous"),
+            "authorAvatarUrl" to (user.photoUrl?.toString()),
             "body" to body.trim(),
+            "imageUrl" to imageUrl,
+            "parentId" to parentId,
             "createdAt" to Timestamp.now(),
         )
         return try {
@@ -184,20 +218,76 @@ class CommunityRepository(
     // Share
     // -------------------------------------------------------------------------
 
-    suspend fun incrementShareCount(postId: String) {
+    /**
+     * Records that the signed-in user shared this post.
+     *
+     * The count is per account, not per tap: a `shares/{uid}` marker document
+     * makes the increment idempotent, so sharing the same post ten times still
+     * reads as one share — the way every other social platform counts it.
+     */
+    suspend fun sharePost(postId: String) {
+        val uid = auth.currentUser?.uid ?: return
+        val postRef = firestore.collection(POSTS).document(postId)
+        val shareRef = postRef.collection(SHARES).document(uid)
         try {
-            firestore.collection(POSTS).document(postId)
-                .update("shareCount", FieldValue.increment(1))
-                .await()
+            firestore.runTransaction { tx ->
+                val existing = tx.get(shareRef)
+                if (!existing.exists()) {
+                    tx.set(shareRef, hashMapOf("sharedAt" to Timestamp.now()))
+                    tx.update(postRef, "shareCount", FieldValue.increment(1))
+                }
+            }.await()
         } catch (_: Exception) { /* best-effort */ }
     }
 
+    /** Loads a single post by id — used when opening a shared link. */
+    suspend fun getPost(postId: String): Result<Post> {
+        return try {
+            val doc = firestore.collection(POSTS).document(postId).get().await()
+            val post = doc.toPostOrNull()
+            if (post == null) {
+                Result.failure(Exception("This post is no longer available."))
+            } else {
+                Result.success(post)
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Live updates for a single post, so a linked post's counts stay current. */
+    fun observePost(postId: String): Flow<Post?> = callbackFlow {
+        val reg = firestore.collection(POSTS).document(postId)
+            .addSnapshotListener { snap, err ->
+                if (err != null) { close(err); return@addSnapshotListener }
+                trySend(snap?.toPostOrNull())
+            }
+        awaitClose { reg.remove() }
+    }
+
     // -------------------------------------------------------------------------
+
+    /**
+     * Deserializes one post document, returning null instead of throwing.
+     *
+     * This is load-bearing: a snapshot listener maps every document in the
+     * result, so a single document that fails to deserialize used to throw out
+     * of the whole callback. The flow then never emitted again and the feed
+     * froze on stale data — which is exactly what happened when posts started
+     * carrying the new `media` array. One malformed document must only cost
+     * that document.
+     */
+    private fun DocumentSnapshot.toPostOrNull(): Post? = try {
+        toObject(Post::class.java)?.copy(id = id)
+    } catch (_: Exception) {
+        null
+    }
 
     private companion object {
         const val POSTS = "posts"
         const val VOTES = "votes"
         const val COMMENTS = "comments"
+        const val SHARES = "shares"
         const val FIELD_CREATED_AT = "createdAt"
         const val FIELD_SCORE = "score"
         const val FEED_PAGE_SIZE = 50L

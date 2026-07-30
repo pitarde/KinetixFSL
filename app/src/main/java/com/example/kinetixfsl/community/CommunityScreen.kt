@@ -33,8 +33,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.tabs.CommunityProfilePlaceholder
 import com.example.kinetixfsl.community.tabs.NotificationsPlaceholder
@@ -48,13 +50,31 @@ fun CommunityScreen(
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(CommunityTab.HOME) }
-    var commentPost: Post? by remember { mutableStateOf(null) }
+
+    /**
+     * The post opened as a full screen. [immersivePost] is the same idea but
+     * entered by tapping the post's image, which opens the media full screen
+     * with the comments below the fold instead.
+     */
+    var detailPost: Post? by remember { mutableStateOf(null) }
+    var immersivePost: Post? by remember { mutableStateOf(null) }
+
     // Shared list state so the bottom nav can scroll it to top.
     val feedListState = rememberLazyListState()
 
     // The ViewModel — kept here so the bottom nav can call refresh().
     val feedViewModel = remember { CommunityFeedViewModel() }
+    val feedState by feedViewModel.feedState.collectAsStateWithLifecycle()
+    val userVotes by feedViewModel.userVotes.collectAsStateWithLifecycle()
+
+    /**
+     * Swaps in the live copy of a post from the feed so counts keep ticking
+     * while the detail screen or the immersive viewer is open.
+     */
+    fun liveCopyOf(post: Post): Post =
+        (feedState as? FeedState.Success)?.posts?.firstOrNull { it.id == post.id } ?: post
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -86,7 +106,11 @@ fun CommunityScreen(
                 onTabSelected = { selectedTab = it },
                 onMenuClick = { scope.launch { drawerState.open() } },
                 onSelectCommunity = { /* TODO */ },
-                onCommentClick = { post -> commentPost = post },
+                // Tapping the card or the comment button both land on the
+                // detail screen — the reddit flow.
+                onCommentClick = { post -> detailPost = post },
+                onPostClick = { post -> detailPost = post },
+                onMediaClick = { post -> immersivePost = post },
                 feedListState = feedListState,
                 feedViewModel = feedViewModel,
                 onScrollToTopAndRefresh = {
@@ -97,16 +121,38 @@ fun CommunityScreen(
                 },
             )
 
-            val activeCommentPost = commentPost
-            if (activeCommentPost != null) {
-                val commentVm = remember(activeCommentPost.id) {
-                    CommentViewModel(postId = activeCommentPost.id)
+            val openedPost = immersivePost ?: detailPost
+            if (openedPost != null) {
+                val post = liveCopyOf(openedPost)
+                // One ViewModel per post, shared by whichever presentation is
+                // showing, so the comment stream isn't re-subscribed on switch.
+                val commentVm = remember(post.id) { CommentViewModel(postId = post.id) }
+
+                val hasMedia = !post.imageUrl.isNullOrBlank() || !post.videoUrl.isNullOrBlank()
+                if (immersivePost != null && hasMedia) {
+                    ImmersivePostViewer(
+                        post = post,
+                        viewModel = commentVm,
+                        userVote = userVotes[post.id],
+                        onUpvote = { feedViewModel.vote(post.id, "up") },
+                        onDownvote = { feedViewModel.vote(post.id, "down") },
+                        onShare = { feedViewModel.share(context, post) },
+                        onClose = { immersivePost = null },
+                    )
+                } else {
+                    PostDetailScreen(
+                        post = post,
+                        viewModel = commentVm,
+                        userVote = userVotes[post.id],
+                        onUpvote = { feedViewModel.vote(post.id, "up") },
+                        onDownvote = { feedViewModel.vote(post.id, "down") },
+                        onShare = { feedViewModel.share(context, post) },
+                        onClose = {
+                            detailPost = null
+                            immersivePost = null
+                        },
+                    )
                 }
-                CommentScreen(
-                    post = activeCommentPost,
-                    viewModel = commentVm,
-                    onClose = { commentPost = null },
-                )
             }
         }
     }
@@ -119,6 +165,8 @@ private fun CommunityScaffold(
     onMenuClick: () -> Unit,
     onSelectCommunity: () -> Unit,
     onCommentClick: (Post) -> Unit,
+    onPostClick: (Post) -> Unit,
+    onMediaClick: (Post) -> Unit,
     feedListState: LazyListState,
     feedViewModel: CommunityFeedViewModel,
     onScrollToTopAndRefresh: () -> Unit,
@@ -138,6 +186,8 @@ private fun CommunityScaffold(
                     viewModel = feedViewModel,
                     listState = feedListState,
                     onCommentClick = onCommentClick,
+                    onPostClick = onPostClick,
+                    onMediaClick = onMediaClick,
                 )
                 CommunityTab.PROFILE -> CommunityProfilePlaceholder()
                 CommunityTab.CREATE -> CreatePostScreen(

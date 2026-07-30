@@ -145,15 +145,27 @@ class CommunityFeedViewModel(
         _feedState.value = FeedState.Success(filtered)
     }
 
+    /**
+     * Post ids whose vote we've already looked up, whether or not the user had
+     * voted. Without this, any post the user *hasn't* voted on never lands in
+     * [_userVotes] and so was re-queried on every single snapshot — a fresh
+     * read per post, every time any count anywhere changed. Invisible on WiFi,
+     * but on mobile data it's dozens of round trips fighting for the link and
+     * the feed takes forever to settle.
+     */
+    private val checkedVotePostIds = mutableSetOf<String>()
+
     private fun prefetchVotes(posts: List<Post>) {
-        posts.forEach { post ->
-            if (post.id !in _userVotes.value) {
-                viewModelScope.launch {
-                    val dir = repository.getUserVote(post.id)
-                    if (dir != null) {
-                        _userVotes.value = _userVotes.value + (post.id to dir)
-                    }
-                }
+        val unchecked = posts.map { it.id }.filter { checkedVotePostIds.add(it) }
+        if (unchecked.isEmpty()) return
+
+        viewModelScope.launch {
+            val found = mutableMapOf<String, String>()
+            unchecked.forEach { postId ->
+                repository.getUserVote(postId)?.let { found[postId] = it }
+            }
+            if (found.isNotEmpty()) {
+                _userVotes.value = _userVotes.value + found
             }
         }
     }
@@ -190,16 +202,24 @@ class CommunityFeedViewModel(
         }
     }
 
+    /**
+     * Opens the system share sheet with a link back to the post, then records
+     * the share. The repository keeps the count to one per account, so sharing
+     * the same post twice doesn't inflate the number.
+     */
     fun share(context: Context, post: Post) {
-        val text = "${post.title}\n\nShared from KinetixFSL"
+        // Just the link. The title used to be prepended, but it showed up as a
+        // second line of text in chat apps on top of their own link preview,
+        // which read as clutter.
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, text)
+            putExtra(Intent.EXTRA_SUBJECT, post.title)
+            putExtra(Intent.EXTRA_TEXT, ShareLinks.postUrl(post.id))
         }
         context.startActivity(Intent.createChooser(intent, "Share post"))
 
         viewModelScope.launch {
-            repository.incrementShareCount(post.id)
+            repository.sharePost(post.id)
         }
     }
 }

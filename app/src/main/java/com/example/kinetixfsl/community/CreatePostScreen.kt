@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.example.kinetixfsl.community.model.MAX_POST_MEDIA
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import com.example.kinetixfsl.ui.theme.KinetixInk
 import com.example.kinetixfsl.ui.theme.KinetixWhite
@@ -95,16 +98,18 @@ fun CreatePostScreen(
     }
 
     // Photo picker launchers — the modern Android way (no permissions needed).
+    // Multi-select, so a post can carry images and videos together; picking
+    // again appends rather than replacing.
     val imagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
-    ) { uri: Uri? ->
-        if (uri != null) viewModel.onImagePicked(uri)
+        contract = ActivityResultContracts.PickMultipleVisualMedia(MAX_POST_MEDIA),
+    ) { uris: List<Uri> ->
+        viewModel.onMediaPicked(uris.map { PickedMedia(it, "image") })
     }
 
     val videoPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
-    ) { uri: Uri? ->
-        if (uri != null) viewModel.onVideoPicked(uri)
+        contract = ActivityResultContracts.PickMultipleVisualMedia(MAX_POST_MEDIA),
+    ) { uris: List<Uri> ->
+        viewModel.onMediaPicked(uris.map { PickedMedia(it, "video") })
     }
 
     Column(
@@ -254,54 +259,67 @@ fun CreatePostScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // Media preview (if the user has picked something).
-            if (state.mediaUri != null) {
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    AsyncImage(
-                        model = state.mediaUri,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)),
-                    )
-
-                    // Small X to remove the media.
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(8.dp)
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(KinetixInk.copy(alpha = 0.6f))
-                            .clickable { viewModel.clearMedia() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = CloseIcon,
-                            contentDescription = "Remove",
-                            tint = KinetixWhite,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-
-                    // Label if it's a video.
-                    if (state.mediaType == "video") {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(12.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(KinetixInk.copy(alpha = 0.6f))
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                        ) {
-                            Text(
-                                text = "Video",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = KinetixWhite,
+            // Everything picked so far, as a scrollable thumbnail strip.
+            if (state.media.isNotEmpty()) {
+                Text(
+                    text = "${state.media.size} of $MAX_POST_MEDIA attached",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(state.media, key = { it.uri.toString() }) { item ->
+                        Box(modifier = Modifier.size(120.dp)) {
+                            // AsyncImage renders a video's first frame as its
+                            // thumbnail, so one composable covers both types.
+                            AsyncImage(
+                                model = item.uri,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(
+                                        1.dp,
+                                        MaterialTheme.colorScheme.outline,
+                                        RoundedCornerShape(12.dp),
+                                    ),
                             )
+
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(6.dp)
+                                    .size(24.dp)
+                                    .clip(CircleShape)
+                                    .background(KinetixInk.copy(alpha = 0.6f))
+                                    .clickable { viewModel.removeMedia(item) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = CloseIcon,
+                                    contentDescription = "Remove",
+                                    tint = KinetixWhite,
+                                    modifier = Modifier.size(13.dp),
+                                )
+                            }
+
+                            if (item.type == "video") {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .padding(8.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(KinetixInk.copy(alpha = 0.6f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                ) {
+                                    Text(
+                                        text = "Video",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = KinetixWhite,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -329,7 +347,8 @@ fun CreatePostScreen(
             Spacer(Modifier.width(20.dp))
             ToolbarIcon(
                 icon = ImageIcon,
-                description = "Add image",
+                description = "Add images",
+                enabled = state.canAddMore,
                 onClick = {
                     imagePicker.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -339,7 +358,8 @@ fun CreatePostScreen(
             Spacer(Modifier.width(20.dp))
             ToolbarIcon(
                 icon = VideoIcon,
-                description = "Add video",
+                description = "Add videos",
+                enabled = state.canAddMore,
                 onClick = {
                     videoPicker.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
@@ -383,14 +403,19 @@ private fun ToolbarIcon(
     icon: ImageVector,
     description: String,
     onClick: () -> Unit,
+    enabled: Boolean = true,
 ) {
     Icon(
         imageVector = icon,
         contentDescription = description,
-        tint = MaterialTheme.colorScheme.onSurface,
+        tint = if (enabled) {
+            MaterialTheme.colorScheme.onSurface
+        } else {
+            MaterialTheme.colorScheme.outline
+        },
         modifier = Modifier
             .size(28.dp)
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
     )
 }
 

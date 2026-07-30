@@ -5,8 +5,7 @@ import android.widget.FrameLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -15,6 +14,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -37,7 +38,7 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
-import com.example.kinetixfsl.KinetixApplication
+import coil.compose.AsyncImage
 
 private fun optimizeVideoUrl(url: String): String {
     val marker = "/video/upload/"
@@ -61,48 +62,71 @@ fun FeedVideoPlayer(
     videoUrl: String,
     isVisible: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Still shown until the first video frame arrives, so the slot isn't black. */
+    posterUrl: String? = null,
+    /**
+     * Fill the slot with black before playback starts. Turned off when a blur
+     * placeholder is drawn underneath, which would otherwise be hidden.
+     */
+    opaqueBackground: Boolean = true,
 ) {
     val context = LocalContext.current
     var isMuted by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
+    var hasRenderedFrame by remember { mutableStateOf(false) }
 
     val optimizedUrl = remember(videoUrl) { optimizeVideoUrl(videoUrl) }
 
+    // Note: no prepare() here. LazyColumn composes items beyond the viewport,
+    // so preparing on creation meant several off-screen videos all downloading
+    // at once. Loading now starts only when the item is actually visible.
     val exoPlayer = remember {
-        // Build a cache-aware data source
-        val cacheDataSourceFactory = CacheDataSource.Factory()
-            .setCache(KinetixApplication.videoCache)
-            .setUpstreamDataSourceFactory(DefaultDataSource.Factory(context))
+        buildCachedPlayer(context, feedMode = true).apply {
+            setMediaItem(MediaItem.fromUri(optimizedUrl))
+            repeatMode = Player.REPEAT_MODE_ONE
+            volume = 0f
+            addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    isBuffering = state == Player.STATE_BUFFERING
+                }
 
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
-            .build().apply {
-                setMediaItem(MediaItem.fromUri(optimizedUrl))
-                repeatMode = Player.REPEAT_MODE_ONE
-                volume = 0f
-                addListener(object : Player.Listener {
-                    override fun onPlaybackStateChanged(state: Int) {
-                        isBuffering = state == Player.STATE_BUFFERING
-                    }
-                })
-                prepare()
-            }
+                override fun onRenderedFirstFrame() {
+                    hasRenderedFrame = true
+                }
+            })
+        }
     }
 
-    if (isVisible) exoPlayer.play() else exoPlayer.pause()
+    LaunchedEffect(isVisible) {
+        if (isVisible) {
+            if (exoPlayer.playbackState == Player.STATE_IDLE) exoPlayer.prepare()
+            exoPlayer.play()
+        } else {
+            // stop(), not pause() — a paused player keeps filling its buffer,
+            // so scrolling past a video would leave it quietly downloading.
+            // The cache keeps what it already fetched, so coming back is cheap.
+            exoPlayer.stop()
+        }
+    }
+
     exoPlayer.volume = if (isMuted) 0f else 1f
 
     DisposableEffect(Unit) {
         onDispose { exoPlayer.release() }
     }
 
+    // Sizing comes from the caller so this works both as a standalone feed
+    // player and as one page inside the media carousel.
     Box(
         modifier = modifier
-            .fillMaxWidth()
-            .height(260.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.Black)
+            .then(
+                if (opaqueBackground || hasRenderedFrame) {
+                    Modifier.background(Color.Black)
+                } else {
+                    Modifier
+                }
+            )
             .clickable(onClick = onClick),
     ) {
         AndroidView(
@@ -116,12 +140,24 @@ fun FeedVideoPlayer(
                     )
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(260.dp),
+            modifier = Modifier.fillMaxSize(),
         )
+
+        // Poster sits on top until the decoder produces a real frame, so the
+        // feed shows the video's content immediately rather than a black box
+        // while it buffers.
+        if (!hasRenderedFrame && !posterUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = posterUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         if (isBuffering && isVisible) {
             Box(
-                modifier = Modifier.fillMaxWidth().height(260.dp),
+                modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
                 CircularProgressIndicator(

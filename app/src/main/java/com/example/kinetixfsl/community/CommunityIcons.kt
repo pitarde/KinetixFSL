@@ -155,6 +155,96 @@ internal object CommunityIcons {
         }.build()
     }
 
+    // ---- Post detail / comment composer ----
+
+    val ArrowBack: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "ArrowBack",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.4f) {
+                moveTo(20f, 12f); lineTo(5f, 12f)
+                moveTo(11f, 6f); lineTo(5f, 12f); lineTo(11f, 18f)
+            }
+        }.build()
+    }
+
+    val Close: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Close",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.4f) {
+                moveTo(6f, 6f); lineTo(18f, 18f)
+                moveTo(18f, 6f); lineTo(6f, 18f)
+            }
+        }.build()
+    }
+
+    /** Photo frame with a mountain — "attach an image." */
+    val Image: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Image",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                moveTo(4f, 5f); lineTo(20f, 5f); lineTo(20f, 19f); lineTo(4f, 19f); close()
+                moveTo(4f, 17f); lineTo(9f, 12f); lineTo(12f, 15f); lineTo(16f, 10f); lineTo(20f, 17f)
+            }
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(10f, 9f)
+                arcTo(1.5f, 1.5f, 0f, true, true, 7f, 9f)
+                arcTo(1.5f, 1.5f, 0f, true, true, 10f, 9f)
+                close()
+            }
+        }.build()
+    }
+
+    /** Chevron pointing down — expands the collapsed post header in the composer. */
+    val ChevronDown: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "ChevronDown",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.2f) {
+                moveTo(6f, 9f); lineTo(12f, 15f); lineTo(18f, 9f)
+            }
+        }.build()
+    }
+
+    /** Chevron pointing up — collapses the expanded post header. */
+    val ChevronUp: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "ChevronUp",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.2f) {
+                moveTo(6f, 15f); lineTo(12f, 9f); lineTo(18f, 15f)
+            }
+        }.build()
+    }
+
+    /** Curved reply arrow, shown on each comment row. */
+    val Reply: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Reply",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                moveTo(9f, 8f); lineTo(4f, 12f); lineTo(9f, 16f)
+                moveTo(4f, 12f)
+                lineTo(15f, 12f)
+                curveTo(19f, 12f, 20f, 15f, 20f, 19f)
+            }
+        }.build()
+    }
+
     /** A share arrow — curving out to the upper right. */
     val Share: ImageVector by lazy {
         ImageVector.Builder(

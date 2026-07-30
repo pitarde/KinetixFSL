@@ -53,13 +53,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.kinetixfsl.community.model.Post
-import com.example.kinetixfsl.ui.theme.KinetixError
 import com.example.kinetixfsl.ui.theme.KinetixGreen
 import com.example.kinetixfsl.ui.theme.KinetixIndigo
 import com.example.kinetixfsl.ui.theme.KinetixMint
@@ -72,6 +72,12 @@ fun CommunityFeedContent(
     listState: LazyListState = rememberLazyListState(),
     onCommentClick: (Post) -> Unit = {},
     onPostClick: (Post) -> Unit = {},
+    /**
+     * Tapping a post's image or video opens the immersive viewer (full-screen
+     * media that reveals the comments on scroll), so the host screen owns that
+     * overlay.
+     */
+    onMediaClick: (Post) -> Unit = {},
 ) {
     val state by viewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
@@ -88,9 +94,6 @@ fun CommunityFeedContent(
         }
     }
 
-    // Full-screen media state.
-    var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
-    var fullScreenVideoUrl by remember { mutableStateOf<String?>(null) }
 
     Box(modifier = modifier.fillMaxSize()) {
         PullToRefreshBox(
@@ -140,8 +143,7 @@ fun CommunityFeedContent(
                                     onDownvote = { viewModel.vote(post.id, "down") },
                                     onComment = { onCommentClick(post) },
                                     onShare = { viewModel.share(context, post) },
-                                    onImageClick = { url -> fullScreenImageUrl = url },
-                                    onVideoClick = { url -> fullScreenVideoUrl = url },
+                                    onMediaClick = { onMediaClick(post) },
                                     onClick = { onPostClick(post) },
                                 )
                                 HorizontalDivider(
@@ -153,18 +155,6 @@ fun CommunityFeedContent(
                     }
                 }
             }
-        }
-
-        // Full-screen overlay (image or video).
-        if (fullScreenImageUrl != null || fullScreenVideoUrl != null) {
-            FullScreenMediaViewer(
-                imageUrl = fullScreenImageUrl,
-                videoUrl = fullScreenVideoUrl,
-                onClose = {
-                    fullScreenImageUrl = null
-                    fullScreenVideoUrl = null
-                },
-            )
         }
     }
 }
@@ -354,22 +344,30 @@ private fun PostCard(
     onDownvote: () -> Unit,
     onComment: () -> Unit,
     onShare: () -> Unit,
-    onImageClick: (String) -> Unit,
-    onVideoClick: (String) -> Unit,
+    onMediaClick: () -> Unit,
     onClick: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        AuthorRow(post = post)
+        PostAuthorRow(post = post)
         Spacer(Modifier.height(8.dp))
 
-        Text(post.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground, fontWeight = FontWeight.Bold)
+        Text(
+            post.title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.Bold,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
 
         if (post.body.isNotBlank()) {
             Spacer(Modifier.height(4.dp))
-            Text(post.body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground)
+            // Long bodies get clamped with a "see more" hint; tapping the card
+            // opens the detail screen where the full body is shown.
+            TruncatedBodyText(text = post.body, maxLines = 3)
         }
 
         if (!post.linkUrl.isNullOrBlank()) {
@@ -377,81 +375,28 @@ private fun PostCard(
             Text(post.linkUrl, style = MaterialTheme.typography.bodyMedium.copy(textDecoration = TextDecoration.Underline), color = MaterialTheme.colorScheme.primary, maxLines = 1)
         }
 
-        // ---- Media: image or video ----
-        if (!post.videoUrl.isNullOrBlank()) {
+        // ---- Media: one item, or a swipeable carousel ----
+        val mediaItems = post.mediaItems
+        if (mediaItems.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
-            FeedVideoPlayer(
-                videoUrl = post.videoUrl,
-                isVisible = isVideoVisible,
-                onClick = { onVideoClick(post.videoUrl) },
+            PostMediaCarousel(
+                media = mediaItems,
+                isActive = isVideoVisible,
+                onMediaClick = { onMediaClick() },
+                posterUrl = post.previewUrl,
+                blurData = post.previewBlur,
+                height = 240.dp,
             )
-        } else if (!post.imageUrl.isNullOrBlank()) {
-            Spacer(Modifier.height(12.dp))
-            AsyncImage(
-                model = optimizeImageUrl(post.imageUrl),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(220.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-                    .clickable { onImageClick(post.imageUrl) },
-            )
-
         }
 
         Spacer(Modifier.height(12.dp))
-        InteractionRow(post = post, userVote = userVote, onUpvote = onUpvote, onDownvote = onDownvote, onComment = onComment, onShare = onShare)
+        PostInteractionRow(
+            post = post,
+            userVote = userVote,
+            onUpvote = onUpvote,
+            onDownvote = onDownvote,
+            onComment = onComment,
+            onShare = onShare,
+        )
     }
 }
-
-@Composable
-private fun AuthorRow(post: Post) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        if (!post.authorAvatarUrl.isNullOrBlank()) {
-            AsyncImage(model = post.authorAvatarUrl, contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.size(32.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant))
-        } else {
-            Box(Modifier.size(32.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape), contentAlignment = Alignment.Center) {
-                Text(post.authorName.firstOrNull()?.uppercase() ?: "?", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-            }
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(post.authorName.ifBlank { "Unknown" }, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.width(8.dp))
-        val timeLabel = post.createdAt.relativeToNow()
-        val viewsLabel = if (post.viewCount > 0) "${post.viewCount.compact()} views" else null
-        val meta = listOfNotNull(timeLabel.takeIf { it.isNotBlank() }, viewsLabel).joinToString(" · ")
-        if (meta.isNotBlank()) { Text(meta, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-    }
-}
-
-@Composable
-private fun InteractionRow(post: Post, userVote: String?, onUpvote: () -> Unit, onDownvote: () -> Unit, onComment: () -> Unit, onShare: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-        Row(Modifier.clip(RoundedCornerShape(50)).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(50)).padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            InteractionButton(CommunityIcons.ArrowUp, post.upvoteCount.compact(), if (userVote == "up") KinetixGreen else MaterialTheme.colorScheme.onBackground, onUpvote)
-            VerticalHairline()
-            InteractionButton(CommunityIcons.ArrowDown, post.downvoteCount.compact(), if (userVote == "down") KinetixError else MaterialTheme.colorScheme.onBackground, onDownvote)
-            VerticalHairline()
-            InteractionButton(CommunityIcons.Comment, post.commentCount.compact(), MaterialTheme.colorScheme.onBackground, onComment)
-        }
-        Row(Modifier.clip(RoundedCornerShape(50)).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(50)).padding(horizontal = 4.dp, vertical = 4.dp)) {
-            InteractionButton(CommunityIcons.Share, post.shareCount.compact(), MaterialTheme.colorScheme.onBackground, onShare)
-        }
-    }
-}
-
-@Composable
-private fun InteractionButton(icon: ImageVector, label: String, tint: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
-    Row(Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium, color = tint, fontWeight = FontWeight.SemiBold)
-    }
-}
-
-@Composable
-private fun VerticalHairline() { Box(Modifier.width(1.dp).height(18.dp).background(MaterialTheme.colorScheme.outlineVariant)) }

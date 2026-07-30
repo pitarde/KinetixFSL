@@ -5,7 +5,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -14,6 +19,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.kinetixfsl.auth.AuthRepository
 import com.example.kinetixfsl.community.CommunityScreen
+import com.example.kinetixfsl.community.SharedPostScreen
 import com.example.kinetixfsl.modules.LearningRoomScreen
 import com.example.kinetixfsl.modules.SignListScreen
 import com.example.kinetixfsl.modules.model.FslSignData
@@ -51,6 +57,12 @@ object Route {
     const val HOME = "home"
     const val COMMUNITY = "community"
 
+    // ── Shared post (opened from a link) ────────────────────
+    private const val POST_BASE = "post"
+    const val POST_ARG = "postId"
+    const val POST_PATTERN = "$POST_BASE/{$POST_ARG}"
+    fun post(postId: String): String = "$POST_BASE/$postId"
+
     // ── Modules routes ──────────────────────────────────────
     private const val SIGN_LIST_BASE = "sign_list"
     const val SIGN_LIST_ARG = "categoryId"
@@ -83,8 +95,41 @@ private const val MODULES_OUT_FADE = 250
 @Composable
 fun KinetixNavHost(
     navController: NavHostController = rememberNavController(),
+    /**
+     * Post id from a shared link the app was opened with, or null for a normal
+     * launch. Changes when a new link arrives while the app is already running.
+     */
+    deepLinkPostId: String? = null,
 ) {
     val authRepository = remember { AuthRepository() }
+
+    /**
+     * A link that arrived before the user was signed in. Held here and opened
+     * as soon as login or registration succeeds.
+     */
+    var pendingPostId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    /**
+     * Drops the user on the linked post with the community feed underneath, so
+     * back (or the X) lands on the feed instead of closing the app.
+     */
+    fun openSharedPost(postId: String) {
+        navController.navigate(Route.HOME) {
+            popUpTo(Route.SPLASH) { inclusive = true }
+        }
+        navController.navigate(Route.COMMUNITY)
+        navController.navigate(Route.post(postId))
+    }
+
+    LaunchedEffect(deepLinkPostId) {
+        val id = deepLinkPostId ?: return@LaunchedEffect
+        if (authRepository.isSignedIn) {
+            openSharedPost(id)
+        } else {
+            // Sit on it until the user gets through login.
+            pendingPostId = id
+        }
+    }
 
     NavHost(
         navController = navController,
@@ -142,6 +187,13 @@ fun KinetixNavHost(
                     navController.navigate(Route.HOME) {
                         popUpTo(Route.LOGIN) { inclusive = true }
                     }
+                    // If they got here by opening a shared link, take them
+                    // to that post now that they're signed in.
+                    pendingPostId?.let { postId ->
+                        pendingPostId = null
+                        navController.navigate(Route.COMMUNITY)
+                        navController.navigate(Route.post(postId))
+                    }
                 },
                 onNavigateToSignUp = {
                     navController.navigate(Route.REGISTER)
@@ -172,6 +224,11 @@ fun KinetixNavHost(
                 onRegisterSuccess = {
                     navController.navigate(Route.HOME) {
                         popUpTo(Route.LOGIN) { inclusive = true }
+                    }
+                    pendingPostId?.let { postId ->
+                        pendingPostId = null
+                        navController.navigate(Route.COMMUNITY)
+                        navController.navigate(Route.post(postId))
                     }
                 },
                 onNavigateToLogin = {
@@ -272,6 +329,36 @@ fun KinetixNavHost(
                     if (!popped) {
                         navController.navigate(Route.HOME) {
                             popUpTo(Route.COMMUNITY) { inclusive = true }
+                        }
+                    }
+                },
+            )
+        }
+
+        // ---- Shared post: opened from a link, backed by the community feed ----
+        composable(
+            route = Route.POST_PATTERN,
+            arguments = listOf(navArgument(Route.POST_ARG) { type = NavType.StringType }),
+            // No `deepLinks` here on purpose: NavController would auto-handle
+            // the launch intent and drop this destination straight on top of
+            // splash, so back would exit the app. openSharedPost() below builds
+            // the stack we actually want instead.
+            enterTransition = { fadeIn(tween(200)) },
+            exitTransition = { fadeOut(tween(200)) },
+            popEnterTransition = { fadeIn(tween(200)) },
+            popExitTransition = { fadeOut(tween(200)) },
+        ) { backStackEntry ->
+            val postId = backStackEntry.arguments?.getString(Route.POST_ARG).orEmpty()
+
+            SharedPostScreen(
+                postId = postId,
+                onClose = {
+                    // Back and the X both land on the community feed, which is
+                    // already sitting underneath this destination.
+                    val popped = navController.popBackStack(Route.COMMUNITY, inclusive = false)
+                    if (!popped) {
+                        navController.navigate(Route.COMMUNITY) {
+                            popUpTo(Route.POST_PATTERN) { inclusive = true }
                         }
                     }
                 },

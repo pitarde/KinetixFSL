@@ -29,6 +29,9 @@ object R2MediaUploader {
     /** JPEG compression quality (0-100). 60 is good for social media. */
     private const val JPEG_QUALITY = 60
 
+    /** Copy buffer for streamed uploads. 64 KB keeps the socket well fed. */
+    private const val STREAM_BUFFER_SIZE = 64 * 1024
+
     sealed interface UploadResult {
         data class Success(val secureUrl: String) : UploadResult
         data class Error(val message: String) : UploadResult
@@ -68,20 +71,107 @@ object R2MediaUploader {
     }
 
     /**
+     * Uploads bytes we generated ourselves rather than a file the user picked —
+     * currently the 1.91:1 link-preview image from [SharePreviewGenerator].
+     * Already encoded, so no further compression.
+     */
+    suspend fun uploadBytes(
+        bytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+        resourceType: String = "image",
+    ): UploadResult = withContext(Dispatchers.IO) {
+        try {
+            performUpload(bytes, fileName, mimeType, resourceType)
+        } catch (e: Exception) {
+            UploadResult.Error(e.localizedMessage ?: "Upload failed.")
+        }
+    }
+
+    /**
      * Uploads a File directly (used for compressed videos from VideoCompressor).
      */
     suspend fun uploadFile(
         file: File,
         resourceType: String = "video",
+        onProgress: (Int) -> Unit = {},
     ): UploadResult = withContext(Dispatchers.IO) {
         try {
-            val bytes = FileInputStream(file).use { it.readBytes() }
-            val mimeType = "video/mp4"
-            val fileName = file.name
-            performUpload(bytes, fileName, mimeType, resourceType)
+            // Streamed rather than read into a ByteArray first: a 50 MB video
+            // used to be fully materialised in memory before a single byte went
+            // out, which cost time up front and risked an OOM on cheaper
+            // phones. Now bytes go to the socket as they come off disk.
+            streamUpload(file, "video/mp4", resourceType, onProgress)
         } catch (e: Exception) {
             UploadResult.Error(e.localizedMessage ?: "Upload failed.")
         }
+    }
+
+    /**
+     * Multipart POST that streams [file] straight through to the Worker,
+     * reporting 0..100 as it goes.
+     *
+     * Uses a fixed content length rather than chunked encoding — the total size
+     * is known up front, and fixed-length lets the connection avoid the
+     * per-chunk framing overhead.
+     */
+    private fun streamUpload(
+        file: File,
+        mimeType: String,
+        resourceType: String,
+        onProgress: (Int) -> Unit,
+    ): UploadResult {
+        val prefix = buildString {
+            append("--$BOUNDARY\r\n")
+            append("Content-Disposition: form-data; name=\"resource_type\"\r\n\r\n")
+            append("$resourceType\r\n")
+            append("--$BOUNDARY\r\n")
+            append("Content-Disposition: form-data; name=\"file\"; filename=\"${file.name}\"\r\n")
+            append("Content-Type: $mimeType\r\n\r\n")
+        }.toByteArray()
+        val suffix = "\r\n--$BOUNDARY--\r\n".toByteArray()
+
+        val fileLength = file.length()
+        val totalLength = prefix.size + fileLength + suffix.size
+
+        val connection = (URL(WORKER_URL).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            setRequestProperty("Content-Type", "multipart/form-data; boundary=$BOUNDARY")
+            connectTimeout = 30_000
+            readTimeout = 120_000
+            setFixedLengthStreamingMode(totalLength)
+        }
+
+        connection.outputStream.buffered(STREAM_BUFFER_SIZE).use { out ->
+            out.write(prefix)
+
+            FileInputStream(file).use { input ->
+                val buffer = ByteArray(STREAM_BUFFER_SIZE)
+                var sent = 0L
+                var lastReported = -1
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    out.write(buffer, 0, read)
+                    sent += read
+
+                    if (fileLength > 0) {
+                        val pct = ((sent * 100) / fileLength).toInt().coerceIn(0, 100)
+                        // Only fire on change — this loop runs thousands of times.
+                        if (pct != lastReported) {
+                            lastReported = pct
+                            onProgress(pct)
+                        }
+                    }
+                }
+            }
+
+            out.write(suffix)
+            out.flush()
+        }
+
+        return readUploadResponse(connection)
     }
 
     /**
@@ -122,12 +212,16 @@ object R2MediaUploader {
             out.write("--$BOUNDARY--\r\n".toByteArray())
         }
 
+        return readUploadResponse(connection)
+    }
+
+    /** Shared response handling for both the buffered and streamed paths. */
+    private fun readUploadResponse(connection: HttpURLConnection): UploadResult {
         val responseCode = connection.responseCode
         return if (responseCode in 200..299) {
             val body = connection.inputStream.bufferedReader().readText()
             val json = JSONObject(body)
-            val secureUrl = json.getString("secure_url")
-            UploadResult.Success(secureUrl)
+            UploadResult.Success(json.getString("secure_url"))
         } else {
             val errorBody = connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
             UploadResult.Error("Upload failed ($responseCode): $errorBody")
