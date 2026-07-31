@@ -96,7 +96,7 @@ fun FullScreenMediaViewer(
 @Composable
 private fun FullScreenImage(imageUrl: String) {
     AsyncImage(
-        model = imageUrl,
+        model = mediaUrl(imageUrl),
         contentDescription = null,
         contentScale = ContentScale.Fit,
         modifier = Modifier.fillMaxSize(),
@@ -110,7 +110,7 @@ private fun FullScreenVideo(videoUrl: String) {
 
     val exoPlayer = remember {
         buildCachedPlayer(context).apply {
-            setMediaItem(MediaItem.fromUri(videoUrl))
+            setMediaItem(MediaItem.fromUri(mediaUrl(videoUrl)))
             repeatMode = Player.REPEAT_MODE_ONE
             volume = 1f // sound on in full screen
             prepare()

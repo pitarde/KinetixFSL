@@ -60,6 +60,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.kinetixfsl.community.model.Post
+import kotlin.math.abs
 import com.example.kinetixfsl.ui.theme.KinetixGreen
 import com.example.kinetixfsl.ui.theme.KinetixIndigo
 import com.example.kinetixfsl.ui.theme.KinetixMint
@@ -78,6 +79,12 @@ fun CommunityFeedContent(
      * overlay.
      */
     onMediaClick: (Post) -> Unit = {},
+    /**
+     * False while a post detail, viewer or editor is open over the feed. The
+     * feed then stops playing and stops prefetching, so the whole connection
+     * goes to whatever the user actually opened.
+     */
+    isFeedActive: Boolean = true,
 ) {
     val state by viewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
@@ -91,9 +98,29 @@ fun CommunityFeedContent(
     FeedImagePrefetcher(
         listState = listState,
         posts = (state as? FeedState.Success)?.posts.orEmpty(),
+        enabled = isFeedActive,
     )
 
     // Track which items are visible for video autoplay.
+    /**
+     * The single post nearest the middle of the viewport — the one the user is
+     * actually looking at.
+     *
+     * Previously every partially-visible post counted as active, so two or
+     * three videos loaded at once and fought over the connection. Exactly one
+     * is active now, and it changes as the centre of the screen moves.
+     */
+    val activeMediaId by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val centre = (info.viewportStartOffset + info.viewportEndOffset) / 2
+            info.visibleItemsInfo
+                .filter { it.key is String }
+                .minByOrNull { abs((it.offset + it.size / 2) - centre) }
+                ?.key as? String
+        }
+    }
+
     val visibleItemKeys by remember {
         derivedStateOf {
             listState.layoutInfo.visibleItemsInfo.mapNotNull { it.key as? String }.toSet()
@@ -144,7 +171,7 @@ fun CommunityFeedContent(
                                 PostCard(
                                     post = post,
                                     userVote = userVotes[post.id],
-                                    isVideoVisible = post.id in visibleItemKeys,
+                                    isVideoVisible = isFeedActive && post.id == activeMediaId,
                                     onUpvote = { viewModel.vote(post.id, "up") },
                                     onDownvote = { viewModel.vote(post.id, "down") },
                                     onComment = { onCommentClick(post) },

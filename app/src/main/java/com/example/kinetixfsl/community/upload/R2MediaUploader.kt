@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -22,6 +23,17 @@ object R2MediaUploader {
     private const val WORKER_URL = "https://kinetix-upload.pitardeken2024.workers.dev"
 
     private const val BOUNDARY = "----KinetixR2UploadBoundary"
+
+    /**
+     * Shared secret for the delete endpoint. Must match DELETE_SECRET on the
+     * Worker.
+     *
+     * This is embedded in the APK and so is extractable — it raises the bar
+     * rather than being real authentication. What actually contains the risk is
+     * the Worker refusing any key that isn't referenced by the post being
+     * deleted. See web/SETUP.md for the Firebase-token upgrade.
+     */
+    private const val DELETE_SECRET = "kinetix-delete-2026"
 
     /** Max image dimension (width or height). Larger images get downscaled. */
     private const val MAX_IMAGE_DIMENSION = 960
@@ -69,6 +81,44 @@ object R2MediaUploader {
             UploadResult.Error(e.localizedMessage ?: "Upload failed.")
         }
     }
+
+    /**
+     * Asks the Worker to remove a post's files from the bucket.
+     *
+     * Must run while the post document still exists: the Worker checks each key
+     * against that post's own URLs before deleting, so it can't be coerced into
+     * wiping unrelated objects.
+     *
+     * Best-effort — a failure here leaves orphaned files, which is untidy but
+     * harmless, and must never stop the post itself from being deleted.
+     */
+    suspend fun deleteObjects(postId: String, keys: List<String>): Boolean =
+        withContext(Dispatchers.IO) {
+            if (keys.isEmpty()) return@withContext true
+
+            try {
+                val payload = JSONObject().apply {
+                    put("postId", postId)
+                    put("keys", JSONArray(keys))
+                }.toString().toByteArray()
+
+                val connection = (URL("$WORKER_URL/delete-media").openConnection()
+                        as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("x-kinetix-key", DELETE_SECRET)
+                    connectTimeout = 15_000
+                    readTimeout = 30_000
+                    setFixedLengthStreamingMode(payload.size)
+                }
+
+                connection.outputStream.use { it.write(payload) }
+                connection.responseCode in 200..299
+            } catch (_: Exception) {
+                false
+            }
+        }
 
     /**
      * Uploads bytes we generated ourselves rather than a file the user picked —

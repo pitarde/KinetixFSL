@@ -79,6 +79,11 @@ fun CommunityProfileScreen(
     var actionsPost: Post? by remember { mutableStateOf(null) }
     var pendingDelete: Post? by remember { mutableStateOf(null) }
 
+    // Same three states for a comment: menu open, being edited, being deleted.
+    var actionsComment: UserComment? by remember { mutableStateOf(null) }
+    var editingComment: UserComment? by remember { mutableStateOf(null) }
+    var pendingCommentDelete: UserComment? by remember { mutableStateOf(null) }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -119,6 +124,7 @@ fun CommunityProfileScreen(
                         isLoading = state.isLoadingComments,
                         errorMessage = state.commentsError,
                         onCommentClick = onCommentClick,
+                        onMenuClick = { actionsComment = it },
                     )
                 }
             }
@@ -148,10 +154,51 @@ fun CommunityProfileScreen(
             ConfirmDeleteDialog(
                 title = deleting.title,
                 onConfirm = {
-                    viewModel.deletePost(deleting.id)
+                    viewModel.deletePost(deleting)
                     pendingDelete = null
                 },
                 onDismiss = { pendingDelete = null },
+            )
+        }
+
+        val commentTarget = actionsComment
+        if (commentTarget != null) {
+            CommentActionsSheet(
+                onEdit = {
+                    editingComment = commentTarget
+                    actionsComment = null
+                },
+                onDelete = {
+                    pendingCommentDelete = commentTarget
+                    actionsComment = null
+                },
+                onDismiss = { actionsComment = null },
+            )
+        }
+
+        val commentToEdit = editingComment
+        if (commentToEdit != null) {
+            EditCommentDialog(
+                initialText = commentToEdit.comment.body,
+                onConfirm = { text ->
+                    viewModel.editComment(commentToEdit, text)
+                    editingComment = null
+                },
+                onDismiss = { editingComment = null },
+            )
+        }
+
+        val commentToDelete = pendingCommentDelete
+        if (commentToDelete != null) {
+            ConfirmDeleteDialog(
+                title = commentToDelete.comment.body,
+                heading = "Delete comment?",
+                subject = "comment",
+                onConfirm = {
+                    viewModel.deleteComment(commentToDelete)
+                    pendingCommentDelete = null
+                },
+                onDismiss = { pendingCommentDelete = null },
             )
         }
     }
@@ -362,6 +409,7 @@ private fun CommentsTab(
     isLoading: Boolean,
     errorMessage: String?,
     onCommentClick: (UserComment) -> Unit,
+    onMenuClick: (UserComment) -> Unit,
 ) {
     when {
         isLoading -> CenteredSpinner()
@@ -372,12 +420,14 @@ private fun CommentsTab(
             contentPadding = PaddingValues(bottom = 24.dp),
         ) {
             items(comments, key = { it.comment.id }) { item ->
-                Column(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { onCommentClick(item) }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.Top,
                 ) {
+                  Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = item.postTitle.ifBlank { "Post" },
                         style = MaterialTheme.typography.titleSmall,
@@ -409,6 +459,15 @@ private fun CommentsTab(
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
                     )
+                  }
+                  Icon(
+                      imageVector = CommunityIcons.MoreVertical,
+                      contentDescription = "Comment options",
+                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                      modifier = Modifier
+                          .size(22.dp)
+                          .clickable { onMenuClick(item) },
+                  )
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }

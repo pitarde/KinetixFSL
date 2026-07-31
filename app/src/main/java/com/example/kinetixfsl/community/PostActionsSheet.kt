@@ -19,6 +19,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,6 +46,47 @@ internal fun PostActionsSheet(
     onEdit: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+) {
+    ActionsSheet(onDismiss = onDismiss, modifier = modifier) {
+        ActionRow(CommunityIcons.CopyText, "Copy text", onCopyText)
+        ActionRow(
+            icon = CommunityIcons.Delete,
+            label = "Delete",
+            onClick = onDelete,
+            tint = MaterialTheme.colorScheme.error,
+        )
+        ActionRow(CommunityIcons.EditPost, "Edit post", onEdit)
+    }
+}
+
+/**
+ * The same sheet for a comment. No "Copy text" — a comment is a line of text
+ * the user already wrote, so copying it isn't a useful action here.
+ */
+@Composable
+internal fun CommentActionsSheet(
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ActionsSheet(onDismiss = onDismiss, modifier = modifier) {
+        ActionRow(CommunityIcons.EditPost, "Edit comment", onEdit)
+        ActionRow(
+            icon = CommunityIcons.Delete,
+            label = "Delete comment",
+            onClick = onDelete,
+            tint = MaterialTheme.colorScheme.error,
+        )
+    }
+}
+
+/** The shared shell: dimmed backdrop, rounded sheet, close button. */
+@Composable
+private fun ActionsSheet(
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    actions: @Composable () -> Unit,
 ) {
     BackHandler(onBack = onDismiss)
 
@@ -84,22 +129,7 @@ internal fun PostActionsSheet(
 
             Spacer(Modifier.height(28.dp))
 
-            ActionRow(
-                icon = CommunityIcons.CopyText,
-                label = "Copy text",
-                onClick = onCopyText,
-            )
-            ActionRow(
-                icon = CommunityIcons.Delete,
-                label = "Delete",
-                tint = MaterialTheme.colorScheme.error,
-                onClick = onDelete,
-            )
-            ActionRow(
-                icon = CommunityIcons.EditPost,
-                label = "Edit post",
-                onClick = onEdit,
-            )
+            actions()
 
             Spacer(Modifier.height(12.dp))
         }
@@ -115,19 +145,25 @@ internal fun ConfirmDeleteDialog(
     title: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    heading: String = "Delete post?",
+    subject: String = "post",
 ) {
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "Delete post?",
+                text = heading,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
             )
         },
         text = {
             Text(
-                text = "\"$title\" will be removed for everyone. This can't be undone.",
+                text = if (title.isBlank()) {
+                    "This $subject will be removed for everyone. This can't be undone."
+                } else {
+                    "\"$title\" will be removed for everyone. This can't be undone."
+                },
                 style = MaterialTheme.typography.bodyMedium,
             )
         },
@@ -140,6 +176,82 @@ internal fun ConfirmDeleteDialog(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
                     .clickable(onClick = onConfirm)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        },
+        dismissButton = {
+            Text(
+                text = "Cancel",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable(onClick = onDismiss)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/**
+ * Editing a comment is a single text field, so it's a dialog rather than a
+ * whole screen the way editing a post is.
+ */
+@Composable
+internal fun EditCommentDialog(
+    initialText: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember(initialText) { mutableStateOf(initialText) }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Edit comment",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                androidx.compose.foundation.text.BasicTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(
+                        MaterialTheme.colorScheme.primary
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            val canSave = text.isNotBlank() && text != initialText
+            Text(
+                text = "Save",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (canSave) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable(enabled = canSave) { onConfirm(text) }
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         },

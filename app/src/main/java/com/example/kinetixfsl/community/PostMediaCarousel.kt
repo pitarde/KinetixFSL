@@ -104,7 +104,7 @@ internal fun PostMediaCarousel(
                 } else {
                     // Tier 2: the light feed copy, not the full-resolution file.
                     AsyncImage(
-                        model = item.feedUrl,
+                        model = mediaUrl(item.feedUrl),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier

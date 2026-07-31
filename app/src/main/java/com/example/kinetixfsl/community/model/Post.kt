@@ -85,4 +85,36 @@ data class Post(
             !imageUrl.isNullOrBlank() -> listOf(PostMedia(imageUrl, "image"))
             else -> emptyList()
         }
+
+    /**
+     * Every file this post owns in storage, as bucket keys.
+     *
+     * One attachment is up to three objects — the full file, the feed copy and
+     * (for the first attachment) the share preview — plus the legacy single
+     * media fields on older posts. Deleting the post has to take all of them,
+     * or the bucket fills with orphans nothing references.
+     */
+    fun storageKeys(): List<String> {
+        val urls = buildList {
+            add(imageUrl)
+            add(videoUrl)
+            add(previewUrl)
+            media.forEach {
+                add(it.url)
+                add(it.thumbUrl)
+            }
+        }
+        return urls.mapNotNull { storageKeyOf(it) }.distinct()
+    }
+}
+
+/**
+ * Turns a public media URL into its bucket key.
+ * "https://host/images/123-abc.webp" -> "images/123-abc.webp"
+ */
+fun storageKeyOf(url: String?): String? {
+    if (url.isNullOrBlank()) return null
+    return runCatching {
+        android.net.Uri.parse(url).path?.trimStart('/')
+    }.getOrNull()?.takeIf { it.isNotBlank() }
 }

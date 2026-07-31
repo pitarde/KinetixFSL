@@ -38,6 +38,11 @@ export default {
       return jsonResponse(405, { error: "Method not allowed" });
     }
 
+    // --- Deleting a post's media ---------------------------------------
+    if (new URL(request.url).pathname === "/delete-media") {
+      return handleDeleteMedia(request, env);
+    }
+
     try {
       // --- Parse the multipart form ------------------------------------
       const formData = await request.formData();
@@ -83,6 +88,139 @@ export default {
     }
   },
 };
+
+// --- Deleting a post's media -------------------------------------------
+
+/**
+ * POST /delete-media
+ *   headers: x-kinetix-key: <DELETE_SECRET>
+ *   body:    { "postId": "...", "keys": ["images/123-abc.webp", ...] }
+ *
+ * Called by the app just *before* it removes the post document, so the post
+ * is still readable here and every key can be checked against it. A key that
+ * doesn't appear in that post's own URLs is refused — so even with the shared
+ * secret, this endpoint can't be turned into "delete anything in the bucket".
+ *
+ * SECURITY NOTE: the shared secret ships inside the APK and can be extracted
+ * by anyone willing to unpack it. The ownership check above is what limits the
+ * damage. To close it properly, send the caller's Firebase ID token instead and
+ * verify it here against Google's public keys, then compare the uid to the
+ * post's authorId. See web/SETUP.md.
+ */
+async function handleDeleteMedia(request, env) {
+  const secret = env.DELETE_SECRET;
+  if (!secret || request.headers.get("x-kinetix-key") !== secret) {
+    return jsonResponse(401, { error: "Unauthorized" });
+  }
+
+  let payload;
+  try {
+    payload = await request.json();
+  } catch (_) {
+    return jsonResponse(400, { error: "Invalid JSON" });
+  }
+
+  const postId = payload && payload.postId;
+  const keys = (payload && payload.keys) || [];
+  if (!postId || !Array.isArray(keys) || keys.length === 0) {
+    return jsonResponse(400, { error: "postId and keys are required" });
+  }
+
+  // Collect every URL the post references, so we can confirm ownership.
+  const post = await fetchPost(postId, env);
+  if (!post) {
+    return jsonResponse(404, { error: "Post not found" });
+  }
+  // Images attached to comments belong to the post too, and go with it when
+  // it's deleted — so they have to count as owned or they'd be refused.
+  const commentUrls = await fetchCommentImageUrls(postId, env);
+
+  const owned = new Set(
+    collectPostUrls(post)
+      .concat(commentUrls)
+      .map(keyFromUrl)
+      .filter(Boolean),
+  );
+
+  const deleted = [];
+  const refused = [];
+
+  for (const key of keys) {
+    if (!owned.has(key)) {
+      refused.push(key);
+      continue;
+    }
+    try {
+      await env.KINETIX_BUCKET.delete(key);
+      deleted.push(key);
+    } catch (_) {
+      refused.push(key);
+    }
+  }
+
+  return jsonResponse(200, { deleted: deleted.length, refused: refused.length });
+}
+
+/**
+ * Every image attached to the post's comments.
+ *
+ * Paged, because a post can carry more comments than one REST response
+ * returns and a missed page would mean a refused delete.
+ */
+async function fetchCommentImageUrls(postId, env) {
+  const projectId = env.FIREBASE_PROJECT_ID;
+  const apiKey = env.FIREBASE_API_KEY;
+  if (!projectId || !apiKey) return [];
+
+  const base =
+    `https://firestore.googleapis.com/v1/projects/${projectId}` +
+    `/databases/(default)/documents/posts/${encodeURIComponent(postId)}/comments`;
+
+  const urls = [];
+  let pageToken = "";
+
+  for (let page = 0; page < 20; page++) {
+    let endpoint = `${base}?key=${apiKey}&pageSize=300`;
+    if (pageToken) endpoint += `&pageToken=${encodeURIComponent(pageToken)}`;
+
+    let response;
+    try {
+      response = await fetch(endpoint);
+    } catch (_) {
+      break;
+    }
+    if (!response.ok) break;
+
+    const body = await response.json();
+    for (const doc of body.documents || []) {
+      const imageUrl = readString(doc.fields && doc.fields.imageUrl);
+      if (imageUrl) urls.push(imageUrl);
+    }
+
+    pageToken = body.nextPageToken || "";
+    if (!pageToken) break;
+  }
+
+  return urls;
+}
+
+/** Every media URL on a post, across the new and legacy fields. */
+function collectPostUrls(post) {
+  const urls = [post.imageUrl, post.videoUrl, post.previewUrl];
+  for (const item of post.media || []) {
+    urls.push(item.url, item.thumbUrl);
+  }
+  return urls.filter((u) => typeof u === "string" && u.length > 0);
+}
+
+/** "https://host/images/123-abc.webp" -> "images/123-abc.webp" */
+function keyFromUrl(url) {
+  try {
+    return new URL(url).pathname.replace(/^\/+/, "");
+  } catch (_) {
+    return null;
+  }
+}
 
 // --- Upload helpers ----------------------------------------------------
 
@@ -144,12 +282,26 @@ const APP_NAME = "Kinetix FSL";
 /** Must match ShareLinks.HOST in the Android app. Used for og:url. */
 const SHARE_HOST = "kinetix-upload.pitardeken2024.workers.dev";
 
+/** URL prefix this Worker serves bucket objects under. */
+const MEDIA_PATH = "/f/";
+
 /**
  * Answers the share routes. Returns null for every other request so the
  * upload handler above can take it.
  */
 async function handleShareRoutes(request, env) {
   const url = new URL(request.url);
+
+  // Media served straight off the R2 binding.
+  //
+  // The bucket's own pub-*.r2.dev hostname is unreachable on some mobile
+  // carriers — it's free object storage that gets abused, so networks filter
+  // it, and Cloudflare only intends it for development anyway. Serving through
+  // the Worker's own domain avoids that entirely, and means the bucket needn't
+  // be publicly readable at all.
+  if (url.pathname.startsWith(MEDIA_PATH)) {
+    return serveMedia(request, env, decodeURIComponent(url.pathname.slice(MEDIA_PATH.length)));
+  }
 
   if (url.pathname === "/.well-known/assetlinks.json") {
     return assetLinksResponse(env);
@@ -162,6 +314,73 @@ async function handleShareRoutes(request, env) {
   }
 
   return null;
+}
+
+// --- Serving media ------------------------------------------------------
+
+/**
+ * Streams one object out of the bucket.
+ *
+ * Range requests are honoured because ExoPlayer relies on them: it seeks to
+ * read an MP4's index before playing, and without 206 support a video would
+ * have to download in full before the first frame.
+ */
+async function serveMedia(request, env, key) {
+  if (!key) return new Response("Not found", { status: 404 });
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+
+  let object;
+  try {
+    object = await env.KINETIX_BUCKET.get(key, {
+      range: request.headers,
+      onlyIf: request.headers,
+    });
+  } catch (_) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  if (object === null) return new Response("Not found", { status: 404 });
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("etag", object.httpEtag);
+  headers.set("accept-ranges", "bytes");
+  // Keys are unique per upload, so an object at a URL never changes.
+  headers.set("cache-control", "public, max-age=31536000, immutable");
+  headers.set("access-control-allow-origin", "*");
+
+  // No body means the conditional request matched — nothing to send.
+  if (!("body" in object) || object.body === undefined) {
+    return new Response(null, { status: 304, headers });
+  }
+
+  if (object.range && typeof object.range.offset === "number") {
+    const start = object.range.offset;
+    const end = start + (object.range.length || 0) - 1;
+    headers.set("content-range", `bytes ${start}-${end}/${object.size}`);
+    return new Response(object.body, { status: 206, headers });
+  }
+
+  return new Response(object.body, { status: 200, headers });
+}
+
+/**
+ * Rewrites a stored pub-*.r2.dev URL onto this Worker.
+ *
+ * Posts created before the switch have the old hostname baked into Firestore,
+ * so rewriting on the way out fixes them without a data migration.
+ */
+function throughWorker(url) {
+  if (typeof url !== "string" || !url) return url;
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.endsWith(".r2.dev")) return url;
+    return `https://${SHARE_HOST}${MEDIA_PATH}${parsed.pathname.replace(/^\/+/, "")}`;
+  } catch (_) {
+    return url;
+  }
 }
 
 // --- Android App Links -------------------------------------------------
@@ -243,6 +462,7 @@ async function fetchPost(postId, env) {
     imageUrl: readString(f.imageUrl),
     videoUrl: readString(f.videoUrl),
     previewUrl: readString(f.previewUrl),
+    media: readMedia(f.media),
     linkUrl: readString(f.linkUrl),
     upvoteCount: readInt(f.upvoteCount),
     commentCount: readInt(f.commentCount),
@@ -253,6 +473,24 @@ function readString(field) {
   if (!field) return "";
   if (typeof field.stringValue === "string") return field.stringValue;
   return "";
+}
+
+/** Unwraps Firestore's array-of-maps encoding for the `media` field. */
+function readMedia(field) {
+  const values = field && field.arrayValue && field.arrayValue.values;
+  if (!Array.isArray(values)) return [];
+
+  return values
+    .map((entry) => {
+      const f = entry && entry.mapValue && entry.mapValue.fields;
+      if (!f) return null;
+      return {
+        url: readString(f.url),
+        type: readString(f.type) || "image",
+        thumbUrl: readString(f.thumbUrl),
+      };
+    })
+    .filter(Boolean);
 }
 
 function readInt(field) {
@@ -294,11 +532,11 @@ function renderPost(postId, post) {
   const description = preview(post.body || post.title, 180);
 
   const media = post.videoUrl
-    ? `<video class="media" src="${esc(post.videoUrl)}" ${
-        post.previewUrl ? `poster="${esc(post.previewUrl)}"` : ""
+    ? `<video class="media" src="${esc(throughWorker(post.videoUrl))}" ${
+        post.previewUrl ? `poster="${esc(throughWorker(post.previewUrl))}"` : ""
       } controls playsinline></video>`
     : post.imageUrl
-      ? `<img class="media" src="${esc(post.imageUrl)}" alt="" />`
+      ? `<img class="media" src="${esc(throughWorker(post.imageUrl))}" alt="" />`
       : "";
 
   const link = post.linkUrl
@@ -315,7 +553,7 @@ function renderPost(postId, post) {
   //
   // Declaring the dimensions lets scrapers lay the card out before they've
   // finished fetching the image, and stops them guessing at a taller one.
-  const previewImage = post.previewUrl || post.imageUrl || "";
+  const previewImage = throughWorker(post.previewUrl || post.imageUrl || "");
   const hasExactSize = Boolean(post.previewUrl);
 
   const imageTags = previewImage

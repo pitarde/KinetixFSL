@@ -8,6 +8,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalContext
 import coil.imageLoader
 import coil.request.ImageRequest
+import kotlinx.coroutines.Dispatchers
 import com.example.kinetixfsl.community.model.Post
 import kotlinx.coroutines.flow.distinctUntilChanged
 
@@ -17,6 +18,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
  * whole reason the feed felt slow was too much downloading at once.
  */
 private const val PREFETCH_AHEAD = 3
+
+/** One prefetch at a time. See the note in [prefetchImage]. */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+private val prefetchDispatcher = Dispatchers.IO.limitedParallelism(1)
 
 /**
  * Quietly downloads the feed-resolution image for the next few posts so they're
@@ -31,11 +36,13 @@ private const val PREFETCH_AHEAD = 3
 internal fun FeedImagePrefetcher(
     listState: LazyListState,
     posts: List<Post>,
+    /** Suspended while something is open over the feed. */
+    enabled: Boolean = true,
 ) {
     val context = LocalContext.current
 
-    LaunchedEffect(listState, posts) {
-        if (posts.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(listState, posts, enabled) {
+        if (posts.isEmpty() || !enabled) return@LaunchedEffect
 
         snapshotFlow {
             // Post rows are keyed by post id; the search bar and spacer aren't,
@@ -53,7 +60,7 @@ internal fun FeedImagePrefetcher(
                     .drop(lastIndex + 1)
                     .take(PREFETCH_AHEAD)
                     .mapNotNull { post ->
-                        post.mediaItems.firstOrNull()?.takeIf { !it.isVideo }?.feedUrl
+                        post.mediaItems.firstOrNull()?.takeIf { !it.isVideo }?.let { mediaUrl(it.feedUrl) }
                     }
                     .forEach { url -> context.prefetchImage(url) }
             }
@@ -69,6 +76,11 @@ private fun Context.prefetchImage(url: String) {
     imageLoader.enqueue(
         ImageRequest.Builder(this)
             .data(url)
+            // Coil 2 has no per-request priority, so prefetching is held to a
+            // single worker instead. Visible images use the loader's normal
+            // parallelism and therefore always have connections available —
+            // a background warm can never occupy more than one.
+            .dispatcher(prefetchDispatcher)
             .build()
     )
 }

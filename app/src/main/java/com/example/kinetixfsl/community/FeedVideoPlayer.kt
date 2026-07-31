@@ -40,20 +40,54 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 
+/**
+ * How long a video must stay the centred item before it starts downloading.
+ * Long enough to skip everything scrolled past, short enough that stopping on
+ * a video feels immediate.
+ */
+private const val SETTLE_BEFORE_LOAD_MS = 180L
+
+/**
+ * Rewrites a bucket URL onto the Worker's own domain.
+ *
+ * Media used to be served from the bucket's `pub-*.r2.dev` hostname, which some
+ * mobile carriers block outright — the app worked on WiFi and hung on a blurred
+ * placeholder on data, because the request never reached Cloudflare at all.
+ * `workers.dev` is not filtered the same way.
+ *
+ * Applied at read time rather than migrating Firestore, so every post already
+ * created keeps working.
+ */
+fun mediaUrl(url: String): String {
+    if (url.isBlank()) return url
+    return try {
+        val host = android.net.Uri.parse(url).host ?: return url
+        if (!host.endsWith(".r2.dev")) return url
+        val path = android.net.Uri.parse(url).path?.trimStart('/') ?: return url
+        "${ShareLinks.MEDIA_BASE}$path"
+    } catch (_: Exception) {
+        url
+    }
+}
+
 private fun optimizeVideoUrl(url: String): String {
+    val rewritten = mediaUrl(url)
     val marker = "/video/upload/"
-    val index = url.indexOf(marker)
-    if (index == -1) return url
+    val index = rewritten.indexOf(marker)
+    if (index == -1) return rewritten
     val insertAt = index + marker.length
-    return url.substring(0, insertAt) + "q_auto:eco,w_480,f_mp4/" + url.substring(insertAt)
+    return rewritten.substring(0, insertAt) + "q_auto:eco,w_480,f_mp4/" +
+        rewritten.substring(insertAt)
 }
 
 fun optimizeImageUrl(url: String): String {
+    val rewritten = mediaUrl(url)
     val marker = "/image/upload/"
-    val index = url.indexOf(marker)
-    if (index == -1) return url
+    val index = rewritten.indexOf(marker)
+    if (index == -1) return rewritten
     val insertAt = index + marker.length
-    return url.substring(0, insertAt) + "q_auto,w_720,f_auto/" + url.substring(insertAt)
+    return rewritten.substring(0, insertAt) + "q_auto,w_720,f_auto/" +
+        rewritten.substring(insertAt)
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -100,6 +134,11 @@ fun FeedVideoPlayer(
 
     LaunchedEffect(isVisible) {
         if (isVisible) {
+            // Wait for the scroll to settle before touching the network. This
+            // effect is cancelled the moment the item stops being the active
+            // one, so videos flicked past never start loading at all — only
+            // the one the user actually comes to rest on does.
+            kotlinx.coroutines.delay(SETTLE_BEFORE_LOAD_MS)
             if (exoPlayer.playbackState == Player.STATE_IDLE) exoPlayer.prepare()
             exoPlayer.play()
         } else {
@@ -148,7 +187,7 @@ fun FeedVideoPlayer(
         // while it buffers.
         if (!hasRenderedFrame && !posterUrl.isNullOrBlank()) {
             AsyncImage(
-                model = posterUrl,
+                model = mediaUrl(posterUrl),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

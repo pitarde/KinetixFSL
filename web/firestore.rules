@@ -1,0 +1,99 @@
+// Firestore security rules for KinetixFSL.
+//
+// Paste the whole file into: Firebase Console -> Firestore Database -> Rules,
+// then press Publish. Replace everything that's there; this is complete.
+//
+// `posts` is the only collection the app uses, so nothing else needs a rule.
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Fields any signed-in user may change on someone else's post.
+    // Voting, commenting and sharing all work by incrementing these.
+    function onlyCounterFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['upvoteCount', 'downvoteCount', 'commentCount',
+                  'shareCount', 'viewCount', 'score']);
+    }
+
+    // True when the signed-in user wrote the post these documents hang off.
+    // Used so deleting a post can also clear the votes, shares and comments
+    // other people left on it. Costs one document read per evaluation.
+    function isPostAuthor(database, postId) {
+      return request.auth != null
+        && get(/databases/$(database)/documents/posts/$(postId)).data.authorId
+           == request.auth.uid;
+    }
+
+    match /posts/{postId} {
+      // Public: the shared-link web page reads this without signing in.
+      allow read: if true;
+
+      // Only a signed-in user, and only as themselves.
+      allow create: if request.auth != null
+                    && request.resource.data.authorId == request.auth.uid;
+
+      // The author can edit their own post; anyone signed in may move counters.
+      allow update: if request.auth != null
+                    && (resource.data.authorId == request.auth.uid
+                        || onlyCounterFieldsChanged());
+
+      allow delete: if request.auth != null
+                    && resource.data.authorId == request.auth.uid;
+
+      // One vote document per user, named with their uid.
+      //
+      // `get` and `list` are split deliberately. A query over the whole
+      // collection can't satisfy `request.auth.uid == userId`, because on a
+      // list operation userId isn't bound to any single document — Firestore
+      // denies the query outright. Deleting a post has to list these, so the
+      // post's author is granted list separately.
+      match /votes/{userId} {
+        allow get: if request.auth != null && request.auth.uid == userId;
+        allow list: if isPostAuthor(database, postId);
+        allow create, update: if request.auth != null && request.auth.uid == userId;
+        allow delete: if request.auth != null
+                      && (request.auth.uid == userId
+                          || isPostAuthor(database, postId));
+      }
+
+      // One share marker per user — this is what keeps the share count
+      // to one per account. Never updated.
+      match /shares/{userId} {
+        allow get: if request.auth != null && request.auth.uid == userId;
+        allow list: if isPostAuthor(database, postId);
+        allow create: if request.auth != null && request.auth.uid == userId;
+        allow update: if false;
+        allow delete: if request.auth != null
+                      && (request.auth.uid == userId
+                          || isPostAuthor(database, postId));
+      }
+
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if request.auth != null
+                      && request.resource.data.authorId == request.auth.uid;
+        allow update: if request.auth != null
+                      && resource.data.authorId == request.auth.uid;
+        // Comment author, or the post's author cleaning up their post.
+        allow delete: if request.auth != null
+                      && (resource.data.authorId == request.auth.uid
+                          || isPostAuthor(database, postId));
+      }
+    }
+
+    // Collection-group reads. The profile's Comments tab queries every post's
+    // comments at once, and the nested rule above does NOT cover that — a
+    // collection-group query is matched separately.
+    match /{path=**}/comments/{commentId} {
+      allow read: if true;
+    }
+
+    // Nothing else is reachable.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

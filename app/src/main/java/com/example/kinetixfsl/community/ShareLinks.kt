@@ -16,6 +16,12 @@ object ShareLinks {
 
     const val POST_PATH_PREFIX = "/p/"
 
+    /**
+     * Where media is served from. The Worker streams bucket objects under this
+     * path — see [mediaUrl] for why the bucket's own r2.dev hostname isn't used.
+     */
+    const val MEDIA_BASE = "https://$HOST/f/"
+
     /** The link that goes out when a user shares a post. */
     fun postUrl(postId: String): String = "https://$HOST$POST_PATH_PREFIX$postId"
 

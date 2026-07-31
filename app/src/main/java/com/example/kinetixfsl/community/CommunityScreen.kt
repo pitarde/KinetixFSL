@@ -122,6 +122,10 @@ fun CommunityScreen(
                 onPostClick = { post -> detailPost = post },
                 onMediaClick = { post -> immersivePost = post },
                 onEditPost = { post -> editingPost = post },
+                // Anything layered over the feed takes it out of the running
+                // for bandwidth: no autoplay, no prefetch behind the overlay.
+                isFeedActive = detailPost == null && immersivePost == null &&
+                    editingPost == null && openedCommentPostId == null,
                 onProfileCommentClick = { item -> openedCommentPostId = item.postId },
                 feedListState = feedListState,
                 feedViewModel = feedViewModel,
@@ -206,6 +210,7 @@ private fun CommunityScaffold(
     onPostClick: (Post) -> Unit,
     onMediaClick: (Post) -> Unit,
     onEditPost: (Post) -> Unit,
+    isFeedActive: Boolean,
     onProfileCommentClick: (com.example.kinetixfsl.community.model.UserComment) -> Unit,
     feedListState: LazyListState,
     feedViewModel: CommunityFeedViewModel,
@@ -228,6 +233,7 @@ private fun CommunityScaffold(
                     onCommentClick = onCommentClick,
                     onPostClick = onPostClick,
                     onMediaClick = onMediaClick,
+                    isFeedActive = isFeedActive,
                 )
                 CommunityTab.PROFILE -> CommunityProfileScreen(
                     onPostClick = onPostClick,

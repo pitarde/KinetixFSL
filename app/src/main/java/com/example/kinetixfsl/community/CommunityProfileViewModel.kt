@@ -158,13 +158,41 @@ class CommunityProfileViewModel(
         viewModelScope.launch { repository.sharePost(post.id) }
     }
 
-    fun deletePost(postId: String) {
+    fun deletePost(post: Post) {
         viewModelScope.launch {
-            repository.deletePost(postId).onFailure { error ->
+            repository.deletePost(post).onFailure { error ->
                 _uiState.update {
                     it.copy(errorMessage = error.localizedMessage ?: "Couldn't delete post.")
                 }
             }
+        }
+    }
+
+    fun editComment(item: UserComment, newBody: String) {
+        viewModelScope.launch {
+            repository.updateComment(item.postId, item.comment.id, newBody)
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            errorMessage = error.localizedMessage
+                                ?: "Couldn't save your comment.",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun deleteComment(item: UserComment) {
+        viewModelScope.launch {
+            repository.deleteComment(item.postId, item.comment.id)
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            errorMessage = error.localizedMessage
+                                ?: "Couldn't delete your comment.",
+                        )
+                    }
+                }
         }
     }
 

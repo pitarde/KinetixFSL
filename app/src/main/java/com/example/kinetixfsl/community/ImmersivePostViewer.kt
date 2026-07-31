@@ -208,7 +208,7 @@ fun ImmersivePostViewer(
                     if (item.isVideo) {
                         // Only the page you're looking at plays.
                         if (mediaPager.currentPage == page) {
-                            ImmersiveVideo(videoUrl = item.url)
+                            ImmersiveVideo(videoUrl = mediaUrl(item.url))
                         }
                     } else {
                         Box(modifier = Modifier.fillMaxSize()) {
@@ -218,14 +218,14 @@ fun ImmersivePostViewer(
                             // as it arrives.
                             if (item.thumbUrl != null) {
                                 AsyncImage(
-                                    model = item.feedUrl,
+                                    model = mediaUrl(item.feedUrl),
                                     contentDescription = null,
                                     contentScale = ContentScale.Fit,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
                             AsyncImage(
-                                model = item.url,
+                                model = mediaUrl(item.url),
                                 contentDescription = null,
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier.fillMaxSize(),

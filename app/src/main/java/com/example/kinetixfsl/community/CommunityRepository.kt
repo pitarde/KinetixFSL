@@ -4,8 +4,11 @@ import com.example.kinetixfsl.community.model.Comment
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.model.PostMedia
 import com.example.kinetixfsl.community.model.UserComment
+import com.example.kinetixfsl.community.model.storageKeyOf
+import com.example.kinetixfsl.community.upload.R2MediaUploader
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.CollectionReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -116,12 +119,105 @@ class CommunityRepository(
         return result
     }
 
-    /** Removes a post. Only the author is allowed to, enforced by rules. */
-    suspend fun deletePost(postId: String): Result<Unit> = try {
-        firestore.collection(POSTS).document(postId).delete().await()
+    /** Rewrites a comment's text. */
+    suspend fun updateComment(
+        postId: String,
+        commentId: String,
+        body: String,
+    ): Result<Unit> = try {
+        firestore.collection(POSTS).document(postId)
+            .collection(COMMENTS).document(commentId)
+            .update(mapOf("body" to body.trim(), "editedAt" to Timestamp.now()))
+            .await()
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
+    }
+
+    /**
+     * Removes a comment and keeps the post's counter honest.
+     *
+     * Replies to a deleted top-level comment are left in place — they'd
+     * disappear from the thread view anyway, since it groups by a parent that
+     * no longer exists.
+     */
+    suspend fun deleteComment(postId: String, commentId: String): Result<Unit> = try {
+        val postRef = firestore.collection(POSTS).document(postId)
+        firestore.runTransaction { tx ->
+            tx.delete(postRef.collection(COMMENTS).document(commentId))
+            tx.update(postRef, "commentCount", FieldValue.increment(-1))
+        }.await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /**
+     * Removes a post and the files it owns in storage. Only the author is
+     * allowed to, enforced by rules.
+     *
+     * Storage goes first, on purpose: the Worker verifies each key against the
+     * post document before deleting, so the document has to still be there.
+     * If that step fails the post is still removed — orphaned files are untidy,
+     * a post that won't delete is a bug the user can see.
+     */
+    suspend fun deletePost(post: Post): Result<Unit> = try {
+        val postRef = firestore.collection(POSTS).document(post.id)
+
+        // Firestore does not cascade: deleting the document would leave the
+        // comments, votes and shares underneath it as unreachable orphans, and
+        // every image attached to a comment stranded in the bucket. So the
+        // whole tree comes down explicitly, deepest first.
+        val commentDocs = try {
+            postRef.collection(COMMENTS).get().await().documents
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        val commentImageKeys = commentDocs
+            .mapNotNull { storageKeyOf(it.getString("imageUrl")) }
+
+        // Storage before Firestore — the Worker checks each key against the
+        // post (and its comments), so both must still exist at this point.
+        R2MediaUploader.deleteObjects(post.id, post.storageKeys() + commentImageKeys)
+
+        deleteAllIn(postRef.collection(COMMENTS))
+        deleteAllIn(postRef.collection(VOTES))
+        deleteAllIn(postRef.collection(SHARES))
+
+        // The post itself goes last, and is the only step allowed to fail the
+        // operation. Everything above is tidy-up: leaving a stray vote document
+        // behind is invisible to users, whereas a post that refuses to delete
+        // is not — so cleanup must never be able to strand it.
+        postRef.delete().await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /**
+     * Empties a subcollection in batches, best-effort.
+     *
+     * Chunked because a Firestore write batch tops out at 500 operations, and
+     * a popular post can carry more comments than that. Swallows failures on
+     * purpose — see the note in [deletePost].
+     */
+    private suspend fun deleteAllIn(collection: CollectionReference) {
+        try {
+            while (true) {
+                val snapshot = collection.limit(BATCH_LIMIT).get().await()
+                if (snapshot.isEmpty) return
+
+                val batch = firestore.batch()
+                snapshot.documents.forEach { batch.delete(it.reference) }
+                batch.commit().await()
+
+                // A short page means that was the last one.
+                if (snapshot.size() < BATCH_LIMIT) return
+            }
+        } catch (_: Exception) {
+            // Rules or connectivity — leave the orphans rather than blocking.
+        }
     }
 
     /**
@@ -401,5 +497,8 @@ class CommunityRepository(
         const val FIELD_CREATED_AT = "createdAt"
         const val FIELD_SCORE = "score"
         const val FEED_PAGE_SIZE = 50L
+
+        /** Firestore write batches cap at 500 operations. */
+        const val BATCH_LIMIT = 400L
     }
 }

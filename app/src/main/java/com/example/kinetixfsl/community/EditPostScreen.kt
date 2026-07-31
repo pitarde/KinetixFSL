@@ -234,7 +234,7 @@ fun EditPostScreen(
                     ) { index ->
                         val item = state.existingMedia[index]
                         MediaThumb(
-                            model = item.feedUrl,
+                            model = mediaUrl(item.feedUrl),
                             isVideo = item.isVideo,
                             onRemove = { viewModel.removeExisting(item) },
                         )
