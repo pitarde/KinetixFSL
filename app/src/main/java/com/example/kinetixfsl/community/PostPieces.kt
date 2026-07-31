@@ -48,6 +48,8 @@ import com.example.kinetixfsl.ui.theme.KinetixGreen
 internal fun PostAuthorRow(
     post: Post,
     modifier: Modifier = Modifier,
+    /** Optional control pinned to the right — the profile's 3-dot menu. */
+    trailing: @Composable (() -> Unit)? = null,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Avatar(
@@ -73,6 +75,10 @@ internal fun PostAuthorRow(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        if (trailing != null) {
+            Spacer(Modifier.weight(1f))
+            trailing()
         }
     }
 }

@@ -3,6 +3,7 @@ package com.example.kinetixfsl.community
 import com.example.kinetixfsl.community.model.Comment
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.model.PostMedia
+import com.example.kinetixfsl.community.model.UserComment
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -44,6 +45,115 @@ class CommunityRepository(
                 trySend(snapshot.documents.mapNotNull { it.toPostOrNull() })
             }
         awaitClose { registration.remove() }
+    }
+
+    // -------------------------------------------------------------------------
+    // Profile
+    // -------------------------------------------------------------------------
+
+    /** Every post by [uid], newest first. Backs the profile's Posts tab. */
+    fun postsByAuthor(uid: String): Flow<List<Post>> = callbackFlow {
+        val reg = firestore.collection(POSTS)
+            .whereEqualTo("authorId", uid)
+            .addSnapshotListener { snap, err ->
+                if (err != null) { close(err); return@addSnapshotListener }
+                if (snap == null) return@addSnapshotListener
+                // Sorted here rather than with orderBy so this needs no
+                // composite index — a single user's posts are a small set.
+                trySend(
+                    snap.documents
+                        .mapNotNull { it.toPostOrNull() }
+                        .sortedByDescending { it.createdAt }
+                )
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
+     * Every comment by [uid] across all posts, newest first, each paired with
+     * the post it belongs to so the profile can show the post's title.
+     *
+     * Uses a collection-group query, which needs a one-off index in the
+     * Firebase console — Firestore's error message links straight to it.
+     */
+    fun commentsByAuthor(uid: String): Flow<List<UserComment>> = callbackFlow {
+        val reg = firestore.collectionGroup(COMMENTS)
+            .whereEqualTo("authorId", uid)
+            .addSnapshotListener { snap, err ->
+                if (err != null) { close(err); return@addSnapshotListener }
+                if (snap == null) return@addSnapshotListener
+
+                val items = snap.documents.mapNotNull { doc ->
+                    try {
+                        val comment = doc.toObject(Comment::class.java)
+                            ?.copy(id = doc.id) ?: return@mapNotNull null
+                        // posts/{postId}/comments/{commentId} — hop up two
+                        // levels to recover which post this belongs to.
+                        val postId = doc.reference.parent.parent?.id
+                            ?: return@mapNotNull null
+                        UserComment(comment = comment, postId = postId)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }.sortedByDescending { it.comment.createdAt }
+
+                trySend(items)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /** Titles for the posts a user commented on, keyed by post id. */
+    suspend fun postTitles(postIds: Collection<String>): Map<String, String> {
+        val result = mutableMapOf<String, String>()
+        postIds.distinct().forEach { id ->
+            try {
+                val doc = firestore.collection(POSTS).document(id).get().await()
+                doc.getString("title")?.let { result[id] = it }
+            } catch (_: Exception) {
+                // A missing post just shows without a title.
+            }
+        }
+        return result
+    }
+
+    /** Removes a post. Only the author is allowed to, enforced by rules. */
+    suspend fun deletePost(postId: String): Result<Unit> = try {
+        firestore.collection(POSTS).document(postId).delete().await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /**
+     * Edits a post's text. Media is left alone — changing attachments would
+     * mean re-running the whole upload pipeline, so the editor covers the
+     * title, body and link only.
+     */
+    suspend fun updatePost(
+        postId: String,
+        title: String,
+        body: String,
+        linkUrl: String?,
+        media: List<PostMedia>,
+    ): Result<Unit> = try {
+        // Legacy single-media fields are rewritten too, so the share page and
+        // any older client stay consistent with the new attachment list.
+        firestore.collection(POSTS).document(postId).update(
+            mapOf(
+                "title" to title.trim(),
+                "body" to body.trim(),
+                "linkUrl" to linkUrl?.trim()?.takeIf { it.isNotBlank() },
+                "media" to media.map {
+                    hashMapOf("url" to it.url, "type" to it.type, "thumbUrl" to it.thumbUrl)
+                },
+                "imageUrl" to media.firstOrNull { !it.isVideo }?.url,
+                "videoUrl" to media.firstOrNull { it.isVideo }?.url,
+                "editedAt" to Timestamp.now(),
+            )
+        ).await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
     }
 
     // -------------------------------------------------------------------------

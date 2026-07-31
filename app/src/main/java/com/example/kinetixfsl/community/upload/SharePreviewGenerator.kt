@@ -40,6 +40,110 @@ object SharePreviewGenerator {
      */
     private const val VIDEO_FRAME_US = 1_000_000L
 
+    /** Everything derived from one attachment in a single pass. */
+    data class Derivatives(
+        /** ~640px WebP for the feed, or null if it couldn't be made. */
+        val feedUrl: String? = null,
+        /** 1200x630 JPEG for link previews. Only for the first attachment. */
+        val previewUrl: String? = null,
+        /** ~1 KB base64 blur. Only for the first attachment. */
+        val blur: String? = null,
+    )
+
+    /**
+     * Produces every derived image for one attachment from a **single** decode.
+     *
+     * This matters most for video. Pulling a frame out of a video means opening
+     * and seeking the file, which is slow — and generating the preview, the
+     * feed copy and the blur separately meant doing that three times over for
+     * the same frame. On a large clip that was seconds of pure waste before the
+     * upload even started.
+     *
+     * [includeShareArtifacts] should be true only for the first attachment;
+     * the preview and blur are post-level, not per-item.
+     */
+    suspend fun derive(
+        context: Context,
+        uri: Uri,
+        mediaType: String,
+        includeShareArtifacts: Boolean,
+    ): Derivatives = withContext(Dispatchers.IO) {
+        val source = loadSource(context, uri, mediaType)
+            ?: return@withContext Derivatives()
+
+        try {
+            val feedUrl = uploadScaled(
+                source = source,
+                maxDimension = FEED_MAX_DIMENSION,
+                quality = FEED_JPEG_QUALITY,
+            )
+
+            if (!includeShareArtifacts) {
+                return@withContext Derivatives(feedUrl = feedUrl)
+            }
+
+            val previewUrl = uploadLetterboxedPreview(source)
+            val blur = encodeBlur(source)
+
+            Derivatives(feedUrl = feedUrl, previewUrl = previewUrl, blur = blur)
+        } catch (_: Exception) {
+            // Derived images are all optional — never fail a post over them.
+            Derivatives()
+        } finally {
+            source.recycle()
+        }
+    }
+
+    private suspend fun uploadScaled(
+        source: Bitmap,
+        maxDimension: Int,
+        quality: Int,
+    ): String? {
+        val scaled = scaleToFit(source, maxDimension)
+        val bytes = ByteArrayOutputStream().use { out ->
+            scaled.compress(webpFormat(), quality, out)
+            out.toByteArray()
+        }
+        if (scaled !== source) scaled.recycle()
+
+        return uploadOrNull(bytes, "feed.webp", "image/webp")
+    }
+
+    private suspend fun uploadLetterboxedPreview(source: Bitmap): String? {
+        val preview = letterboxToPreview(source)
+        val bytes = ByteArrayOutputStream().use { out ->
+            preview.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+            out.toByteArray()
+        }
+        preview.recycle()
+
+        return uploadOrNull(bytes, "preview.jpg", "image/jpeg")
+    }
+
+    private fun encodeBlur(source: Bitmap): String? {
+        val tiny = scaleToFit(source, BLUR_MAX_DIMENSION)
+        val bytes = ByteArrayOutputStream().use { out ->
+            tiny.compress(webpFormat(), BLUR_JPEG_QUALITY, out)
+            out.toByteArray()
+        }
+        if (tiny !== source) tiny.recycle()
+
+        return try {
+            android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun uploadOrNull(
+        bytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+    ): String? = when (val result = R2MediaUploader.uploadBytes(bytes, fileName, mimeType)) {
+        is R2MediaUploader.UploadResult.Success -> result.secureUrl
+        is R2MediaUploader.UploadResult.Error -> null
+    }
+
     /** Longest edge of the feed-resolution copy. */
     private const val FEED_MAX_DIMENSION = 640
 
@@ -74,12 +178,12 @@ object SharePreviewGenerator {
         }
 
         val bytes = ByteArrayOutputStream().use { out ->
-            scaled.compress(Bitmap.CompressFormat.JPEG, FEED_JPEG_QUALITY, out)
+            scaled.compress(webpFormat(), FEED_JPEG_QUALITY, out)
             out.toByteArray()
         }
         scaled.recycle()
 
-        when (val result = R2MediaUploader.uploadBytes(bytes, "feed.jpg", "image/jpeg")) {
+        when (val result = R2MediaUploader.uploadBytes(bytes, "feed.webp", "image/webp")) {
             is R2MediaUploader.UploadResult.Success -> result.secureUrl
             is R2MediaUploader.UploadResult.Error -> null
         }
@@ -107,7 +211,7 @@ object SharePreviewGenerator {
         }
 
         val bytes = ByteArrayOutputStream().use { out ->
-            tiny.compress(Bitmap.CompressFormat.JPEG, BLUR_JPEG_QUALITY, out)
+            tiny.compress(webpFormat(), BLUR_JPEG_QUALITY, out)
             out.toByteArray()
         }
         tiny.recycle()
@@ -118,6 +222,23 @@ object SharePreviewGenerator {
             null
         }
     }
+
+    /**
+     * Encodes as WebP, which runs 25-35% smaller than JPEG at matching quality
+     * and is decoded natively by Android and Coil. WEBP_LOSSY arrived in API
+     * 30; on 29 the deprecated WEBP constant produces the same format.
+     *
+     * Only for images our own app consumes. The share preview stays JPEG —
+     * it's fetched by external link scrapers, and WebP support across those is
+     * still uneven.
+     */
+    @Suppress("DEPRECATION")
+    private fun webpFormat(): Bitmap.CompressFormat =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            Bitmap.CompressFormat.WEBP_LOSSY
+        } else {
+            Bitmap.CompressFormat.WEBP
+        }
 
     private fun loadSource(context: Context, uri: Uri, mediaType: String): Bitmap? =
         when (mediaType) {

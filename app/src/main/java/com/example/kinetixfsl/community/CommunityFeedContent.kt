@@ -87,6 +87,12 @@ fun CommunityFeedContent(
 
     val pullState = rememberPullToRefreshState()
 
+    // Warm the next few posts' images so scrolling doesn't hit the network.
+    FeedImagePrefetcher(
+        listState = listState,
+        posts = (state as? FeedState.Success)?.posts.orEmpty(),
+    )
+
     // Track which items are visible for video autoplay.
     val visibleItemKeys by remember {
         derivedStateOf {
@@ -335,8 +341,13 @@ private fun ErrorRow(message: String) {
 
 // ---- Post Card ----
 
+/**
+ * One post as the feed renders it. Shared with the profile so a user's own
+ * posts look exactly the same there — [onMenuClick] adds the 3-dot control the
+ * profile needs, and is absent in the feed.
+ */
 @Composable
-private fun PostCard(
+internal fun PostCard(
     post: Post,
     userVote: String?,
     isVideoVisible: Boolean,
@@ -346,12 +357,27 @@ private fun PostCard(
     onShare: () -> Unit,
     onMediaClick: () -> Unit,
     onClick: () -> Unit,
+    onMenuClick: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        PostAuthorRow(post = post)
+        PostAuthorRow(
+            post = post,
+            trailing = onMenuClick?.let { menuClick ->
+                {
+                    Icon(
+                        imageVector = CommunityIcons.MoreVertical,
+                        contentDescription = "Post options",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clickable(onClick = menuClick),
+                    )
+                }
+            },
+        )
         Spacer(Modifier.height(8.dp))
 
         Text(

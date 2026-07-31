@@ -245,6 +245,89 @@ internal object CommunityIcons {
         }.build()
     }
 
+    // ---- Post actions (the 3-dot menu) ----
+
+    /** Three stacked dots — opens the post actions sheet. */
+    val MoreVertical: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "MoreVertical",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(13.7f, 5f)
+                arcTo(1.7f, 1.7f, 0f, true, true, 10.3f, 5f)
+                arcTo(1.7f, 1.7f, 0f, true, true, 13.7f, 5f)
+                close()
+                moveTo(13.7f, 12f)
+                arcTo(1.7f, 1.7f, 0f, true, true, 10.3f, 12f)
+                arcTo(1.7f, 1.7f, 0f, true, true, 13.7f, 12f)
+                close()
+                moveTo(13.7f, 19f)
+                arcTo(1.7f, 1.7f, 0f, true, true, 10.3f, 19f)
+                arcTo(1.7f, 1.7f, 0f, true, true, 13.7f, 19f)
+                close()
+            }
+        }.build()
+    }
+
+    /** Two overlapping sheets — "copy text". */
+    val CopyText: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "CopyText",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                // Back sheet
+                moveTo(8f, 4f); lineTo(19f, 4f); lineTo(19f, 16f)
+                // Front sheet
+                moveTo(5f, 8f); lineTo(15f, 8f); lineTo(15f, 20f); lineTo(5f, 20f); close()
+            }
+        }.build()
+    }
+
+    /** Bin with a lid — "delete". */
+    val Delete: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Delete",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                // Lid
+                moveTo(3f, 6f); lineTo(21f, 6f)
+                moveTo(9f, 6f); lineTo(9f, 4f); lineTo(15f, 4f); lineTo(15f, 6f)
+                // Body
+                moveTo(5f, 6f); lineTo(6f, 20f); lineTo(18f, 20f); lineTo(19f, 6f)
+                // Ribs
+                moveTo(10f, 10f); lineTo(10f, 17f)
+                moveTo(14f, 10f); lineTo(14f, 17f)
+            }
+        }.build()
+    }
+
+    /** Pencil over a line — "edit post". */
+    val EditPost: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "EditPost",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                // Pencil
+                moveTo(16.5f, 3.5f)
+                lineTo(20.5f, 7.5f)
+                lineTo(9f, 19f)
+                lineTo(4f, 20f)
+                lineTo(5f, 15f)
+                close()
+                // Nib separator
+                moveTo(14f, 6f); lineTo(18f, 10f)
+            }
+        }.build()
+    }
+
     /** A share arrow — curving out to the upper right. */
     val Share: ImageVector by lazy {
         ImageVector.Builder(

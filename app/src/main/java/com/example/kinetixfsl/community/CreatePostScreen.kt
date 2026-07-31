@@ -37,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -162,12 +163,12 @@ fun CreatePostScreen(
                     .clip(RoundedCornerShape(50))
                     .background(if (canPost) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
                     .clickable(enabled = canPost) {
-                        // On Android 13+, check notification permission before posting.
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                             ContextCompat.checkSelfPermission(
                                 context, Manifest.permission.POST_NOTIFICATIONS
                             ) != PackageManager.PERMISSION_GRANTED
                         ) {
+                            // On Android 13+, check notification permission first.
                             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         } else {
                             viewModel.submitPost(context)

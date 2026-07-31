@@ -55,8 +55,8 @@ object R2MediaUploader {
                 val compressed = compressImage(context, uri)
                     ?: return@withContext UploadResult.Error("Could not read the selected image.")
                 bytes = compressed
-                mimeType = "image/jpeg"
-                fileName = "photo.jpg"
+                mimeType = "image/webp"
+                fileName = "photo.webp"
             } else {
                 bytes = readBytes(context, uri)
                     ?: return@withContext UploadResult.Error("Could not read the selected file.")
@@ -264,9 +264,18 @@ object R2MediaUploader {
             // Scale down if still larger than the max dimension.
             val scaled = scaleDown(bitmap, MAX_IMAGE_DIMENSION)
 
-            // Encode to JPEG.
+            // Encode to WebP — 25-35% smaller than JPEG at the same visual
+            // quality, decoded natively by Android and Coil. WEBP_LOSSY landed
+            // in API 30; on 29 the deprecated constant produces the same bytes.
+            val format = @Suppress("DEPRECATION")
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                Bitmap.CompressFormat.WEBP_LOSSY
+            } else {
+                Bitmap.CompressFormat.WEBP
+            }
+
             val output = ByteArrayOutputStream()
-            scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output)
+            scaled.compress(format, JPEG_QUALITY, output)
 
             // Recycle bitmaps to free memory.
             if (scaled !== bitmap) scaled.recycle()

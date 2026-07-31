@@ -139,10 +139,15 @@ class PostUploadService : Service() {
 
                         when (uploadResult) {
                             is R2MediaUploader.UploadResult.Success -> {
+                                val derived = deriveFor(mediaUri, mediaType, index == 0)
+                                if (index == 0) {
+                                    previewUrl = derived.previewUrl
+                                    previewBlur = derived.blur
+                                }
                                 uploaded += PostMedia(
                                     url = uploadResult.secureUrl,
                                     type = "video",
-                                    thumbUrl = feedCopyFor(mediaUri, mediaType),
+                                    thumbUrl = derived.feedUrl,
                                 )
                             }
                             is R2MediaUploader.UploadResult.Error -> {
@@ -161,10 +166,15 @@ class PostUploadService : Service() {
                             resourceType = "image",
                         )) {
                             is R2MediaUploader.UploadResult.Success -> {
+                                val derived = deriveFor(mediaUri, mediaType, index == 0)
+                                if (index == 0) {
+                                    previewUrl = derived.previewUrl
+                                    previewBlur = derived.blur
+                                }
                                 uploaded += PostMedia(
                                     url = result.secureUrl,
                                     type = "image",
-                                    thumbUrl = feedCopyFor(mediaUri, mediaType),
+                                    thumbUrl = derived.feedUrl,
                                 )
                             }
                             is R2MediaUploader.UploadResult.Error -> {
@@ -183,33 +193,8 @@ class PostUploadService : Service() {
                 // the video thumbnail. Best-effort: a null here only costs a
                 // plainer card when the post gets shared, so a failure must
                 // never block publishing.
-                if (itemCount > 0) {
-                    updateProgress("Preparing preview…", 88)
-                    val firstUri = Uri.parse(mediaUriStrings[0])
-                    val firstType = mediaTypes[0]
-
-                    previewUrl = try {
-                        SharePreviewGenerator.generateAndUpload(
-                            context = this@PostUploadService,
-                            uri = firstUri,
-                            mediaType = firstType,
-                        )
-                    } catch (_: Exception) {
-                        null
-                    }
-
-                    // The instant-paint placeholder. Rides along inside the
-                    // post document, so it costs no request of its own.
-                    previewBlur = try {
-                        SharePreviewGenerator.generateBlurPlaceholder(
-                            context = this@PostUploadService,
-                            uri = firstUri,
-                            mediaType = firstType,
-                        )
-                    } catch (_: Exception) {
-                        null
-                    }
-                }
+                // Preview, blur and feed copies are all produced inside the loop
+                // above, from a single decode per attachment.
 
                 // ── Step 3: write the post to Firestore ──────────────────
                 updateProgress("Saving post…", 95)
@@ -305,14 +290,19 @@ class PostUploadService : Service() {
      * The feed-resolution copy for one attachment. Best-effort: a null just
      * means the feed falls back to the full file, so this never fails a post.
      */
-    private suspend fun feedCopyFor(uri: android.net.Uri, mediaType: String): String? = try {
-        SharePreviewGenerator.generateFeedCopyAndUpload(
+    private suspend fun deriveFor(
+        uri: android.net.Uri,
+        mediaType: String,
+        isFirst: Boolean,
+    ): SharePreviewGenerator.Derivatives = try {
+        SharePreviewGenerator.derive(
             context = this,
             uri = uri,
             mediaType = mediaType,
+            includeShareArtifacts = isFirst,
         )
     } catch (_: Exception) {
-        null
+        SharePreviewGenerator.Derivatives()
     }
 
     /** Maps a 0..100 step-local percentage into an overall [from]..[to] band. */

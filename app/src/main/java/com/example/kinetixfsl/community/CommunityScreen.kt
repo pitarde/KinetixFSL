@@ -1,6 +1,7 @@
 package com.example.kinetixfsl.community
 
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -61,6 +62,15 @@ fun CommunityScreen(
     var detailPost: Post? by remember { mutableStateOf(null) }
     var immersivePost: Post? by remember { mutableStateOf(null) }
 
+    /** Set when the create screen is reused as an editor from the profile. */
+    var editingPost: Post? by remember { mutableStateOf(null) }
+
+    /**
+     * Post opened by tapping one of your own comments in the profile. Only the
+     * id is known there, so the post is loaded on the way in.
+     */
+    var openedCommentPostId: String? by remember { mutableStateOf(null) }
+
     // Shared list state so the bottom nav can scroll it to top.
     val feedListState = rememberLazyListState()
 
@@ -111,6 +121,8 @@ fun CommunityScreen(
                 onCommentClick = { post -> detailPost = post },
                 onPostClick = { post -> detailPost = post },
                 onMediaClick = { post -> immersivePost = post },
+                onEditPost = { post -> editingPost = post },
+                onProfileCommentClick = { item -> openedCommentPostId = item.postId },
                 feedListState = feedListState,
                 feedViewModel = feedViewModel,
                 onScrollToTopAndRefresh = {
@@ -120,6 +132,32 @@ fun CommunityScreen(
                     }
                 },
             )
+
+            // Back from any secondary tab returns to the feed rather than
+            // leaving the community section entirely.
+            BackHandler(enabled = selectedTab != CommunityTab.HOME) {
+                selectedTab = CommunityTab.HOME
+            }
+
+            val commentPostId = openedCommentPostId
+            if (commentPostId != null) {
+                // Same screen a shared link opens, so a comment of yours leads
+                // to the full post and its discussion.
+                SharedPostScreen(
+                    postId = commentPostId,
+                    onClose = { openedCommentPostId = null },
+                )
+            }
+
+            val postBeingEdited = editingPost
+            if (postBeingEdited != null) {
+                // A distinct screen from create-post, layered over the whole
+                // scaffold so the bottom nav can't be used mid-edit.
+                EditPostScreen(
+                    post = liveCopyOf(postBeingEdited),
+                    onClose = { editingPost = null },
+                )
+            }
 
             val openedPost = immersivePost ?: detailPost
             if (openedPost != null) {
@@ -167,6 +205,8 @@ private fun CommunityScaffold(
     onCommentClick: (Post) -> Unit,
     onPostClick: (Post) -> Unit,
     onMediaClick: (Post) -> Unit,
+    onEditPost: (Post) -> Unit,
+    onProfileCommentClick: (com.example.kinetixfsl.community.model.UserComment) -> Unit,
     feedListState: LazyListState,
     feedViewModel: CommunityFeedViewModel,
     onScrollToTopAndRefresh: () -> Unit,
@@ -189,7 +229,11 @@ private fun CommunityScaffold(
                     onPostClick = onPostClick,
                     onMediaClick = onMediaClick,
                 )
-                CommunityTab.PROFILE -> CommunityProfilePlaceholder()
+                CommunityTab.PROFILE -> CommunityProfileScreen(
+                    onPostClick = onPostClick,
+                    onEditPost = onEditPost,
+                    onCommentClick = onProfileCommentClick,
+                )
                 CommunityTab.CREATE -> CreatePostScreen(
                     onClose = { onTabSelected(CommunityTab.HOME) },
                     onSelectCommunity = { onSelectCommunity() },
