@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.kinetixfsl.community.model.FollowUser
 import com.example.kinetixfsl.community.model.Post
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -65,8 +66,62 @@ class CommunityFeedViewModel(
      */
     private var nextOrderIsRandom = false
 
+    /** Author ids the signed-in user follows. */
+    private val _followingIds = MutableStateFlow<Set<String>>(emptySet())
+    val followingIds: StateFlow<Set<String>> = _followingIds.asStateFlow()
+
+    /**
+     * One-shot message for a failed follow. A follow that silently does
+     * nothing is near-impossible to diagnose from the outside, so failures
+     * surface rather than being swallowed.
+     */
+    private val _actionError = MutableStateFlow<String?>(null)
+    val actionError: StateFlow<String?> = _actionError.asStateFlow()
+
+    fun clearActionError() { _actionError.value = null }
+
     init {
         observeFeed()
+
+        viewModelScope.launch { repository.ensureUserProfile() }
+
+        repository.observeFollowing()
+            .onEach { ids ->
+                _followingIds.value = ids
+                // Re-emit so followed authors move to the top immediately
+                // rather than waiting for the next snapshot.
+                emitFiltered()
+            }
+            .catch { /* following is optional — the feed still works */ }
+            .launchIn(viewModelScope)
+    }
+
+    /**
+     * Follows or unfollows the post's author.
+     *
+     * The button reads from [followingIds], which is a live Firestore listener,
+     * so the label flips as soon as the write lands — no local optimism needed.
+     */
+    fun toggleFollow(post: Post) {
+        val authorId = post.authorId
+        if (authorId.isBlank()) return
+
+        viewModelScope.launch {
+            val result = if (authorId in _followingIds.value) {
+                repository.unfollow(authorId)
+            } else {
+                repository.follow(
+                    FollowUser(
+                        uid = authorId,
+                        displayName = post.authorName,
+                        avatarUrl = post.authorAvatarUrl,
+                    )
+                )
+            }
+            result.onFailure { error ->
+                _actionError.value = error.localizedMessage ?: "Couldn't update follow."
+            }
+        }
     }
 
     fun onSearchQueryChange(query: String) {
@@ -142,7 +197,18 @@ class CommunityFeedViewModel(
             }
         }
 
-        _feedState.value = FeedState.Success(filtered)
+        // Posts from people you follow float to the top, keeping their relative
+        // order underneath. partition is stable, so the shuffle or newest-first
+        // ordering computed above still holds within each group.
+        val following = _followingIds.value
+        val prioritised = if (following.isEmpty()) {
+            filtered
+        } else {
+            val (followed, rest) = filtered.partition { it.authorId in following }
+            followed + rest
+        }
+
+        _feedState.value = FeedState.Success(prioritised)
     }
 
     /**

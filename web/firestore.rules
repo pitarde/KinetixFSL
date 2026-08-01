@@ -18,6 +18,21 @@ service cloud.firestore {
                   'shareCount', 'viewCount', 'score']);
     }
 
+    // Following someone increments a counter on their profile document, so
+    // that one field has to be writable by others — and only that one.
+    //
+    // The null branch matters: following a user who has never opened the app
+    // means their profile document doesn't exist yet, so the counter write is
+    // a *create* and `resource` is null. Calling resource.data there raises an
+    // evaluation error, which denies the write and rolls back the whole
+    // follow transaction — silently.
+    function onlyFollowCountsChanged() {
+      return resource == null
+        ? request.resource.data.keys().hasOnly(['followerCount', 'followingCount'])
+        : request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['followerCount', 'followingCount']);
+    }
+
     // True when the signed-in user wrote the post these documents hang off.
     // Used so deleting a post can also clear the votes, shares and comments
     // other people left on it. Costs one document read per evaluation.
@@ -81,6 +96,37 @@ service cloud.firestore {
         allow delete: if request.auth != null
                       && (resource.data.authorId == request.auth.uid
                           || isPostAuthor(database, postId));
+      }
+    }
+
+    // Community profiles and the follow graph.
+    match /users/{userId} {
+      // Public: post cards and follower lists show anyone's name and photo.
+      allow read: if true;
+
+      // You may write your own profile. Anyone signed in may move the follower
+      // counters, because following someone increments a counter on *their*
+      // document — the same pattern as the post counters above.
+      allow create, update: if request.auth != null
+                            && (request.auth.uid == userId
+                                || onlyFollowCountsChanged());
+      allow delete: if false;
+
+      // Who follows this user. Readable so the followers list works; each
+      // follower may only add or remove their own entry.
+      match /followers/{followerId} {
+        allow read: if request.auth != null;
+        allow create, delete: if request.auth != null
+                              && request.auth.uid == followerId;
+        allow update: if false;
+      }
+
+      // Who this user follows. Private to them — it drives their own feed
+      // ordering and every Follow button's state.
+      match /following/{targetId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow create, delete: if request.auth != null && request.auth.uid == userId;
+        allow update: if false;
       }
     }
 

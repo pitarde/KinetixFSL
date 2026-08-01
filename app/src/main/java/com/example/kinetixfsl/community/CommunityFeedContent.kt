@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -91,6 +92,15 @@ fun CommunityFeedContent(
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val followingIds by viewModel.followingIds.collectAsStateWithLifecycle()
+    val actionError by viewModel.actionError.collectAsStateWithLifecycle()
+
+    LaunchedEffect(actionError) {
+        val message = actionError ?: return@LaunchedEffect
+        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+        viewModel.clearActionError()
+    }
+    val currentUid = remember { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }
 
     val pullState = rememberPullToRefreshState()
 
@@ -177,6 +187,17 @@ fun CommunityFeedContent(
                                     onComment = { onCommentClick(post) },
                                     onShare = { viewModel.share(context, post) },
                                     onMediaClick = { onMediaClick(post) },
+                                    // Inert for now — the actions behind it
+                                    // are a later piece of work.
+                                    onMenuClick = {},
+                                    isFollowing = post.authorId in followingIds,
+                                    onToggleFollow = if (post.authorId == currentUid ||
+                                        post.authorId.isBlank()
+                                    ) {
+                                        null
+                                    } else {
+                                        { viewModel.toggleFollow(post) }
+                                    },
                                     onClick = { onPostClick(post) },
                                 )
                                 HorizontalDivider(
@@ -385,6 +406,9 @@ internal fun PostCard(
     onMediaClick: () -> Unit,
     onClick: () -> Unit,
     onMenuClick: (() -> Unit)? = null,
+    /** Null on your own posts — you can't follow yourself. */
+    onToggleFollow: (() -> Unit)? = null,
+    isFollowing: Boolean = false,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
@@ -392,16 +416,29 @@ internal fun PostCard(
     ) {
         PostAuthorRow(
             post = post,
-            trailing = onMenuClick?.let { menuClick ->
+            trailing = if (onToggleFollow == null && onMenuClick == null) {
+                null
+            } else {
                 {
-                    Icon(
-                        imageVector = CommunityIcons.MoreVertical,
-                        contentDescription = "Post options",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clickable(onClick = menuClick),
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (onToggleFollow != null) {
+                            FollowPill(
+                                isFollowing = isFollowing,
+                                onClick = onToggleFollow,
+                            )
+                        }
+                        if (onMenuClick != null) {
+                            Spacer(Modifier.width(10.dp))
+                            Icon(
+                                imageVector = CommunityIcons.MoreVertical,
+                                contentDescription = "Post options",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clickable(onClick = onMenuClick),
+                            )
+                        }
+                    }
                 }
             },
         )
@@ -450,6 +487,44 @@ internal fun PostCard(
             onDownvote = onDownvote,
             onComment = onComment,
             onShare = onShare,
+        )
+    }
+}
+/**
+ * "Follow" / "Followed" on a post's author row.
+ *
+ * Filled while you can still follow, outlined once you do — the same read-at-a-
+ * glance convention every social app uses, so the state is obvious without
+ * reading the label.
+ */
+@Composable
+private fun FollowPill(
+    isFollowing: Boolean,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .then(
+                if (isFollowing) {
+                    Modifier.border(1.dp, MaterialTheme.colorScheme.outline, shape)
+                } else {
+                    Modifier.background(MaterialTheme.colorScheme.primary)
+                }
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 5.dp),
+    ) {
+        Text(
+            text = if (isFollowing) "Followed" else "Follow",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (isFollowing) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onPrimary
+            },
+            fontWeight = FontWeight.SemiBold,
         )
     }
 }

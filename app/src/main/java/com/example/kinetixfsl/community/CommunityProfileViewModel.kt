@@ -28,6 +28,7 @@ data class CommunityProfileUiState(
      * the rest of the profile still works.
      */
     val commentsError: String? = null,
+    val followerCount: Long = 0,
     val accountAge: String = "—",
     val activeTime: String = "—",
     val errorMessage: String? = null,
@@ -73,6 +74,13 @@ class CommunityProfileViewModel(
         } else {
             observePosts(uid)
             observeComments(uid)
+
+            repository.observeUserProfile(uid)
+                .onEach { profile ->
+                    _uiState.update { it.copy(followerCount = profile?.followerCount ?: 0) }
+                }
+                .catch { }
+                .launchIn(viewModelScope)
         }
     }
 

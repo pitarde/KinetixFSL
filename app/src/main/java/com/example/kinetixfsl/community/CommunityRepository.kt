@@ -3,7 +3,9 @@ package com.example.kinetixfsl.community
 import com.example.kinetixfsl.community.model.Comment
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.model.PostMedia
+import com.example.kinetixfsl.community.model.FollowUser
 import com.example.kinetixfsl.community.model.UserComment
+import com.example.kinetixfsl.community.model.UserProfile
 import com.example.kinetixfsl.community.model.storageKeyOf
 import com.example.kinetixfsl.community.upload.R2MediaUploader
 import com.google.firebase.Timestamp
@@ -13,6 +15,7 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -48,6 +51,174 @@ class CommunityRepository(
                 trySend(snapshot.documents.mapNotNull { it.toPostOrNull() })
             }
         awaitClose { registration.remove() }
+    }
+
+    // -------------------------------------------------------------------------
+    // Following
+    // -------------------------------------------------------------------------
+
+    /**
+     * Writes the signed-in user's name and photo to `users/{uid}`.
+     *
+     * Follower lists need somewhere to read a user's details from, and posts
+     * alone aren't enough — someone can be followed without having posted.
+     * Merged so it never clobbers the counters.
+     */
+    suspend fun ensureUserProfile() {
+        val user = auth.currentUser ?: return
+        try {
+            firestore.collection(USERS).document(user.uid).set(
+                mapOf(
+                    "uid" to user.uid,
+                    "displayName" to (user.displayName?.takeIf { it.isNotBlank() }
+                        ?: user.email?.substringBefore('@') ?: "Anonymous"),
+                    "avatarUrl" to user.photoUrl?.toString(),
+                ),
+                SetOptions.merge(),
+            ).await()
+        } catch (_: Exception) { /* best-effort */ }
+    }
+
+    /** Ids the signed-in user follows. Drives every Follow button's state. */
+    fun observeFollowing(): Flow<Set<String>> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(emptySet())
+            awaitClose { }
+            return@callbackFlow
+        }
+
+        val reg = firestore.collection(USERS).document(uid)
+            .collection(FOLLOWING)
+            .addSnapshotListener { snap, err ->
+                if (err != null) { trySend(emptySet()); return@addSnapshotListener }
+                trySend(snap?.documents?.map { it.id }?.toSet() ?: emptySet())
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /** Everyone following [uid], newest first. */
+    fun followersOf(uid: String): Flow<List<FollowUser>> = callbackFlow {
+        val reg = firestore.collection(USERS).document(uid)
+            .collection(FOLLOWERS)
+            .addSnapshotListener { snap, err ->
+                if (err != null) { close(err); return@addSnapshotListener }
+                if (snap == null) return@addSnapshotListener
+                trySend(
+                    snap.documents.mapNotNull { doc ->
+                        try {
+                            doc.toObject(FollowUser::class.java)?.copy(uid = doc.id)
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }.sortedByDescending { it.createdAt }
+                )
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /** Live profile document, for the follower/following counts. */
+    fun observeUserProfile(uid: String): Flow<UserProfile?> = callbackFlow {
+        val reg = firestore.collection(USERS).document(uid)
+            .addSnapshotListener { snap, err ->
+                if (err != null) { trySend(null); return@addSnapshotListener }
+                trySend(
+                    try {
+                        snap?.toObject(UserProfile::class.java)?.copy(uid = uid)
+                    } catch (_: Exception) {
+                        null
+                    }
+                )
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
+     * Follows [target], writing both sides of the relationship and both
+     * counters in one transaction — so a follow can never land as half a link
+     * or leave a count adrift.
+     *
+     * Idempotent: following someone twice does nothing the second time.
+     */
+    suspend fun follow(target: FollowUser): Result<Unit> {
+        val me = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
+        if (me.uid == target.uid) {
+            return Result.failure(Exception("You can't follow yourself."))
+        }
+
+        val myRef = firestore.collection(USERS).document(me.uid)
+        val targetRef = firestore.collection(USERS).document(target.uid)
+        val myName = me.displayName?.takeIf { it.isNotBlank() }
+            ?: me.email?.substringBefore('@') ?: "Anonymous"
+
+        return try {
+            firestore.runTransaction { tx ->
+                val edge = myRef.collection(FOLLOWING).document(target.uid)
+                if (tx.get(edge).exists()) return@runTransaction
+
+                tx.set(
+                    edge,
+                    mapOf(
+                        "displayName" to target.displayName,
+                        "avatarUrl" to target.avatarUrl,
+                        "createdAt" to Timestamp.now(),
+                    ),
+                )
+                tx.set(
+                    targetRef.collection(FOLLOWERS).document(me.uid),
+                    mapOf(
+                        "displayName" to myName,
+                        "avatarUrl" to me.photoUrl?.toString(),
+                        "createdAt" to Timestamp.now(),
+                    ),
+                )
+                // merge() so the counter lands even if the profile doc is new.
+                tx.set(
+                    myRef,
+                    mapOf("followingCount" to FieldValue.increment(1)),
+                    SetOptions.merge(),
+                )
+                tx.set(
+                    targetRef,
+                    mapOf("followerCount" to FieldValue.increment(1)),
+                    SetOptions.merge(),
+                )
+            }.await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Undoes [follow]. Also idempotent. */
+    suspend fun unfollow(targetUid: String): Result<Unit> {
+        val me = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
+
+        val myRef = firestore.collection(USERS).document(me.uid)
+        val targetRef = firestore.collection(USERS).document(targetUid)
+
+        return try {
+            firestore.runTransaction { tx ->
+                val edge = myRef.collection(FOLLOWING).document(targetUid)
+                if (!tx.get(edge).exists()) return@runTransaction
+
+                tx.delete(edge)
+                tx.delete(targetRef.collection(FOLLOWERS).document(me.uid))
+                tx.set(
+                    myRef,
+                    mapOf("followingCount" to FieldValue.increment(-1)),
+                    SetOptions.merge(),
+                )
+                tx.set(
+                    targetRef,
+                    mapOf("followerCount" to FieldValue.increment(-1)),
+                    SetOptions.merge(),
+                )
+            }.await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -494,6 +665,9 @@ class CommunityRepository(
         const val VOTES = "votes"
         const val COMMENTS = "comments"
         const val SHARES = "shares"
+        const val USERS = "users"
+        const val FOLLOWERS = "followers"
+        const val FOLLOWING = "following"
         const val FIELD_CREATED_AT = "createdAt"
         const val FIELD_SCORE = "score"
         const val FEED_PAGE_SIZE = 50L

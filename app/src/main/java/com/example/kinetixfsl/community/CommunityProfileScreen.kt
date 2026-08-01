@@ -84,6 +84,10 @@ fun CommunityProfileScreen(
     var editingComment: UserComment? by remember { mutableStateOf(null) }
     var pendingCommentDelete: UserComment? by remember { mutableStateOf(null) }
 
+    // The two header links.
+    var isContributionsOpen by remember { mutableStateOf(false) }
+    var isFollowersOpen by remember { mutableStateOf(false) }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -94,8 +98,11 @@ fun CommunityProfileScreen(
                 displayName = state.displayName,
                 avatarUrl = state.avatarUrl,
                 contributions = state.contributions,
+                followerCount = state.followerCount,
                 accountAge = state.accountAge,
                 activeTime = state.activeTime,
+                onFollowersClick = { isFollowersOpen = true },
+                onContributionsClick = { isContributionsOpen = true },
             )
 
             ProfileTabs(
@@ -188,6 +195,18 @@ fun CommunityProfileScreen(
             )
         }
 
+        if (isContributionsOpen) {
+            ContributionsSheet(
+                postCount = state.posts.size,
+                commentCount = state.comments.size,
+                onDismiss = { isContributionsOpen = false },
+            )
+        }
+
+        if (isFollowersOpen) {
+            FollowersScreen(onClose = { isFollowersOpen = false })
+        }
+
         val commentToDelete = pendingCommentDelete
         if (commentToDelete != null) {
             ConfirmDeleteDialog(
@@ -218,8 +237,11 @@ private fun ProfileHeader(
     displayName: String,
     avatarUrl: String?,
     contributions: Int,
+    followerCount: Long,
     accountAge: String,
     activeTime: String,
+    onFollowersClick: () -> Unit,
+    onContributionsClick: () -> Unit,
 ) {
     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
         Column(
@@ -248,9 +270,13 @@ private fun ProfileHeader(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "0 followers  ›",
+                text = "$followerCount followers  ›",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable(onClick = onFollowersClick)
+                    .padding(vertical = 2.dp),
             )
         }
 
@@ -261,7 +287,13 @@ private fun ProfileHeader(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             StatPill("0", "My Communities", Modifier.weight(1f))
-            StatPill("$contributions", "Contributions ›", Modifier.weight(1f))
+            StatPill(
+                "$contributions",
+                "Contributions ›",
+                Modifier
+                    .weight(1f)
+                    .clickable(onClick = onContributionsClick),
+            )
             StatPill(accountAge, "Account Age", Modifier.weight(1f))
             StatPill(activeTime, "Active time", Modifier.weight(1f))
         }
@@ -589,4 +621,96 @@ private fun copyPostText(context: Context, post: Post) {
     clipboard.setPrimaryClip(ClipData.newPlainText("Post", text))
 
     Toast.makeText(context, "Text copied", Toast.LENGTH_SHORT).show()
+}
+
+/**
+ * The breakdown behind the Contributions stat: how much of it is posts and how
+ * much is comments.
+ */
+@Composable
+private fun ContributionsSheet(
+    postCount: Int,
+    commentCount: Int,
+    onDismiss: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
+            .clickable(onClick = onDismiss),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                // Swallow taps so they don't reach the dismiss backdrop.
+                .clickable(enabled = false) {}
+                .padding(20.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Contributions",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Total post and comments",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = CommunityIcons.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            Row(modifier = Modifier.fillMaxWidth()) {
+                CountBlock("$postCount", "Post", Modifier.weight(1f))
+                Box(
+                    Modifier
+                        .width(1.dp)
+                        .height(40.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant)
+                )
+                CountBlock("$commentCount", "Comments", Modifier.weight(1f))
+            }
+
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun CountBlock(value: String, label: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.padding(horizontal = 16.dp)) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
