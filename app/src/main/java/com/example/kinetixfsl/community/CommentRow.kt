@@ -30,7 +30,7 @@ import com.example.kinetixfsl.community.model.Comment
  * A top-level comment and its replies.
  *
  * Replies stay hidden behind a "View N replies" tap, the way Facebook does it,
- * so a long back-and-forth doesn't push the rest of the thread off screen.
+ * so a long back-and-forth doesn't push the rest of the thread offscreen.
  */
 @Composable
 internal fun CommentThreadItem(

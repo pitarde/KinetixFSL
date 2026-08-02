@@ -114,6 +114,8 @@ class SharedPostViewModel(
 fun SharedPostScreen(
     postId: String,
     onClose: () -> Unit,
+    /** Opens the author's profile. No-op when there's nowhere to navigate. */
+    onAuthorClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val viewModel = remember(postId) { SharedPostViewModel(postId) }
@@ -177,6 +179,7 @@ fun SharedPostScreen(
                 onUpvote = { viewModel.vote("up") },
                 onDownvote = { viewModel.vote("down") },
                 onShare = { viewModel.share(context, post) },
+                onAuthorClick = onAuthorClick,
                 onClose = onClose,
                 modifier = modifier,
             )

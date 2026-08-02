@@ -63,6 +63,23 @@ internal fun PostActionsSheet(
  * The same sheet for a comment. No "Copy text" — a comment is a line of text
  * the user already wrote, so copying it isn't a useful action here.
  */
+/**
+ * The post menu on somebody else's profile. Nothing destructive — you can copy
+ * the text or follow the author, and that's it.
+ */
+@Composable
+internal fun VisitorPostActionsSheet(
+    onCopyText: () -> Unit,
+    onFollow: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ActionsSheet(onDismiss = onDismiss, modifier = modifier) {
+        ActionRow(CommunityIcons.CopyText, "Copy text", onCopyText)
+        ActionRow(CommunityIcons.Follow, "Follow post", onFollow)
+    }
+}
+
 @Composable
 internal fun CommentActionsSheet(
     onEdit: () -> Unit,

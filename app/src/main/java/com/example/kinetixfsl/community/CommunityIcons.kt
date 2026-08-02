@@ -271,6 +271,51 @@ internal object CommunityIcons {
         }.build()
     }
 
+    /** Filled speech bubble — message this user. */
+    val Message: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Message",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(12f, 3f)
+                curveTo(6.5f, 3f, 2f, 6.6f, 2f, 11f)
+                curveTo(2f, 13.5f, 3.5f, 15.7f, 5.8f, 17.2f)
+                lineTo(5f, 21f)
+                lineTo(8.9f, 19f)
+                curveTo(9.9f, 19.2f, 10.9f, 19.3f, 12f, 19.3f)
+                curveTo(17.5f, 19.3f, 22f, 15.7f, 22f, 11f)
+                curveTo(22f, 6.6f, 17.5f, 3f, 12f, 3f)
+                close()
+            }
+        }.build()
+    }
+
+    /** Outlined person with a plus — "follow". */
+    val Follow: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Follow",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                // Head
+                moveTo(13f, 8f)
+                arcTo(3.5f, 3.5f, 0f, true, true, 6f, 8f)
+                arcTo(3.5f, 3.5f, 0f, true, true, 13f, 8f)
+                close()
+                // Shoulders
+                moveTo(3f, 20f)
+                curveTo(3f, 15.5f, 6f, 14f, 9.5f, 14f)
+                curveTo(11.5f, 14f, 13.2f, 14.5f, 14.4f, 15.6f)
+                // Plus
+                moveTo(18f, 8f); lineTo(18f, 14f)
+                moveTo(15f, 11f); lineTo(21f, 11f)
+            }
+        }.build()
+    }
+
     /** Two overlapping sheets — "copy text". */
     val CopyText: ImageVector by lazy {
         ImageVector.Builder(

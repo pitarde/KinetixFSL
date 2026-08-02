@@ -2,6 +2,7 @@ package com.example.kinetixfsl.community
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.kinetixfsl.community.model.FollowUser
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.model.UserComment
 import com.google.firebase.auth.FirebaseAuth
@@ -31,13 +32,25 @@ data class CommunityProfileUiState(
     val followerCount: Long = 0,
     val accountAge: String = "—",
     val activeTime: String = "—",
+    /** False when viewing somebody else — swaps Edit for Message + Follow. */
+    val isOwnProfile: Boolean = true,
+    /** Whether the signed-in user already follows the profile being viewed. */
+    val isFollowing: Boolean = false,
     val errorMessage: String? = null,
 ) {
     /** Posts plus comments — the "Contributions" stat. */
     val contributions: Int get() = posts.size + comments.size
 }
 
+/**
+ * Backs both the signed-in user's profile and anybody else's.
+ *
+ * [userId] null means "me". When it names someone else the screen becomes a
+ * visitor view: Edit is replaced by Message and Follow, and the post menu drops
+ * the destructive actions.
+ */
 class CommunityProfileViewModel(
+    private val userId: String? = null,
     private val repository: CommunityRepository = CommunityRepository(),
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
 ) : ViewModel() {
@@ -45,24 +58,32 @@ class CommunityProfileViewModel(
     private val _uiState = MutableStateFlow(CommunityProfileUiState())
     val uiState: StateFlow<CommunityProfileUiState> = _uiState.asStateFlow()
 
-    init {
-        val user = auth.currentUser
+    /** Whose profile this is — the argument, or the signed-in user. */
+    private val targetUid: String? = userId ?: auth.currentUser?.uid
 
-        _uiState.update {
-            it.copy(
-                displayName = user?.displayName?.takeIf { name -> name.isNotBlank() }
-                    ?: user?.email?.substringBefore('@')
-                    ?: "Anonymous",
-                avatarUrl = user?.photoUrl?.toString(),
-                accountAge = user?.metadata?.creationTimestamp?.let(::daysOldLabel) ?: "—",
-                // This is the signed-in user looking at their own profile, so
-                // by definition they're active right now. Real presence for
-                // other users comes later.
-                activeTime = "Active now",
-            )
+    private val isOwn: Boolean = userId == null || userId == auth.currentUser?.uid
+
+    init {
+        _uiState.update { it.copy(isOwnProfile = isOwn) }
+
+        if (isOwn) {
+            // Auth is the freshest source for our own details.
+            val user = auth.currentUser
+            _uiState.update {
+                it.copy(
+                    displayName = user?.displayName?.takeIf { name -> name.isNotBlank() }
+                        ?: user?.email?.substringBefore('@')
+                        ?: "Anonymous",
+                    avatarUrl = user?.photoUrl?.toString(),
+                    accountAge = user?.metadata?.creationTimestamp?.let(::daysOldLabel) ?: "—",
+                    // We're looking at our own profile, so we're active by
+                    // definition — no need to wait for the document.
+                    activeTime = "Active now",
+                )
+            }
         }
 
-        val uid = user?.uid
+        val uid = targetUid
         if (uid == null) {
             _uiState.update {
                 it.copy(
@@ -74,13 +95,92 @@ class CommunityProfileViewModel(
         } else {
             observePosts(uid)
             observeComments(uid)
+            observeProfileDoc(uid)
+            if (!isOwn) observeFollowState(uid)
+        }
+    }
 
-            repository.observeUserProfile(uid)
-                .onEach { profile ->
-                    _uiState.update { it.copy(followerCount = profile?.followerCount ?: 0) }
+    private fun observeProfileDoc(uid: String) {
+        repository.observeUserProfile(uid)
+            .onEach { profile ->
+                _uiState.update { state ->
+                    state.copy(
+                        followerCount = profile?.followerCount ?: 0,
+                        // Another user's name, age and presence can only come
+                        // from their document — their Auth record isn't readable.
+                        displayName = if (isOwn) {
+                            state.displayName
+                        } else {
+                            profile?.displayName?.takeIf { it.isNotBlank() }
+                                ?: state.displayName
+                        },
+                        avatarUrl = if (isOwn) state.avatarUrl else profile?.avatarUrl,
+                        accountAge = if (isOwn) {
+                            state.accountAge
+                        } else {
+                            profile?.createdAt?.toDate()?.time?.let(::daysOldLabel) ?: "—"
+                        },
+                        activeTime = if (isOwn) {
+                            state.activeTime
+                        } else {
+                            lastActiveLabel(profile?.lastActiveAt?.toDate()?.time)
+                        },
+                    )
                 }
-                .catch { }
-                .launchIn(viewModelScope)
+            }
+            .catch { }
+            .launchIn(viewModelScope)
+    }
+
+    private fun observeFollowState(uid: String) {
+        repository.observeFollowing()
+            .onEach { following ->
+                _uiState.update { it.copy(isFollowing = uid in following) }
+            }
+            .catch { }
+            .launchIn(viewModelScope)
+    }
+
+    /** Follow or unfollow the profile being viewed. */
+    fun toggleFollow() {
+        val uid = targetUid ?: return
+        if (isOwn) return
+        val state = _uiState.value
+
+        viewModelScope.launch {
+            val result = if (state.isFollowing) {
+                repository.unfollow(uid)
+            } else {
+                repository.follow(
+                    FollowUser(
+                        uid = uid,
+                        displayName = state.displayName,
+                        avatarUrl = state.avatarUrl,
+                    )
+                )
+            }
+            result.onFailure { error ->
+                _uiState.update {
+                    it.copy(errorMessage = error.localizedMessage ?: "Couldn't update follow.")
+                }
+            }
+        }
+    }
+
+    /** Follows a post's author, from the post menu's "Follow post". */
+    fun followAuthor(post: Post) {
+        viewModelScope.launch {
+            repository.follow(
+                FollowUser(
+                    uid = post.authorId,
+                    displayName = post.authorName,
+                    avatarUrl = post.authorAvatarUrl,
+                )
+            ).onFailure { error ->
+                _uiState.update {
+                    it.copy(errorMessage = error.localizedMessage ?: "Couldn't follow.")
+                }
+            }
         }
     }
 
@@ -217,4 +317,25 @@ class CommunityProfileViewModel(
 private fun daysOldLabel(millis: Long): String {
     val diff = (System.currentTimeMillis() - millis).coerceAtLeast(0)
     return "${TimeUnit.MILLISECONDS.toDays(diff)}d"
+}
+
+/**
+ * Messenger-style presence: "Active now" while they're around, then how long
+ * they've been gone — "5min", "3hr", "2d".
+ *
+ * The two-minute window stops the label flickering between "now" and "1min"
+ * while somebody is actually using the app.
+ */
+private fun lastActiveLabel(millis: Long?): String {
+    if (millis == null) return "—"
+    val diff = (System.currentTimeMillis() - millis).coerceAtLeast(0)
+    val minutes = TimeUnit.MILLISECONDS.toMinutes(diff)
+    val hours = TimeUnit.MILLISECONDS.toHours(diff)
+    val days = TimeUnit.MILLISECONDS.toDays(diff)
+    return when {
+        minutes < 2 -> "Active now"
+        minutes < 60 -> "${minutes}min"
+        hours < 24 -> "${hours}hr"
+        else -> "${days}d"
+    }
 }

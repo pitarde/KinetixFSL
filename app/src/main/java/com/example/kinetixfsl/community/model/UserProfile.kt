@@ -15,6 +15,19 @@ data class UserProfile(
     val avatarUrl: String? = null,
     val followerCount: Long = 0,
     val followingCount: Long = 0,
+    /**
+     * When the account was created, mirrored from Firebase Auth.
+     *
+     * Auth metadata is only readable for the *signed-in* user, so viewing
+     * someone else's profile has no other source for their account age — it
+     * has to be denormalised here at sign-in.
+     */
+    val createdAt: Timestamp? = null,
+    /**
+     * Last time this user opened the app. Drives the "Active now / 5min / 3hr /
+     * 2d" indicator, same as a messenger presence dot.
+     */
+    val lastActiveAt: Timestamp? = null,
 )
 
 /**

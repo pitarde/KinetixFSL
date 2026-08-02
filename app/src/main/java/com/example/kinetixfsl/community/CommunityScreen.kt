@@ -4,6 +4,7 @@ package com.example.kinetixfsl.community
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -55,21 +58,20 @@ fun CommunityScreen(
     var selectedTab by remember { mutableStateOf(CommunityTab.HOME) }
 
     /**
-     * The post opened as a full screen. [immersivePost] is the same idea but
-     * entered by tapping the post's image, which opens the media full screen
-     * with the comments below the fold instead.
+     * Screens stacked over the community scaffold, bottom-first.
+     *
+     * A single nullable variable per screen can't express this: opening a
+     * profile from a post, then a post from that profile, then another
+     * profile, needs an arbitrary depth. Each entry is drawn over the one
+     * before it, and back pops exactly one — so every button keeps working no
+     * matter how deep the user goes.
      */
-    var detailPost: Post? by remember { mutableStateOf(null) }
-    var immersivePost: Post? by remember { mutableStateOf(null) }
+    val overlays = remember { mutableStateListOf<CommunityOverlay>() }
 
-    /** Set when the create screen is reused as an editor from the profile. */
-    var editingPost: Post? by remember { mutableStateOf(null) }
-
-    /**
-     * Post opened by tapping one of your own comments in the profile. Only the
-     * id is known there, so the post is loaded on the way in.
-     */
-    var openedCommentPostId: String? by remember { mutableStateOf(null) }
+    /** Drops [index] and everything stacked above it. */
+    fun closeFrom(index: Int) {
+        while (overlays.size > index) overlays.removeAt(overlays.lastIndex)
+    }
 
     // Shared list state so the bottom nav can scroll it to top.
     val feedListState = rememberLazyListState()
@@ -118,15 +120,17 @@ fun CommunityScreen(
                 onSelectCommunity = { /* TODO */ },
                 // Tapping the card or the comment button both land on the
                 // detail screen — the reddit flow.
-                onCommentClick = { post -> detailPost = post },
-                onPostClick = { post -> detailPost = post },
-                onMediaClick = { post -> immersivePost = post },
-                onEditPost = { post -> editingPost = post },
+                onCommentClick = { post -> overlays.add(CommunityOverlay.Detail(post)) },
+                onPostClick = { post -> overlays.add(CommunityOverlay.Detail(post)) },
+                onMediaClick = { post -> overlays.add(CommunityOverlay.Immersive(post)) },
+                onEditPost = { post -> overlays.add(CommunityOverlay.Edit(post)) },
+                onAuthorClick = { uid -> overlays.add(CommunityOverlay.Profile(uid)) },
                 // Anything layered over the feed takes it out of the running
                 // for bandwidth: no autoplay, no prefetch behind the overlay.
-                isFeedActive = detailPost == null && immersivePost == null &&
-                    editingPost == null && openedCommentPostId == null,
-                onProfileCommentClick = { item -> openedCommentPostId = item.postId },
+                isFeedActive = overlays.isEmpty(),
+                onProfileCommentClick = { item ->
+                    overlays.add(CommunityOverlay.PostById(item.postId))
+                },
                 feedListState = feedListState,
                 feedViewModel = feedViewModel,
                 onScrollToTopAndRefresh = {
@@ -143,57 +147,112 @@ fun CommunityScreen(
                 selectedTab = CommunityTab.HOME
             }
 
-            val commentPostId = openedCommentPostId
-            if (commentPostId != null) {
-                // Same screen a shared link opens, so a comment of yours leads
-                // to the full post and its discussion.
-                SharedPostScreen(
-                    postId = commentPostId,
-                    onClose = { openedCommentPostId = null },
-                )
-            }
+            // Rendered bottom-first: each entry draws over the one below it,
+            // and because Compose runs back handlers in reverse registration
+            // order, the topmost screen's back always wins.
+            overlays.forEachIndexed { index, overlay ->
+                key(index) {
+                    val close = { closeFrom(index) }
+                    // A background only paints — it doesn't absorb touches. Without
+                    // this, any tap that missed an interactive element fell through
+                    // the overlay and hit the feed underneath, so tapping a dead
+                    // area of a profile opened whatever post was behind it.
+                    val blockPassThrough = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { /* swallow */ }
+                    // Explicitly typed: MutableList.add returns Boolean, which
+                    // would otherwise infer (String) -> Boolean.
+                    val openProfile: (String) -> Unit = { uid ->
+                        overlays.add(CommunityOverlay.Profile(uid))
+                    }
 
-            val postBeingEdited = editingPost
-            if (postBeingEdited != null) {
-                // A distinct screen from create-post, layered over the whole
-                // scaffold so the bottom nav can't be used mid-edit.
-                EditPostScreen(
-                    post = liveCopyOf(postBeingEdited),
-                    onClose = { editingPost = null },
-                )
-            }
+                    Box(modifier = blockPassThrough) {
+                    when (overlay) {
+                        is CommunityOverlay.Profile -> {
+                            BackHandler(onBack = close)
+                            CommunityProfileScreen(
+                                userId = overlay.userId,
+                                onPostClick = { post ->
+                                    overlays.add(CommunityOverlay.Detail(post))
+                                },
+                                onEditPost = { post ->
+                                    overlays.add(CommunityOverlay.Edit(post))
+                                },
+                                onCommentClick = { item ->
+                                    overlays.add(CommunityOverlay.PostById(item.postId))
+                                },
+                                onUserClick = openProfile,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.background)
+                                    .statusBarsPadding(),
+                            )
+                        }
 
-            val openedPost = immersivePost ?: detailPost
-            if (openedPost != null) {
-                val post = liveCopyOf(openedPost)
-                // One ViewModel per post, shared by whichever presentation is
-                // showing, so the comment stream isn't re-subscribed on switch.
-                val commentVm = remember(post.id) { CommentViewModel(postId = post.id) }
+                        is CommunityOverlay.PostById -> SharedPostScreen(
+                            postId = overlay.postId,
+                            onClose = close,
+                            onAuthorClick = openProfile,
+                        )
 
-                val hasMedia = !post.imageUrl.isNullOrBlank() || !post.videoUrl.isNullOrBlank()
-                if (immersivePost != null && hasMedia) {
-                    ImmersivePostViewer(
-                        post = post,
-                        viewModel = commentVm,
-                        userVote = userVotes[post.id],
-                        onUpvote = { feedViewModel.vote(post.id, "up") },
-                        onDownvote = { feedViewModel.vote(post.id, "down") },
-                        onShare = { feedViewModel.share(context, post) },
-                        onClose = { immersivePost = null },
-                    )
-                } else {
-                    PostDetailScreen(
-                        post = post,
-                        viewModel = commentVm,
-                        userVote = userVotes[post.id],
-                        onUpvote = { feedViewModel.vote(post.id, "up") },
-                        onDownvote = { feedViewModel.vote(post.id, "down") },
-                        onShare = { feedViewModel.share(context, post) },
-                        onClose = {
-                            detailPost = null
-                            immersivePost = null
-                        },
-                    )
+                        is CommunityOverlay.Edit -> EditPostScreen(
+                            post = liveCopyOf(overlay.post),
+                            onClose = close,
+                        )
+
+                        is CommunityOverlay.Detail -> {
+                            val post = liveCopyOf(overlay.post)
+                            val commentVm = remember(post.id) {
+                                CommentViewModel(postId = post.id)
+                            }
+                            PostDetailScreen(
+                                post = post,
+                                viewModel = commentVm,
+                                userVote = userVotes[post.id],
+                                onUpvote = { feedViewModel.vote(post.id, "up") },
+                                onDownvote = { feedViewModel.vote(post.id, "down") },
+                                onShare = { feedViewModel.share(context, post) },
+                                onAuthorClick = openProfile,
+                                onClose = close,
+                            )
+                        }
+
+                        is CommunityOverlay.Immersive -> {
+                            val post = liveCopyOf(overlay.post)
+                            val commentVm = remember(post.id) {
+                                CommentViewModel(postId = post.id)
+                            }
+                            // A post with no media has nothing to show full
+                            // screen, so it falls back to the detail screen.
+                            if (post.mediaItems.isEmpty()) {
+                                PostDetailScreen(
+                                    post = post,
+                                    viewModel = commentVm,
+                                    userVote = userVotes[post.id],
+                                    onUpvote = { feedViewModel.vote(post.id, "up") },
+                                    onDownvote = { feedViewModel.vote(post.id, "down") },
+                                    onShare = { feedViewModel.share(context, post) },
+                                    onAuthorClick = openProfile,
+                                    onClose = close,
+                                )
+                            } else {
+                                ImmersivePostViewer(
+                                    post = post,
+                                    viewModel = commentVm,
+                                    userVote = userVotes[post.id],
+                                    onUpvote = { feedViewModel.vote(post.id, "up") },
+                                    onDownvote = { feedViewModel.vote(post.id, "down") },
+                                    onShare = { feedViewModel.share(context, post) },
+                                    onAuthorClick = openProfile,
+                                    onClose = close,
+                                )
+                            }
+                        }
+                    }
+                    }
                 }
             }
         }
@@ -210,6 +269,7 @@ private fun CommunityScaffold(
     onPostClick: (Post) -> Unit,
     onMediaClick: (Post) -> Unit,
     onEditPost: (Post) -> Unit,
+    onAuthorClick: (String) -> Unit,
     isFeedActive: Boolean,
     onProfileCommentClick: (com.example.kinetixfsl.community.model.UserComment) -> Unit,
     feedListState: LazyListState,
@@ -233,12 +293,14 @@ private fun CommunityScaffold(
                     onCommentClick = onCommentClick,
                     onPostClick = onPostClick,
                     onMediaClick = onMediaClick,
+                    onAuthorClick = onAuthorClick,
                     isFeedActive = isFeedActive,
                 )
                 CommunityTab.PROFILE -> CommunityProfileScreen(
                     onPostClick = onPostClick,
                     onEditPost = onEditPost,
                     onCommentClick = onProfileCommentClick,
+                    onUserClick = onAuthorClick,
                 )
                 CommunityTab.CREATE -> CreatePostScreen(
                     onClose = { onTabSelected(CommunityTab.HOME) },
@@ -346,4 +408,28 @@ private fun NavItem(
             modifier = Modifier.size(28.dp),
         )
     }
+}
+
+/**
+ * One screen stacked over the community scaffold.
+ *
+ * Modelled as data rather than a set of booleans so the stack can nest to any
+ * depth — profile, post, profile, post — with back unwinding it one step at a
+ * time.
+ */
+private sealed interface CommunityOverlay {
+    /** Somebody's community profile, their own or another user's. */
+    data class Profile(val userId: String) : CommunityOverlay
+
+    /** A post we already hold, opened from a feed card or a profile. */
+    data class Detail(val post: Post) : CommunityOverlay
+
+    /** A post known only by id, opened from a comment. Loaded on the way in. */
+    data class PostById(val postId: String) : CommunityOverlay
+
+    /** Full-screen media with the comments below the fold. */
+    data class Immersive(val post: Post) : CommunityOverlay
+
+    /** The editor, reached from your own post's menu. */
+    data class Edit(val post: Post) : CommunityOverlay
 }

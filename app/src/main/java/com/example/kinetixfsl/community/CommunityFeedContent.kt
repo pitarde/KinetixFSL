@@ -80,6 +80,8 @@ fun CommunityFeedContent(
      * overlay.
      */
     onMediaClick: (Post) -> Unit = {},
+    /** Tapping a post author's avatar or name opens their profile. */
+    onAuthorClick: (String) -> Unit = {},
     /**
      * False while a post detail, viewer or editor is open over the feed. The
      * feed then stops playing and stops prefetching, so the whole connection
@@ -187,6 +189,7 @@ fun CommunityFeedContent(
                                     onComment = { onCommentClick(post) },
                                     onShare = { viewModel.share(context, post) },
                                     onMediaClick = { onMediaClick(post) },
+                                    onAuthorClick = { onAuthorClick(post.authorId) },
                                     // Inert for now — the actions behind it
                                     // are a later piece of work.
                                     onMenuClick = {},
@@ -406,6 +409,8 @@ internal fun PostCard(
     onMediaClick: () -> Unit,
     onClick: () -> Unit,
     onMenuClick: (() -> Unit)? = null,
+    /** Opens the author's profile from their avatar or name. */
+    onAuthorClick: (() -> Unit)? = null,
     /** Null on your own posts — you can't follow yourself. */
     onToggleFollow: (() -> Unit)? = null,
     isFollowing: Boolean = false,
@@ -416,6 +421,7 @@ internal fun PostCard(
     ) {
         PostAuthorRow(
             post = post,
+            onAuthorClick = onAuthorClick,
             trailing = if (onToggleFollow == null && onMenuClick == null) {
                 null
             } else {

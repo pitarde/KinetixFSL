@@ -9,9 +9,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.example.kinetixfsl.community.CommunityRepository
 import com.example.kinetixfsl.community.ShareLinks
 import com.example.kinetixfsl.navigation.KinetixNavHost
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -36,6 +40,20 @@ class MainActivity : ComponentActivity() {
         setContent {
             KinetixFSLTheme {
                 KinetixNavHost(deepLinkPostId = deepLinkPostId)
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Stamp presence so other people's profile views show a current
+        // "Active now / 5min / 3hr / 2d" state. Best-effort and fire-and-forget.
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching {
+                CommunityRepository().run {
+                    ensureUserProfile()
+                    touchLastActive()
+                }
             }
         }
     }

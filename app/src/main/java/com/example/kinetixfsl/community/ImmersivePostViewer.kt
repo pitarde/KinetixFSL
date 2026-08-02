@@ -97,6 +97,8 @@ fun ImmersivePostViewer(
     onDownvote: () -> Unit,
     onShare: () -> Unit,
     onClose: () -> Unit,
+    /** Opens the author's profile from the sheet's avatar or name. */
+    onAuthorClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -278,7 +280,14 @@ fun ImmersivePostViewer(
                 }
 
                 Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    PostAuthorRow(post = post)
+                    PostAuthorRow(
+                        post = post,
+                        onAuthorClick = if (post.authorId.isBlank()) {
+                            null
+                        } else {
+                            { onAuthorClick(post.authorId) }
+                        },
+                    )
                     Spacer(Modifier.height(8.dp))
                     Text(
                         text = post.title,

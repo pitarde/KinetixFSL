@@ -52,7 +52,6 @@ import kotlinx.coroutines.launch
 
 data class FollowersUiState(
     val followers: List<FollowUser> = emptyList(),
-    /** Who I follow, so each row knows whether to offer "Follow back". */
     val following: Set<String> = emptySet(),
     val isLoading: Boolean = true,
     val query: String = "",
@@ -111,17 +110,17 @@ class FollowersViewModel(
     }
 }
 
-/**
- * Everyone following you, with a search box and a follow-back action per row.
- */
 @Composable
 fun FollowersScreen(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     uid: String = FirebaseAuth.getInstance().currentUser?.uid.orEmpty(),
+    onUserClick: ((String) -> Unit)? = null,
 ) {
     val viewModel = remember(uid) { FollowersViewModel(uid) }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val myUid = remember { FirebaseAuth.getInstance().currentUser?.uid.orEmpty() }
+    val isOwnFollowers = uid == myUid
 
     BackHandler(onBack = onClose)
 
@@ -164,16 +163,27 @@ fun FollowersScreen(
 
             state.errorMessage != null -> Message(state.errorMessage!!)
 
-            state.followers.isEmpty() -> Message("No one is following you yet.")
+            state.followers.isEmpty() -> Message(
+                if (isOwnFollowers) "No one is following you yet."
+                else "No followers yet."
+            )
 
             state.visible.isEmpty() -> Message("No one matches \"${state.query}\".")
 
             else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(state.visible, key = { it.uid }) { user ->
+                    val isMe = user.uid == myUid
                     FollowerRow(
                         user = user,
                         isFollowing = user.uid in state.following,
+                        isMe = isMe,
+                        isOwnFollowers = isOwnFollowers,
                         onToggleFollow = { viewModel.toggleFollow(user) },
+                        onClick = if (!isMe && onUserClick != null) {
+                            { onUserClick(user.uid) }
+                        } else {
+                            null
+                        },
                     )
                 }
             }
@@ -220,7 +230,10 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit) {
 private fun FollowerRow(
     user: FollowUser,
     isFollowing: Boolean,
+    isMe: Boolean,
+    isOwnFollowers: Boolean,
     onToggleFollow: () -> Unit,
+    onClick: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -228,6 +241,7 @@ private fun FollowerRow(
             .padding(horizontal = 16.dp, vertical = 6.dp)
             .clip(RoundedCornerShape(14.dp))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -235,45 +249,45 @@ private fun FollowerRow(
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = user.displayName.ifBlank { "Unknown" },
+                text = if (isMe) "${user.displayName.ifBlank { "Unknown" }} (You)" else user.displayName.ifBlank { "Unknown" },
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = "Followed you ${user.createdAt.relativeToNow()}",
+                text = "Followed ${user.createdAt.relativeToNow()}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Spacer(Modifier.width(10.dp))
 
-        val shape = RoundedCornerShape(50)
-        Box(
-            modifier = Modifier
-                .clip(shape)
-                .then(
-                    if (isFollowing) {
-                        Modifier.border(1.dp, MaterialTheme.colorScheme.outline, shape)
+        if (!isMe) {
+            val shape = RoundedCornerShape(50)
+            Box(
+                modifier = Modifier
+                    .clip(shape)
+                    .then(
+                        if (isFollowing) {
+                            Modifier.border(1.dp, MaterialTheme.colorScheme.outline, shape)
+                        } else {
+                            Modifier.background(MaterialTheme.colorScheme.primary)
+                        }
+                    )
+                    .clickable(onClick = onToggleFollow)
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
+            ) {
+                Text(
+                    text = if (isFollowing) "Following" else "Follow",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isFollowing) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
-                        Modifier.background(MaterialTheme.colorScheme.primary)
-                    }
+                        MaterialTheme.colorScheme.onPrimary
+                    },
+                    fontWeight = FontWeight.SemiBold,
                 )
-                .clickable(onClick = onToggleFollow)
-                .padding(horizontal = 14.dp, vertical = 7.dp),
-        ) {
-            Text(
-                // "Follow back" reads better than "Follow" here — this list is
-                // specifically people who already followed you.
-                text = if (isFollowing) "Followed" else "Follow back",
-                style = MaterialTheme.typography.labelMedium,
-                color = if (isFollowing) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.onPrimary
-                },
-                fontWeight = FontWeight.SemiBold,
-            )
+            }
         }
     }
 }

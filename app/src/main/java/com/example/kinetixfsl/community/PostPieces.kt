@@ -50,20 +50,38 @@ internal fun PostAuthorRow(
     modifier: Modifier = Modifier,
     /** Optional control pinned to the right — the profile's 3-dot menu. */
     trailing: @Composable (() -> Unit)? = null,
+    /**
+     * Opens the author's profile. Only the avatar and the name are the tap
+     * target — the rest of the card still opens the post.
+     */
+    onAuthorClick: (() -> Unit)? = null,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        Avatar(
-            avatarUrl = post.authorAvatarUrl,
-            name = post.authorName,
-            size = 32.dp,
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            post.authorName.ifBlank { "Unknown" },
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.SemiBold,
-        )
+        val authorModifier = if (onAuthorClick != null) {
+            Modifier
+                .clip(RoundedCornerShape(50))
+                .clickable(onClick = onAuthorClick)
+        } else {
+            Modifier
+        }
+
+        Row(
+            modifier = authorModifier,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(
+                avatarUrl = post.authorAvatarUrl,
+                name = post.authorName,
+                size = 32.dp,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                post.authorName.ifBlank { "Unknown" },
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
         Spacer(Modifier.width(8.dp))
         val timeLabel = post.createdAt.relativeToNow()
         val viewsLabel = if (post.viewCount > 0) "${post.viewCount.compact()} views" else null

@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kinetixfsl.community.model.Post
+import com.google.firebase.auth.FirebaseAuth
 import com.example.kinetixfsl.community.model.UserComment
 import kotlinx.coroutines.launch
 
@@ -66,7 +67,20 @@ fun CommunityProfileScreen(
     onEditPost: (Post) -> Unit,
     onCommentClick: (UserComment) -> Unit,
     modifier: Modifier = Modifier,
-    viewModel: CommunityProfileViewModel = remember { CommunityProfileViewModel() },
+    /**
+     * Whose profile to show. Null is the signed-in user; anything else turns
+     * this into a visitor view — Message and Follow replace Edit, and the post
+     * menu drops the actions only an author should have.
+     */
+    userId: String? = null,
+    /** Tapping Message. Not implemented yet, so this is a no-op by default. */
+    onMessageClick: () -> Unit = {},
+    /** Tapping a user row (e.g. in the followers list) to visit their profile. */
+    onUserClick: ((String) -> Unit)? = null,
+    /** Tapping My Communities. Also a placeholder until communities exist. */
+    onCommunitiesClick: () -> Unit = {},
+    viewModel: CommunityProfileViewModel =
+        remember(userId) { CommunityProfileViewModel(userId = userId) },
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
@@ -101,8 +115,13 @@ fun CommunityProfileScreen(
                 followerCount = state.followerCount,
                 accountAge = state.accountAge,
                 activeTime = state.activeTime,
+                isOwnProfile = state.isOwnProfile,
+                isFollowing = state.isFollowing,
                 onFollowersClick = { isFollowersOpen = true },
                 onContributionsClick = { isContributionsOpen = true },
+                onFollowClick = { viewModel.toggleFollow() },
+                onMessageClick = onMessageClick,
+                onCommunitiesClick = onCommunitiesClick,
             )
 
             ProfileTabs(
@@ -131,7 +150,13 @@ fun CommunityProfileScreen(
                         isLoading = state.isLoadingComments,
                         errorMessage = state.commentsError,
                         onCommentClick = onCommentClick,
-                        onMenuClick = { actionsComment = it },
+                        // No menu on someone else's comments — there's nothing
+                        // there a visitor is allowed to do.
+                        onMenuClick = if (state.isOwnProfile) {
+                            { actionsComment = it }
+                        } else {
+                            null
+                        },
                     )
                 }
             }
@@ -139,21 +164,40 @@ fun CommunityProfileScreen(
 
         val target = actionsPost
         if (target != null) {
-            PostActionsSheet(
-                onCopyText = {
-                    copyPostText(context, target)
-                    actionsPost = null
-                },
-                onDelete = {
-                    pendingDelete = target
-                    actionsPost = null
-                },
-                onEdit = {
-                    actionsPost = null
-                    onEditPost(target)
-                },
-                onDismiss = { actionsPost = null },
-            )
+            if (state.isOwnProfile) {
+                PostActionsSheet(
+                    onCopyText = {
+                        copyPostText(context, target)
+                        actionsPost = null
+                    },
+                    onDelete = {
+                        pendingDelete = target
+                        actionsPost = null
+                    },
+                    onEdit = {
+                        actionsPost = null
+                        onEditPost(target)
+                    },
+                    onDismiss = { actionsPost = null },
+                )
+            } else {
+                VisitorPostActionsSheet(
+                    onCopyText = {
+                        copyPostText(context, target)
+                        actionsPost = null
+                    },
+                    onFollow = {
+                        viewModel.followAuthor(target)
+                        Toast.makeText(
+                            context,
+                            "Following ${target.authorName}",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        actionsPost = null
+                    },
+                    onDismiss = { actionsPost = null },
+                )
+            }
         }
 
         val deleting = pendingDelete
@@ -204,7 +248,11 @@ fun CommunityProfileScreen(
         }
 
         if (isFollowersOpen) {
-            FollowersScreen(onClose = { isFollowersOpen = false })
+            FollowersScreen(
+                onClose = { isFollowersOpen = false },
+                uid = userId ?: FirebaseAuth.getInstance().currentUser?.uid.orEmpty(),
+                onUserClick = onUserClick,
+            )
         }
 
         val commentToDelete = pendingCommentDelete
@@ -240,10 +288,16 @@ private fun ProfileHeader(
     followerCount: Long,
     accountAge: String,
     activeTime: String,
+    isOwnProfile: Boolean,
+    isFollowing: Boolean,
     onFollowersClick: () -> Unit,
     onContributionsClick: () -> Unit,
+    onFollowClick: () -> Unit,
+    onMessageClick: () -> Unit,
+    onCommunitiesClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+    Column(modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -261,12 +315,42 @@ private fun ProfileHeader(
                     fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.width(14.dp))
-                Text(
-                    text = "Edit",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold,
-                )
+
+                if (isOwnProfile) {
+                    Text(
+                        text = "Edit",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                } else {
+                    // Message is a placeholder button for now — deliberately
+                    // clickable so the layout is final, with nothing behind it.
+                    Icon(
+                        imageVector = CommunityIcons.Message,
+                        contentDescription = "Message",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(50))
+                            .clickable(onClick = onMessageClick),
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Text(
+                        text = if (isFollowing) "Following" else "Follow",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (isFollowing) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable(onClick = onFollowClick)
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
+                }
             }
             Spacer(Modifier.height(4.dp))
             Text(
@@ -286,7 +370,15 @@ private fun ProfileHeader(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            StatPill("0", "My Communities", Modifier.weight(1f))
+            // Clickable but inert until communities exist. Account Age and
+            // Active time are read-only by design and stay untappable.
+            StatPill(
+                "0",
+                "My Communities",
+                Modifier
+                    .weight(1f)
+                    .clickable(onClick = onCommunitiesClick),
+            )
             StatPill(
                 "$contributions",
                 "Contributions ›",
@@ -332,8 +424,12 @@ private fun StatPill(value: String, label: String, modifier: Modifier = Modifier
 // ---- Tabs ----
 
 @Composable
-private fun ProfileTabs(selectedIndex: Int, onSelect: (Int) -> Unit) {
-    Column {
+private fun ProfileTabs(
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
         Row(modifier = Modifier.fillMaxWidth()) {
             TabLabel("Posts", selectedIndex == 0, Modifier.weight(1f)) { onSelect(0) }
             TabLabel("Comments", selectedIndex == 1, Modifier.weight(1f)) { onSelect(1) }
@@ -441,7 +537,8 @@ private fun CommentsTab(
     isLoading: Boolean,
     errorMessage: String?,
     onCommentClick: (UserComment) -> Unit,
-    onMenuClick: (UserComment) -> Unit,
+    /** Null on a visitor view — a visitor can't act on these comments. */
+    onMenuClick: ((UserComment) -> Unit)?,
 ) {
     when {
         isLoading -> CenteredSpinner()
@@ -492,14 +589,16 @@ private fun CommentsTab(
                         overflow = TextOverflow.Ellipsis,
                     )
                   }
-                  Icon(
-                      imageVector = CommunityIcons.MoreVertical,
-                      contentDescription = "Comment options",
-                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                      modifier = Modifier
-                          .size(22.dp)
-                          .clickable { onMenuClick(item) },
-                  )
+                  if (onMenuClick != null) {
+                      Icon(
+                          imageVector = CommunityIcons.MoreVertical,
+                          contentDescription = "Comment options",
+                          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                          modifier = Modifier
+                              .size(22.dp)
+                              .clickable { onMenuClick(item) },
+                      )
+                  }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }

@@ -67,15 +67,37 @@ class CommunityRepository(
     suspend fun ensureUserProfile() {
         val user = auth.currentUser ?: return
         try {
-            firestore.collection(USERS).document(user.uid).set(
-                mapOf(
-                    "uid" to user.uid,
-                    "displayName" to (user.displayName?.takeIf { it.isNotBlank() }
-                        ?: user.email?.substringBefore('@') ?: "Anonymous"),
-                    "avatarUrl" to user.photoUrl?.toString(),
-                ),
-                SetOptions.merge(),
-            ).await()
+            val fields = mutableMapOf<String, Any?>(
+                "uid" to user.uid,
+                "displayName" to (user.displayName?.takeIf { it.isNotBlank() }
+                    ?: user.email?.substringBefore('@') ?: "Anonymous"),
+                "avatarUrl" to user.photoUrl?.toString(),
+                // Mirrored from Auth because other users can't read our Auth
+                // metadata — this is the only source for "Account Age" when
+                // somebody else views this profile.
+                "lastActiveAt" to Timestamp.now(),
+            )
+            user.metadata?.creationTimestamp?.let {
+                fields["createdAt"] = Timestamp(java.util.Date(it))
+            }
+
+            firestore.collection(USERS).document(user.uid)
+                .set(fields, SetOptions.merge())
+                .await()
+        } catch (_: Exception) { /* best-effort */ }
+    }
+
+    /**
+     * Stamps the signed-in user as active right now. Called when the app comes
+     * to the foreground so other people's profile views show a current
+     * "Active now / 5min ago" state.
+     */
+    suspend fun touchLastActive() {
+        val uid = auth.currentUser?.uid ?: return
+        try {
+            firestore.collection(USERS).document(uid)
+                .set(mapOf("lastActiveAt" to Timestamp.now()), SetOptions.merge())
+                .await()
         } catch (_: Exception) { /* best-effort */ }
     }
 

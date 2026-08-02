@@ -60,6 +60,8 @@ fun PostDetailScreen(
     onDownvote: () -> Unit,
     onShare: () -> Unit,
     onClose: () -> Unit,
+    /** Opens the author's profile from their avatar or name in the top bar. */
+    onAuthorClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -96,19 +98,31 @@ fun PostDetailScreen(
                     .clickable(onClick = onClose),
             )
             Spacer(Modifier.width(12.dp))
-            Avatar(
-                avatarUrl = post.authorAvatarUrl,
-                name = post.authorName,
-                size = 30.dp,
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = post.authorName.ifBlank { "Unknown" },
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
+            // Avatar and name together are the tap target for the author's
+            // profile — the same gesture as in the feed.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(50))
+                    .clickable(enabled = post.authorId.isNotBlank()) {
+                        onAuthorClick(post.authorId)
+                    }
+                    .padding(vertical = 2.dp),
+            ) {
+                Avatar(
+                    avatarUrl = post.authorAvatarUrl,
+                    name = post.authorName,
+                    size = 30.dp,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = post.authorName.ifBlank { "Unknown" },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
             Icon(
                 imageVector = CommunityIcons.Share,
                 contentDescription = "Share post",
