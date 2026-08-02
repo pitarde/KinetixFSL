@@ -46,6 +46,8 @@ fun HomeScreen(
     onSignOut: () -> Unit,
     onNavigateToCommunity: () -> Unit,
     onNavigateToSignList: (categoryId: String) -> Unit,
+    onStartCommunity: () -> Unit = {},
+    onDiscoverCommunities: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -77,10 +79,16 @@ fun HomeScreen(
                         }
                     },
                     onStartCommunityClick = {
-                        scope.launch { drawerState.close() }
+                        scope.launch {
+                            drawerState.close()
+                            onStartCommunity()
+                        }
                     },
                     onDiscoverCommunitiesClick = {
-                        scope.launch { drawerState.close() }
+                        scope.launch {
+                            drawerState.close()
+                            onDiscoverCommunities()
+                        }
                     },
                     onAboutClick = {
                         scope.launch { drawerState.close() }

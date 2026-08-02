@@ -50,6 +50,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun CommunityScreen(
     onNavigateToDashboard: () -> Unit,
+    onStartCommunity: () -> Unit = {},
+    onDiscoverCommunities: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -105,8 +107,18 @@ fun CommunityScreen(
                         selectedTab = CommunityTab.HOME
                         scope.launch { drawerState.close() }
                     },
-                    onStartCommunityClick = { scope.launch { drawerState.close() } },
-                    onDiscoverCommunitiesClick = { scope.launch { drawerState.close() } },
+                    onStartCommunityClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onStartCommunity()
+                        }
+                    },
+                    onDiscoverCommunitiesClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onDiscoverCommunities()
+                        }
+                    },
                     onAboutClick = { scope.launch { drawerState.close() } },
                 )
             }
@@ -117,7 +129,6 @@ fun CommunityScreen(
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it },
                 onMenuClick = { scope.launch { drawerState.open() } },
-                onSelectCommunity = { /* TODO */ },
                 // Tapping the card or the comment button both land on the
                 // detail screen — the reddit flow.
                 onCommentClick = { post -> overlays.add(CommunityOverlay.Detail(post)) },
@@ -264,7 +275,6 @@ private fun CommunityScaffold(
     selectedTab: CommunityTab,
     onTabSelected: (CommunityTab) -> Unit,
     onMenuClick: () -> Unit,
-    onSelectCommunity: () -> Unit,
     onCommentClick: (Post) -> Unit,
     onPostClick: (Post) -> Unit,
     onMediaClick: (Post) -> Unit,
@@ -304,7 +314,6 @@ private fun CommunityScaffold(
                 )
                 CommunityTab.CREATE -> CreatePostScreen(
                     onClose = { onTabSelected(CommunityTab.HOME) },
-                    onSelectCommunity = { onSelectCommunity() },
                 )
                 CommunityTab.NOTIFICATIONS -> NotificationsPlaceholder()
             }

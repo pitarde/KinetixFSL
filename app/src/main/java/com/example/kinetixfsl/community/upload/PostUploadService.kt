@@ -46,6 +46,8 @@ class PostUploadService : Service() {
         val title = intent?.getStringExtra(EXTRA_TITLE) ?: ""
         val body = intent?.getStringExtra(EXTRA_BODY) ?: ""
         val linkUrl = intent?.getStringExtra(EXTRA_LINK_URL)
+        val communityId = intent?.getStringExtra(EXTRA_COMMUNITY_ID) ?: ""
+        val communityName = intent?.getStringExtra(EXTRA_COMMUNITY_NAME) ?: ""
         val mediaUriStrings = intent?.getStringArrayListExtra(EXTRA_MEDIA_URIS).orEmpty()
         val mediaTypes = intent?.getStringArrayListExtra(EXTRA_MEDIA_TYPES).orEmpty()
 
@@ -206,6 +208,8 @@ class PostUploadService : Service() {
                     media = uploaded,
                     previewUrl = previewUrl,
                     previewBlur = previewBlur,
+                    communityId = communityId,
+                    communityName = communityName,
                 )
 
                 result.fold(
@@ -349,6 +353,8 @@ class PostUploadService : Service() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_BODY = "body"
         const val EXTRA_LINK_URL = "link_url"
+        const val EXTRA_COMMUNITY_ID = "community_id"
+        const val EXTRA_COMMUNITY_NAME = "community_name"
         const val EXTRA_MEDIA_URIS = "media_uris"
         const val EXTRA_MEDIA_TYPES = "media_types"
 

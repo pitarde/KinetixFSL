@@ -113,6 +113,37 @@ internal object CommunityIcons {
         }.build()
     }
 
+    /** A plus sign — "add", used on the category-management strip. */
+    val Plus: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Plus",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2.2f) {
+                moveTo(12f, 5f); lineTo(12f, 19f)
+                moveTo(5f, 12f); lineTo(19f, 12f)
+            }
+        }.build()
+    }
+
+    /** A magnifier — the search action in the community top bar. */
+    val Search: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Search",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                moveTo(17f, 11f)
+                arcTo(6f, 6f, 0f, true, true, 5f, 11f)
+                arcTo(6f, 6f, 0f, true, true, 17f, 11f)
+                close()
+                moveTo(15.5f, 15.5f); lineTo(20f, 20f)
+            }
+        }.build()
+    }
+
     // ---- Post-card interactions ----
 
     val ArrowUp: ImageVector by lazy {

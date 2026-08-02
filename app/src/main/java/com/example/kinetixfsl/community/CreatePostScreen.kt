@@ -39,6 +39,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,12 +76,27 @@ import com.example.kinetixfsl.ui.theme.KinetixWhite
 @Composable
 fun CreatePostScreen(
     onClose: () -> Unit,
-    onSelectCommunity: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: CreatePostViewModel = viewModel(),
+    /**
+     * When set, the composer is locked to this community (opened from inside it)
+     * — the community pill shows its name and can't be changed.
+     */
+    lockedCommunityId: String? = null,
+    lockedCommunityName: String? = null,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val joinedCommunities by viewModel.joinedCommunities.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    // Lock the target once when opened from within a community.
+    LaunchedEffect(lockedCommunityId) {
+        if (lockedCommunityId != null) {
+            viewModel.presetLockedCommunity(lockedCommunityId, lockedCommunityName.orEmpty())
+        }
+    }
+
+    var showCommunityPicker by remember { mutableStateOf(false) }
 
     // Request notification permission on Android 13+ so the upload
     // progress notification actually appears in the status bar.
@@ -138,20 +156,31 @@ fun CreatePostScreen(
 
             Spacer(Modifier.width(12.dp))
 
-            // "Select Community" pill
-            Box(
+            // Community selector pill. Shows the current target (a community or
+            // "Home Feed"); tapping opens the picker unless the target is locked.
+            Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
                     .background(MaterialTheme.colorScheme.primary)
-                    .clickable(onClick = onSelectCommunity)
+                    .clickable(enabled = !state.isCommunityLocked) { showCommunityPicker = true }
                     .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Select Community",
+                    text = state.communityLabel,
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onPrimary,
                     fontWeight = FontWeight.SemiBold,
                 )
+                if (!state.isCommunityLocked) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = ChevronDownIcon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
 
             Spacer(Modifier.weight(1f))
@@ -369,6 +398,102 @@ fun CreatePostScreen(
             )
         }
     }
+
+    if (showCommunityPicker) {
+        CommunityPickerSheet(
+            communities = joinedCommunities,
+            selectedId = state.selectedCommunityId,
+            onPick = { id, name ->
+                viewModel.selectCommunity(id, name)
+                showCommunityPicker = false
+            },
+            onDismiss = { showCommunityPicker = false },
+        )
+    }
+}
+
+/**
+ * Bottom sheet for choosing where a post goes: the Home Feed, or any community
+ * the user has joined. Only members can post to a community, so the list is
+ * exactly their joined set.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun CommunityPickerSheet(
+    communities: List<com.example.kinetixfsl.community.model.Community>,
+    selectedId: String,
+    onPick: (id: String, name: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(bottom = 16.dp),
+        ) {
+            Text(
+                text = "Post to",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            CommunityPickerRow(
+                label = "Home Feed",
+                selected = selectedId.isBlank(),
+                onClick = { onPick("", "") },
+            )
+            communities.forEach { community ->
+                CommunityPickerRow(
+                    label = community.name,
+                    selected = community.id == selectedId,
+                    onClick = { onPick(community.id, community.name) },
+                )
+            }
+            if (communities.isEmpty()) {
+                Text(
+                    text = "Join a community to post to it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommunityPickerRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            Text(
+                text = "✓",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
 }
 
 /** A bare text field with no border — just the text and a placeholder. */
@@ -431,6 +556,14 @@ private val CloseIcon: ImageVector by lazy {
     }.build()
 }
 
+private val ChevronDownIcon: ImageVector by lazy {
+    ImageVector.Builder("ChevronDown", 24.dp, 24.dp, 24f, 24f).apply {
+        path(stroke = SolidColor(Color.White), strokeLineWidth = 2.2f) {
+            moveTo(6f, 9f); lineTo(12f, 15f); lineTo(18f, 9f)
+        }
+    }.build()
+}
+
 private val LinkIcon: ImageVector by lazy {
     ImageVector.Builder("Link", 24.dp, 24.dp, 24f, 24f).apply {
         path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
@@ -482,7 +615,6 @@ private fun CreatePostScreenPreview() {
     KinetixFSLTheme {
         CreatePostScreen(
             onClose = {},
-            onSelectCommunity = {},
         )
     }
 }

@@ -39,6 +39,14 @@ data class Post(
     val authorId: String = "",
     val authorName: String = "",
     val authorAvatarUrl: String? = null,
+    /**
+     * The community this post belongs to, or blank for a Home Feed post.
+     * Posts made before communities existed have no field, which deserializes
+     * to "" here — so they read as Home Feed posts, exactly right.
+     */
+    val communityId: String = "",
+    /** Denormalized community name, for showing which community a post is in. */
+    val communityName: String = "",
     val title: String = "",
     val body: String = "",
     val linkUrl: String? = null,

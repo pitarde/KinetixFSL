@@ -5,11 +5,14 @@ import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.kinetixfsl.community.model.Community
 import com.example.kinetixfsl.community.model.MAX_POST_MEDIA
 import com.example.kinetixfsl.community.upload.PostUploadService
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -33,16 +36,51 @@ data class CreatePostUiState(
     val errorMessage: String? = null,
     /** True once the post has been handed off to the upload service. */
     val isPostCreated: Boolean = false,
+    /** Target community. Blank id publishes to the Home Feed. */
+    val selectedCommunityId: String = "",
+    val selectedCommunityName: String = "",
+    /** When true the target is fixed (posting from inside a community). */
+    val isCommunityLocked: Boolean = false,
 ) {
     val canAddMore: Boolean get() = media.size < MAX_POST_MEDIA
+
+    /** Label for the community pill: the name, or the Home Feed default. */
+    val communityLabel: String
+        get() = selectedCommunityName.ifBlank { "Home Feed" }
 }
 
 class CreatePostViewModel(
     private val repository: CommunityRepository = CommunityRepository(),
+    private val directory: CommunityDirectoryRepository = CommunityDirectoryRepository(),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(CreatePostUiState())
     val uiState: StateFlow<CreatePostUiState> = _uiState.asStateFlow()
+
+    /** Communities the user has joined — the options in the community picker. */
+    val joinedCommunities: StateFlow<List<Community>> =
+        directory.observeJoinedCommunities()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Picks the target community. A blank [id] means the Home Feed. */
+    fun selectCommunity(id: String, name: String) {
+        _uiState.update { it.copy(selectedCommunityId = id, selectedCommunityName = name) }
+    }
+
+    /**
+     * Fixes the target to one community — used when the composer is opened from
+     * inside that community, so the post can only go there. Applied once.
+     */
+    fun presetLockedCommunity(id: String, name: String) {
+        if (_uiState.value.isCommunityLocked) return
+        _uiState.update {
+            it.copy(
+                selectedCommunityId = id,
+                selectedCommunityName = name,
+                isCommunityLocked = true,
+            )
+        }
+    }
 
     fun onTitleChange(value: String) =
         _uiState.update { it.copy(title = value, errorMessage = null) }
@@ -122,6 +160,8 @@ class CreatePostViewModel(
             putExtra(PostUploadService.EXTRA_BODY, state.body)
             putExtra(PostUploadService.EXTRA_LINK_URL,
                 state.linkUrl.takeIf { it.isNotBlank() })
+            putExtra(PostUploadService.EXTRA_COMMUNITY_ID, state.selectedCommunityId)
+            putExtra(PostUploadService.EXTRA_COMMUNITY_NAME, state.selectedCommunityName)
             if (state.media.isNotEmpty()) {
                 putStringArrayListExtra(
                     PostUploadService.EXTRA_MEDIA_URIS,

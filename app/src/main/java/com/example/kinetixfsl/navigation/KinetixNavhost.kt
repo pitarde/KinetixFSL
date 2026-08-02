@@ -20,6 +20,10 @@ import androidx.navigation.navArgument
 import com.example.kinetixfsl.auth.AuthRepository
 import com.example.kinetixfsl.community.CommunityScreen
 import com.example.kinetixfsl.community.SharedPostScreen
+import com.example.kinetixfsl.community.create.StartCommunityScreen
+import com.example.kinetixfsl.community.discover.CommunityCategoryScreen
+import com.example.kinetixfsl.community.discover.DiscoverCommunitiesScreen
+import com.example.kinetixfsl.community.home.CommunityHomeScreen
 import com.example.kinetixfsl.modules.LearningRoomScreen
 import com.example.kinetixfsl.modules.SignListScreen
 import com.example.kinetixfsl.modules.model.FslSignData
@@ -56,6 +60,21 @@ object Route {
 
     const val HOME = "home"
     const val COMMUNITY = "community"
+
+    // ── Communities: create, discover, and a single community's home ──
+    const val START_COMMUNITY = "start_community"
+    const val DISCOVER_COMMUNITIES = "discover_communities"
+
+    private const val COMMUNITY_HOME_BASE = "community_home"
+    const val COMMUNITY_HOME_ARG = "communityId"
+    const val COMMUNITY_HOME_PATTERN = "$COMMUNITY_HOME_BASE/{$COMMUNITY_HOME_ARG}"
+    fun communityHome(communityId: String): String = "$COMMUNITY_HOME_BASE/$communityId"
+
+    private const val COMMUNITY_CATEGORY_BASE = "community_category"
+    const val COMMUNITY_CATEGORY_ARG = "category"
+    const val COMMUNITY_CATEGORY_PATTERN = "$COMMUNITY_CATEGORY_BASE/{$COMMUNITY_CATEGORY_ARG}"
+    fun communityCategory(category: String): String =
+        "$COMMUNITY_CATEGORY_BASE/${URLEncoder.encode(category, StandardCharsets.UTF_8.name())}"
 
     // ── Shared post (opened from a link) ────────────────────
     private const val POST_BASE = "post"
@@ -312,6 +331,12 @@ fun KinetixNavHost(
                 onNavigateToSignList = { categoryId ->
                     navController.navigate(Route.signList(categoryId))
                 },
+                onStartCommunity = {
+                    navController.navigate(Route.START_COMMUNITY)
+                },
+                onDiscoverCommunities = {
+                    navController.navigate(Route.DISCOVER_COMMUNITIES)
+                },
             )
         }
 
@@ -332,6 +357,96 @@ fun KinetixNavHost(
                         }
                     }
                 },
+                onStartCommunity = {
+                    navController.navigate(Route.START_COMMUNITY)
+                },
+                onDiscoverCommunities = {
+                    navController.navigate(Route.DISCOVER_COMMUNITIES)
+                },
+            )
+        }
+
+        // ---- Start a community: two-step wizard from the drawer ----
+        composable(
+            route = Route.START_COMMUNITY,
+            enterTransition = {
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
+            },
+            exitTransition = { fadeOut(tween(200)) },
+            popExitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+        ) {
+            StartCommunityScreen(
+                onClose = { navController.popBackStack() },
+                onCreated = { communityId ->
+                    // Land on the new community, and drop the wizard so back
+                    // returns to wherever they opened it from.
+                    navController.navigate(Route.communityHome(communityId)) {
+                        popUpTo(Route.START_COMMUNITY) { inclusive = true }
+                    }
+                },
+            )
+        }
+
+        // ---- Discover communities: category filter + list ----
+        composable(
+            route = Route.DISCOVER_COMMUNITIES,
+            enterTransition = {
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
+            },
+            exitTransition = { fadeOut(tween(200)) },
+            popExitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+        ) {
+            DiscoverCommunitiesScreen(
+                onClose = { navController.popBackStack() },
+                onOpenCommunity = { communityId ->
+                    navController.navigate(Route.communityHome(communityId))
+                },
+                onOpenCategory = { category ->
+                    navController.navigate(Route.communityCategory(category))
+                },
+            )
+        }
+
+        // ---- A single category's communities (opened from a Discover chip) ----
+        composable(
+            route = Route.COMMUNITY_CATEGORY_PATTERN,
+            arguments = listOf(navArgument(Route.COMMUNITY_CATEGORY_ARG) { type = NavType.StringType }),
+            enterTransition = {
+                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
+            },
+            exitTransition = { fadeOut(tween(200)) },
+            popExitTransition = {
+                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
+            },
+        ) { backStackEntry ->
+            val encoded = backStackEntry.arguments?.getString(Route.COMMUNITY_CATEGORY_ARG).orEmpty()
+            val category = URLDecoder.decode(encoded, StandardCharsets.UTF_8.name())
+            CommunityCategoryScreen(
+                category = category,
+                onClose = { navController.popBackStack() },
+                onOpenCommunity = { communityId ->
+                    navController.navigate(Route.communityHome(communityId))
+                },
+            )
+        }
+
+        // ---- A single community's home (admin or visitor) ----
+        composable(
+            route = Route.COMMUNITY_HOME_PATTERN,
+            arguments = listOf(navArgument(Route.COMMUNITY_HOME_ARG) { type = NavType.StringType }),
+            enterTransition = { fadeIn(tween(200)) },
+            exitTransition = { fadeOut(tween(200)) },
+            popEnterTransition = { fadeIn(tween(200)) },
+            popExitTransition = { fadeOut(tween(200)) },
+        ) { backStackEntry ->
+            val communityId = backStackEntry.arguments?.getString(Route.COMMUNITY_HOME_ARG).orEmpty()
+            CommunityHomeScreen(
+                communityId = communityId,
+                onClose = { navController.popBackStack() },
             )
         }
 

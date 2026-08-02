@@ -24,7 +24,15 @@ sealed interface FeedState {
 
 class CommunityFeedViewModel(
     private val repository: CommunityRepository = CommunityRepository(),
+    /**
+     * Non-null makes this a single community's feed: posts are drawn from that
+     * community only and ranked by vote score, re-ranking live as votes change.
+     * Null is the Home Feed — every post that belongs to no community, shuffled.
+     */
+    private val communityId: String? = null,
 ) : ViewModel() {
+
+    private val isCommunityFeed: Boolean get() = communityId != null
 
     private val _feedState = MutableStateFlow<FeedState>(FeedState.Loading)
     val feedState: StateFlow<FeedState> = _feedState.asStateFlow()
@@ -131,7 +139,12 @@ class CommunityFeedViewModel(
 
     private fun observeFeed() {
         feedJob?.cancel()
-        feedJob = repository.feedPosts()
+        val source = if (communityId != null) {
+            repository.communityPosts(communityId)
+        } else {
+            repository.feedPosts()
+        }
+        feedJob = source
             .onEach { posts -> applyPosts(posts) }
             .catch { t ->
                 _feedState.value = FeedState.Error(
@@ -151,32 +164,47 @@ class CommunityFeedViewModel(
      * - Vote/share/comment count update (same IDs): preserve current order.
      */
     private fun applyPosts(incoming: List<Post>) {
-        allPosts = incoming
+        // A community feed is ranked purely by vote score and re-ranks on every
+        // snapshot, so a vote immediately moves a post up or down — which is the
+        // dynamic ordering a community is meant to have. The Home Feed instead
+        // shows only posts that belong to no community, in its shuffled order.
+        if (isCommunityFeed) {
+            allPosts = incoming
+            displayOrder = incoming
+                .sortedWith(compareByDescending<Post> { it.score }.thenByDescending { it.createdAt })
+                .map { it.id }
+            emitFiltered()
+            prefetchVotes(incoming)
+            return
+        }
 
-        val incomingIds = incoming.map { it.id }.toSet()
+        val homePosts = incoming.filter { it.communityId.isBlank() }
+        allPosts = homePosts
+
+        val incomingIds = homePosts.map { it.id }.toSet()
         val currentIds = displayOrder.toSet()
         val idsChanged = incomingIds != currentIds
 
         if (shouldReorder) {
             // Explicit refresh — always shuffle randomly.
             if (nextOrderIsRandom) {
-                val shuffled = incoming.shuffled()
+                val shuffled = homePosts.shuffled()
                 displayOrder = shuffled.map { it.id }
             } else {
-                val sorted = incoming.sortedByDescending { it.createdAt }
+                val sorted = homePosts.sortedByDescending { it.createdAt }
                 displayOrder = sorted.map { it.id }
             }
             shouldReorder = false
         } else if (idsChanged) {
             // A post was added or deleted — show newest first so the
             // new post appears at the top automatically.
-            val sorted = incoming.sortedByDescending { it.createdAt }
+            val sorted = homePosts.sortedByDescending { it.createdAt }
             displayOrder = sorted.map { it.id }
         }
         // Otherwise: same IDs, just count updates — keep current order.
 
         emitFiltered()
-        prefetchVotes(incoming)
+        prefetchVotes(homePosts)
     }
 
     /**
@@ -199,9 +227,10 @@ class CommunityFeedViewModel(
 
         // Posts from people you follow float to the top, keeping their relative
         // order underneath. partition is stable, so the shuffle or newest-first
-        // ordering computed above still holds within each group.
+        // ordering computed above still holds within each group. A community
+        // feed skips this — its ranking is by score alone, nothing jumps ahead.
         val following = _followingIds.value
-        val prioritised = if (following.isEmpty()) {
+        val prioritised = if (isCommunityFeed || following.isEmpty()) {
             filtered
         } else {
             val (followed, rest) = filtered.partition { it.authorId in following }

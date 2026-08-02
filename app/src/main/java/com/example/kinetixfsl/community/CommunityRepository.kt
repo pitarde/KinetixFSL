@@ -53,6 +53,22 @@ class CommunityRepository(
         awaitClose { registration.remove() }
     }
 
+    /**
+     * Every post published to one community. No `orderBy` — an equality filter
+     * alone needs no composite index (same reasoning as [postsByAuthor]); the
+     * feed ViewModel ranks these by score so the order updates as votes change.
+     */
+    fun communityPosts(communityId: String): Flow<List<Post>> = callbackFlow {
+        val registration = firestore.collection(POSTS)
+            .whereEqualTo(FIELD_COMMUNITY_ID, communityId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) { close(error); return@addSnapshotListener }
+                if (snapshot == null) return@addSnapshotListener
+                trySend(snapshot.documents.mapNotNull { it.toPostOrNull() })
+            }
+        awaitClose { registration.remove() }
+    }
+
     // -------------------------------------------------------------------------
     // Following
     // -------------------------------------------------------------------------
@@ -456,6 +472,9 @@ class CommunityRepository(
         media: List<PostMedia> = emptyList(),
         previewUrl: String? = null,
         previewBlur: String? = null,
+        /** Blank publishes to the Home Feed; otherwise the target community. */
+        communityId: String = "",
+        communityName: String = "",
     ): Result<String> {
         val user = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
 
@@ -470,6 +489,8 @@ class CommunityRepository(
             "authorName" to (user.displayName?.takeIf { it.isNotBlank() }
                 ?: user.email?.substringBefore('@') ?: "Anonymous"),
             "authorAvatarUrl" to (user.photoUrl?.toString()),
+            "communityId" to communityId,
+            "communityName" to communityName,
             "title" to title.trim(),
             "body" to body.trim(),
             "linkUrl" to linkUrl?.trim()?.takeIf { it.isNotBlank() },
@@ -692,6 +713,7 @@ class CommunityRepository(
         const val FOLLOWING = "following"
         const val FIELD_CREATED_AT = "createdAt"
         const val FIELD_SCORE = "score"
+        const val FIELD_COMMUNITY_ID = "communityId"
         const val FEED_PAGE_SIZE = 50L
 
         /** Firestore write batches cap at 500 operations. */
