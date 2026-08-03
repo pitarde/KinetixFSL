@@ -58,6 +58,16 @@ class CommunityRepository(
      * alone needs no composite index (same reasoning as [postsByAuthor]); the
      * feed ViewModel ranks these by score so the order updates as votes change.
      */
+    /** One-shot list of a community's posts — used when deleting the community. */
+    suspend fun postsInCommunity(communityId: String): List<Post> = try {
+        firestore.collection(POSTS)
+            .whereEqualTo(FIELD_COMMUNITY_ID, communityId)
+            .get().await()
+            .documents.mapNotNull { it.toPostOrNull() }
+    } catch (_: Exception) {
+        emptyList()
+    }
+
     fun communityPosts(communityId: String): Flow<List<Post>> = callbackFlow {
         val registration = firestore.collection(POSTS)
             .whereEqualTo(FIELD_COMMUNITY_ID, communityId)

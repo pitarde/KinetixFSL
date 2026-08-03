@@ -28,6 +28,12 @@ data class UserProfile(
      * 2d" indicator, same as a messenger presence dot.
      */
     val lastActiveAt: Timestamp? = null,
+    /**
+     * Ids of the communities this user has joined, mirrored here from their
+     * private joined list so any viewer can see them on the profile — backs the
+     * "My Communities" count and sheet.
+     */
+    val joinedCommunityIds: List<String> = emptyList(),
 )
 
 /**

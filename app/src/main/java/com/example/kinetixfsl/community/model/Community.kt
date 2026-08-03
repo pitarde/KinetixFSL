@@ -25,6 +25,12 @@ data class Community(
     val creatorId: String = "",
     val creatorName: String = "",
     val creatorAvatarUrl: String? = null,
+    /** The community's own profile picture, set by the admin. Null shows a
+     *  letter/person placeholder. */
+    val avatarUrl: String? = null,
+    /** A wide banner shown behind the header, Reddit-style. Null shows a plain
+     *  colored strip. */
+    val bannerUrl: String? = null,
     /** Shown under the name on the home screen. Placeholder until we track it. */
     val contributionsPerWeek: Long = 0,
     val memberCount: Long = 0,

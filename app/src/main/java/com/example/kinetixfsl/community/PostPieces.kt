@@ -55,28 +55,37 @@ internal fun PostAuthorRow(
      * target — the rest of the card still opens the post.
      */
     onAuthorClick: (() -> Unit)? = null,
+    /**
+     * When set, the row shows this community (letter avatar + name) instead of
+     * the post's author. The home feed uses this so community posts surface the
+     * community, matching the design. Tapping opens the community.
+     */
+    communityName: String? = null,
+    communityAvatarUrl: String? = null,
+    onCommunityClick: (() -> Unit)? = null,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        val authorModifier = if (onAuthorClick != null) {
+        val headerClick = onCommunityClick ?: onAuthorClick
+        val headerModifier = if (headerClick != null) {
             Modifier
                 .clip(RoundedCornerShape(50))
-                .clickable(onClick = onAuthorClick)
+                .clickable(onClick = headerClick)
         } else {
             Modifier
         }
 
         Row(
-            modifier = authorModifier,
+            modifier = headerModifier,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Avatar(
-                avatarUrl = post.authorAvatarUrl,
-                name = post.authorName,
+                avatarUrl = if (communityName != null) communityAvatarUrl else post.authorAvatarUrl,
+                name = communityName ?: post.authorName,
                 size = 32.dp,
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                post.authorName.ifBlank { "Unknown" },
+                communityName?.ifBlank { "Community" } ?: post.authorName.ifBlank { "Unknown" },
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.SemiBold,

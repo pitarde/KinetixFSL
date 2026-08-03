@@ -53,6 +53,12 @@ fun CommunityScreen(
     onStartCommunity: () -> Unit = {},
     onDiscoverCommunities: () -> Unit = {},
     modifier: Modifier = Modifier,
+    /**
+     * Opens a community from the home feed. [pinnedPostId] is set when the user
+     * tapped a specific community post — that post is shown at the top of the
+     * community until they refresh.
+     */
+    onOpenCommunity: (communityId: String, pinnedPostId: String?) -> Unit = { _, _ -> },
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -129,13 +135,22 @@ fun CommunityScreen(
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it },
                 onMenuClick = { scope.launch { drawerState.open() } },
-                // Tapping the card or the comment button both land on the
-                // detail screen — the reddit flow.
                 onCommentClick = { post -> overlays.add(CommunityOverlay.Detail(post)) },
-                onPostClick = { post -> overlays.add(CommunityOverlay.Detail(post)) },
+                // Tapping a community post opens that community with the post
+                // pinned to the top; an individual post opens the detail screen.
+                onPostClick = { post ->
+                    if (post.communityId.isNotBlank()) {
+                        onOpenCommunity(post.communityId, post.id)
+                    } else {
+                        overlays.add(CommunityOverlay.Detail(post))
+                    }
+                },
                 onMediaClick = { post -> overlays.add(CommunityOverlay.Immersive(post)) },
                 onEditPost = { post -> overlays.add(CommunityOverlay.Edit(post)) },
                 onAuthorClick = { uid -> overlays.add(CommunityOverlay.Profile(uid)) },
+                // The community badge/header tap just browses the community —
+                // no specific post pinned.
+                onOpenCommunity = { communityId -> onOpenCommunity(communityId, null) },
                 // Anything layered over the feed takes it out of the running
                 // for bandwidth: no autoplay, no prefetch behind the overlay.
                 isFeedActive = overlays.isEmpty(),
@@ -280,6 +295,7 @@ private fun CommunityScaffold(
     onMediaClick: (Post) -> Unit,
     onEditPost: (Post) -> Unit,
     onAuthorClick: (String) -> Unit,
+    onOpenCommunity: (String) -> Unit,
     isFeedActive: Boolean,
     onProfileCommentClick: (com.example.kinetixfsl.community.model.UserComment) -> Unit,
     feedListState: LazyListState,
@@ -304,6 +320,8 @@ private fun CommunityScaffold(
                     onPostClick = onPostClick,
                     onMediaClick = onMediaClick,
                     onAuthorClick = onAuthorClick,
+                    showCommunityBadge = true,
+                    onOpenCommunity = onOpenCommunity,
                     isFeedActive = isFeedActive,
                 )
                 CommunityTab.PROFILE -> CommunityProfileScreen(

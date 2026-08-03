@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.kinetixfsl.community.model.Community
 import com.example.kinetixfsl.community.model.Post
 import com.google.firebase.auth.FirebaseAuth
 import com.example.kinetixfsl.community.model.UserComment
@@ -102,9 +104,10 @@ fun CommunityProfileScreen(
     var editingComment: UserComment? by remember { mutableStateOf(null) }
     var pendingCommentDelete: UserComment? by remember { mutableStateOf(null) }
 
-    // The two header links.
+    // The header links.
     var isContributionsOpen by remember { mutableStateOf(false) }
     var isFollowersOpen by remember { mutableStateOf(false) }
+    var isCommunitiesOpen by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(
@@ -116,6 +119,7 @@ fun CommunityProfileScreen(
                 displayName = state.displayName,
                 avatarUrl = state.avatarUrl,
                 contributions = state.contributions,
+                communityCount = state.myCommunityCount,
                 followerCount = state.followerCount,
                 accountAge = state.accountAge,
                 activeTime = state.activeTime,
@@ -125,7 +129,7 @@ fun CommunityProfileScreen(
                 onContributionsClick = { isContributionsOpen = true },
                 onFollowClick = { viewModel.toggleFollow() },
                 onMessageClick = onMessageClick,
-                onCommunitiesClick = onCommunitiesClick,
+                onCommunitiesClick = { isCommunitiesOpen = true },
             )
 
             ProfileTabs(
@@ -272,6 +276,15 @@ fun CommunityProfileScreen(
             )
         }
 
+        if (isCommunitiesOpen) {
+            MyCommunitiesSheet(
+                communities = state.myCommunities,
+                joinedIds = state.viewerJoinedCommunityIds,
+                onToggleJoin = { viewModel.toggleJoinCommunity(it) },
+                onDismiss = { isCommunitiesOpen = false },
+            )
+        }
+
         if (isFollowersOpen) {
             FollowersScreen(
                 onClose = { isFollowersOpen = false },
@@ -310,6 +323,7 @@ private fun ProfileHeader(
     displayName: String,
     avatarUrl: String?,
     contributions: Int,
+    communityCount: Int,
     followerCount: Long,
     accountAge: String,
     activeTime: String,
@@ -395,10 +409,10 @@ private fun ProfileHeader(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Clickable but inert until communities exist. Account Age and
-            // Active time are read-only by design and stay untappable.
+            // Account Age and Active time are read-only by design and stay
+            // untappable; My Communities and Contributions open a sheet.
             StatPill(
-                "0",
+                "$communityCount",
                 "My Communities",
                 Modifier
                     .weight(1f)
@@ -850,5 +864,157 @@ private fun CountBlock(value: String, label: String, modifier: Modifier = Modifi
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * The communities this profile's user has joined — same bottom-sheet shell as
+ * [ContributionsSheet]. Each row is name + description with a Join/Joined pill
+ * that reflects the *viewer's* membership, so you can join straight from here.
+ */
+@Composable
+private fun MyCommunitiesSheet(
+    communities: List<Community>,
+    joinedIds: Set<String>,
+    onToggleJoin: (Community) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
+            .clickable(onClick = onDismiss),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .clickable(enabled = false) {}
+                .padding(20.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "My Communities",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Communities joined",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = CommunityIcons.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            if (communities.isEmpty()) {
+                Text(
+                    text = "No communities joined yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 12.dp),
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    communities.forEach { community ->
+                        MyCommunityRow(
+                            community = community,
+                            isJoined = community.id in joinedIds,
+                            onToggleJoin = { onToggleJoin(community) },
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun MyCommunityRow(
+    community: Community,
+    isJoined: Boolean,
+    onToggleJoin: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = community.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (community.description.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = community.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        val shape = RoundedCornerShape(50)
+        Box(
+            modifier = Modifier
+                .clip(shape)
+                .then(
+                    if (isJoined) {
+                        Modifier.border(1.dp, MaterialTheme.colorScheme.outline, shape)
+                    } else {
+                        Modifier.background(MaterialTheme.colorScheme.primary)
+                    }
+                )
+                .clickable(onClick = onToggleJoin)
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+        ) {
+            Text(
+                text = if (isJoined) "Joined" else "Join",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (isJoined) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.onPrimary
+                },
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
     }
 }

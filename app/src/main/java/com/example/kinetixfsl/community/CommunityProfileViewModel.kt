@@ -2,6 +2,7 @@ package com.example.kinetixfsl.community
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.kinetixfsl.community.model.Community
 import com.example.kinetixfsl.community.model.FollowUser
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.model.UserComment
@@ -37,6 +38,12 @@ data class CommunityProfileUiState(
     /** Whether the signed-in user already follows the profile being viewed. */
     val isFollowing: Boolean = false,
     val errorMessage: String? = null,
+    /** The communities this profile's user has joined — the "My Communities" sheet. */
+    val myCommunities: List<Community> = emptyList(),
+    /** Count shown on the My Communities stat pill. */
+    val myCommunityCount: Int = 0,
+    /** Which of those the *viewer* has joined — flips each row's Join/Joined. */
+    val viewerJoinedCommunityIds: Set<String> = emptySet(),
 ) {
     /** Posts plus comments — the "Contributions" stat. */
     val contributions: Int get() = posts.size + comments.size
@@ -52,6 +59,7 @@ data class CommunityProfileUiState(
 class CommunityProfileViewModel(
     private val userId: String? = null,
     private val repository: CommunityRepository = CommunityRepository(),
+    private val directory: CommunityDirectoryRepository = CommunityDirectoryRepository(),
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
 ) : ViewModel() {
 
@@ -96,13 +104,51 @@ class CommunityProfileViewModel(
             observePosts(uid)
             observeComments(uid)
             observeProfileDoc(uid)
+            observeViewerJoined()
             if (!isOwn) observeFollowState(uid)
+        }
+    }
+
+    /** The viewer's own joined ids — so each My-Communities row reads Join/Joined. */
+    private fun observeViewerJoined() {
+        directory.observeJoinedCommunityIds()
+            .onEach { ids -> _uiState.update { it.copy(viewerJoinedCommunityIds = ids) } }
+            .catch { }
+            .launchIn(viewModelScope)
+    }
+
+    /** Community ids we've already fetched full docs for, to avoid refetching. */
+    private var lastCommunityIds: List<String> = emptyList()
+
+    private fun loadMyCommunities(ids: List<String>) {
+        if (ids == lastCommunityIds) return
+        lastCommunityIds = ids
+        _uiState.update { it.copy(myCommunityCount = ids.size) }
+        if (ids.isEmpty()) {
+            _uiState.update { it.copy(myCommunities = emptyList()) }
+            return
+        }
+        viewModelScope.launch {
+            val communities = directory.getCommunitiesByIds(ids)
+            _uiState.update { it.copy(myCommunities = communities) }
+        }
+    }
+
+    /** Join or leave a community from the My Communities sheet. */
+    fun toggleJoinCommunity(community: Community) {
+        viewModelScope.launch {
+            if (community.id in _uiState.value.viewerJoinedCommunityIds) {
+                directory.leave(community.id)
+            } else {
+                directory.join(community.id, community.name)
+            }
         }
     }
 
     private fun observeProfileDoc(uid: String) {
         repository.observeUserProfile(uid)
             .onEach { profile ->
+                loadMyCommunities(profile?.joinedCommunityIds ?: emptyList())
                 _uiState.update { state ->
                     state.copy(
                         followerCount = profile?.followerCount ?: 0,

@@ -819,6 +819,8 @@ async function fetchCommunity(communityId, env) {
     categories: readStringArray(f.categories),
     creatorName: readString(f.creatorName) || "Unknown",
     memberCount: readInt(f.memberCount),
+    avatarUrl: readString(f.avatarUrl),
+    bannerUrl: readString(f.bannerUrl),
   };
 }
 
@@ -846,6 +848,16 @@ function renderCommunity(communityId, community, posts) {
     ? `<section class="feed">${posts.map(renderCommunityPost).join("")}</section>`
     : `<p class="empty">No posts in this community yet.</p>`;
 
+  const banner = community.bannerUrl
+    ? `<div class="cbanner"><img src="${esc(throughWorker(community.bannerUrl))}" alt="" /></div>`
+    : "";
+
+  const avatar = community.avatarUrl
+    ? `<img class="cavatar" src="${esc(throughWorker(community.avatarUrl))}" alt="" />`
+    : `<span class="avatar">${esc((community.name[0] || "?").toUpperCase())}</span>`;
+
+  const ogImage = community.bannerUrl || community.avatarUrl;
+
   return page({
     title: `${community.name} — ${APP_NAME}`,
     head: `
@@ -854,7 +866,8 @@ function renderCommunity(communityId, community, posts) {
     <meta property="og:url" content="https://${SHARE_HOST}/c/${encodeURIComponent(communityId)}" />
     <meta property="og:title" content="${esc(community.name)}" />
     <meta property="og:description" content="${esc(description)}" />
-    <meta name="twitter:card" content="summary" />
+    ${ogImage ? `<meta property="og:image" content="${esc(throughWorker(ogImage))}" />` : ""}
+    <meta name="twitter:card" content="${community.bannerUrl ? "summary_large_image" : "summary"}" />
     <meta name="description" content="${esc(description)}" />`,
     body: `
     <header class="bar">
@@ -863,9 +876,10 @@ function renderCommunity(communityId, community, posts) {
       <a class="open" href="${esc(appLink)}">Open in app</a>
     </header>
 
+    ${banner}
     <main class="post">
       <div class="author">
-        <span class="avatar">${esc((community.name[0] || "?").toUpperCase())}</span>
+        ${avatar}
         <span class="name">${esc(community.name)}</span>
         <span class="joinbtn" role="button" tabindex="0" aria-label="Join">Join</span>
       </div>
@@ -1203,6 +1217,12 @@ ${head}
   .counts {
     display: flex; gap: 16px; margin-top: 16px;
     color: var(--muted); font-size: 14px;
+  }
+  .cbanner { width: 100%; max-height: 200px; overflow: hidden; }
+  .cbanner img { width: 100%; height: 100%; max-height: 200px; object-fit: cover; display: block; }
+  .cavatar {
+    width: 40px; height: 40px; border-radius: 50%; object-fit: cover;
+    border: 1px solid var(--outline);
   }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
   .chip {

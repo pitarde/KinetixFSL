@@ -43,6 +43,18 @@ service cloud.firestore {
            == request.auth.uid;
     }
 
+    // True when the signed-in user created the community with this id. Used so a
+    // community's creator can delete member posts when deleting the community.
+    // Guarded with exists() so a blank id or an already-deleted community is
+    // simply false rather than an evaluation error.
+    function isCommunityCreator(database, communityId) {
+      return request.auth != null
+        && communityId is string && communityId != ''
+        && exists(/databases/$(database)/documents/communities/$(communityId))
+        && get(/databases/$(database)/documents/communities/$(communityId)).data.creatorId
+           == request.auth.uid;
+    }
+
     // A post either targets no community, or the author must have joined the one
     // it targets — so a community's feed can only ever hold its members' posts.
     function postCommunityAllowed() {
@@ -66,8 +78,11 @@ service cloud.firestore {
                     && (resource.data.authorId == request.auth.uid
                         || onlyCounterFieldsChanged());
 
+      // The author deletes their own post; the community's creator may also
+      // delete any post in their community (used when deleting the community).
       allow delete: if request.auth != null
-                    && resource.data.authorId == request.auth.uid;
+                    && (resource.data.authorId == request.auth.uid
+                        || isCommunityCreator(database, resource.data.get('communityId', '')));
 
       // One vote document per user, named with their uid.
       //

@@ -12,8 +12,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -55,6 +58,7 @@ import com.example.kinetixfsl.community.PostDetailScreen
 import com.example.kinetixfsl.community.ShareLinks
 import com.example.kinetixfsl.community.SharedPostScreen
 import com.example.kinetixfsl.community.model.Community
+import com.example.kinetixfsl.community.model.CommunityCategories
 import com.example.kinetixfsl.community.model.Post
 
 /**
@@ -78,21 +82,55 @@ fun CommunityHomeScreen(
     communityId: String,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * A post to show at the top on entry — set when the user arrived by tapping
+     * this post in the home feed. Refreshing the feed returns to hot order.
+     */
+    pinnedPostId: String? = null,
 ) {
     val viewModel = remember(communityId) { CommunityHomeViewModel(communityId) }
     val community by viewModel.community.collectAsStateWithLifecycle()
     val isAdmin by viewModel.isAdmin.collectAsStateWithLifecycle()
     val isMember by viewModel.isMember.collectAsStateWithLifecycle()
+    val uploading by viewModel.uploading.collectAsStateWithLifecycle()
+    val editError by viewModel.editError.collectAsStateWithLifecycle()
+    val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     fun placeholder(label: String) {
         android.widget.Toast.makeText(context, "$label — coming soon", android.widget.Toast.LENGTH_SHORT).show()
     }
 
+    // Sheets driven from the header and the 3-dot menu.
+    var showAddCategory by remember { mutableStateOf(false) }
+    var showOptions by remember { mutableStateOf(false) }
+    var showEdit by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
+    // The photo the user picked, waiting to be cropped before upload.
+    var cropRequest by remember { mutableStateOf<CropRequest?>(null) }
+
+    // System photo pickers for the banner and profile picture. On pick, hand
+    // off to the cropper rather than uploading straight away.
+    val bannerPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { uri: android.net.Uri? -> uri?.let { cropRequest = CropRequest(it, forBanner = true) } }
+    val avatarPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { uri: android.net.Uri? -> uri?.let { cropRequest = CropRequest(it, forBanner = false) } }
+
+    androidx.compose.runtime.LaunchedEffect(editError) {
+        val message = editError ?: return@LaunchedEffect
+        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+        viewModel.clearEditError()
+    }
+
     // Feed + overlay plumbing, mirroring CommunityScreen so posts stay fully
     // interactive (tap → detail, media → immersive, author → profile). Scoped
     // to this community, so the feed shows only its posts, ranked by vote score.
-    val feedViewModel = remember(communityId) { CommunityFeedViewModel(communityId = communityId) }
+    val feedViewModel = remember(communityId, pinnedPostId) {
+        CommunityFeedViewModel(communityId = communityId, pinnedPostId = pinnedPostId)
+    }
     val feedState by feedViewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by feedViewModel.userVotes.collectAsStateWithLifecycle()
     val searchQuery by feedViewModel.searchQuery.collectAsStateWithLifecycle()
@@ -139,7 +177,7 @@ fun CommunityHomeScreen(
                 onShare = {
                     community?.let { shareCommunity(context, it.id, it.name) }
                 },
-                onMenu = { placeholder("Menu") },
+                onMenu = { showOptions = true },
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -162,7 +200,7 @@ fun CommunityHomeScreen(
                 CategoryStrip(
                     categories = current.categories,
                     isAdmin = isAdmin,
-                    onAdd = { placeholder("Add category") },
+                    onAdd = { showAddCategory = true },
                     onRemove = viewModel::removeCategory,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -181,6 +219,69 @@ fun CommunityHomeScreen(
                     showSearchBar = false,
                 )
             }
+        }
+
+        // ---- Admin sheets ----
+        val loaded = community
+        if (showAddCategory && loaded != null) {
+            AddCategorySheet(
+                current = loaded.categories,
+                onPick = { category ->
+                    viewModel.addCategory(category)
+                    showAddCategory = false
+                },
+                onDismiss = { showAddCategory = false },
+            )
+        }
+
+        if (showOptions) {
+            CommunityOptionsSheet(
+                isAdmin = isAdmin,
+                onEdit = {
+                    showOptions = false
+                    showEdit = true
+                },
+                onShare = {
+                    showOptions = false
+                    loaded?.let { shareCommunity(context, it.id, it.name) }
+                },
+                onDelete = {
+                    showOptions = false
+                    showDeleteConfirm = true
+                },
+                onDismiss = { showOptions = false },
+            )
+        }
+
+        if (showDeleteConfirm && loaded != null) {
+            DeleteCommunityDialog(
+                communityName = loaded.name,
+                isDeleting = isDeleting,
+                onConfirm = { viewModel.deleteCommunity(onDeleted = onClose) },
+                onDismiss = { if (!isDeleting) showDeleteConfirm = false },
+            )
+        }
+
+        if (showEdit && loaded != null) {
+            EditCommunitySheet(
+                community = loaded,
+                uploading = uploading,
+                onChangeBanner = {
+                    bannerPicker.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                        ),
+                    )
+                },
+                onChangeAvatar = {
+                    avatarPicker.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                        ),
+                    )
+                },
+                onDismiss = { showEdit = false },
+            )
         }
 
         // Overlays, drawn bottom-first; back pops exactly one.
@@ -279,8 +380,27 @@ fun CommunityHomeScreen(
                 }
             }
         }
+
+        // The photo cropper sits over everything while it's open.
+        cropRequest?.let { req ->
+            ImageCropScreen(
+                imageUri = req.uri,
+                aspectRatio = if (req.forBanner) 3f else 1f,
+                title = if (req.forBanner) "Crop banner" else "Crop profile picture",
+                outputWidth = if (req.forBanner) 1440 else 640,
+                circle = !req.forBanner,
+                onCancel = { cropRequest = null },
+                onDone = { bitmap ->
+                    if (req.forBanner) viewModel.updateBanner(bitmap) else viewModel.updateAvatar(bitmap)
+                    cropRequest = null
+                },
+            )
+        }
     }
 }
+
+/** A picked photo waiting to be cropped, and which slot it's for. */
+private data class CropRequest(val uri: android.net.Uri, val forBanner: Boolean)
 
 // ---------------------------------------------------------------------------
 // Top bar
@@ -409,44 +529,62 @@ private fun CommunityHeader(
 ) {
     var expanded by remember { mutableStateOf(false) }
 
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = CommunityIcons.Profile,
+    Column {
+        // ---- Banner: the community's image, or a plain colored strip ----
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(120.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        ) {
+            if (!community.bannerUrl.isNullOrBlank()) {
+                coil.compose.AsyncImage(
+                    model = community.bannerUrl,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(30.dp),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
                 )
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = community.name,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    text = "${community.memberCount} " +
-                        if (community.memberCount == 1L) "member" else "members",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            // The admin is always a member and can't leave their own community,
-            // so the toggle is only shown to everyone else.
-            if (!isAdmin) {
-                Spacer(Modifier.width(12.dp))
-                JoinButton(isMember = isMember, onJoin = onJoin, onLeave = onLeave)
             }
         }
+
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Community profile picture (falls back to a letter avatar).
+                com.example.kinetixfsl.community.Avatar(
+                    avatarUrl = community.avatarUrl,
+                    name = community.name,
+                    size = 56.dp,
+                )
+                Spacer(Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = community.name,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        text = "${community.memberCount} " +
+                            if (community.memberCount == 1L) "member" else "members",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (community.creatorName.isNotBlank()) {
+                        Text(
+                            text = "Created by ${community.creatorName}" +
+                                if (isAdmin) " (you)" else "",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                // The admin is always a member and can't leave their own
+                // community, so the toggle is only shown to everyone else.
+                if (!isAdmin) {
+                    Spacer(Modifier.width(12.dp))
+                    JoinButton(isMember = isMember, onJoin = onJoin, onLeave = onLeave)
+                }
+            }
 
         if (community.description.isNotBlank()) {
             Spacer(Modifier.height(10.dp))
@@ -469,6 +607,7 @@ private fun CommunityHeader(
                         .clickable { expanded = !expanded },
                 )
             }
+        }
         }
     }
 }
@@ -648,6 +787,393 @@ private fun JoinButton(
                 fontWeight = FontWeight.SemiBold,
             )
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Admin sheets: options menu, add category, edit banner/profile
+// ---------------------------------------------------------------------------
+
+/** Shared bottom-sheet shell with a dimmed backdrop and a title row. */
+@Composable
+private fun BottomSheet(
+    title: String,
+    subtitle: String?,
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
+            .clickable(onClick = onDismiss),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .clickable(enabled = false) {}
+                .navigationBarsPadding()
+                .padding(20.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    if (subtitle != null) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = CommunityIcons.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            content()
+        }
+    }
+}
+
+/** The 3-dot menu's options. Edit and Delete are admin-only. */
+@Composable
+private fun CommunityOptionsSheet(
+    isAdmin: Boolean,
+    onEdit: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    BottomSheet(title = "Community", subtitle = null, onDismiss = onDismiss) {
+        Column {
+            if (isAdmin) {
+                OptionRow(icon = CommunityIcons.EditPost, label = "Edit community", onClick = onEdit)
+            }
+            OptionRow(icon = CommunityIcons.Share, label = "Share community", onClick = onShare)
+            if (isAdmin) {
+                OptionRow(
+                    icon = CommunityIcons.Delete,
+                    label = "Delete community",
+                    onClick = onDelete,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OptionRow(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    tint: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = tint,
+        )
+    }
+}
+
+/**
+ * Confirms deleting the whole community. To avoid an accidental tap wiping
+ * everything, Delete only lights up once the creator has typed the exact
+ * community name.
+ */
+@Composable
+private fun DeleteCommunityDialog(
+    communityName: String,
+    isDeleting: Boolean,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var typed by remember { mutableStateOf("") }
+    val canDelete = typed.trim() == communityName.trim() && !isDeleting
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Delete community?",
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "This permanently deletes \"$communityName\" and every post in it — " +
+                        "from all members. This can't be undone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "Type the community name to confirm:",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                ) {
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = typed,
+                        onValueChange = { if (!isDeleting) typed = it },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.fillMaxWidth(),
+                        decorationBox = { inner ->
+                            if (typed.isEmpty()) {
+                                Text(
+                                    text = communityName,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            inner()
+                        },
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(
+                onClick = onConfirm,
+                enabled = canDelete,
+            ) {
+                if (isDeleting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else {
+                    Text(
+                        text = "Delete",
+                        color = if (canDelete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss, enabled = !isDeleting) {
+                Text("Cancel", color = MaterialTheme.colorScheme.onSurface)
+            }
+        },
+    )
+}
+
+/** Lets the admin add a category the community doesn't already carry. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AddCategorySheet(
+    current: List<String>,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val available = CommunityCategories.ALL.filter { it !in current }
+    BottomSheet(
+        title = "Add a category",
+        subtitle = "Tap one to file this community under it",
+        onDismiss = onDismiss,
+    ) {
+        if (available.isEmpty()) {
+            Text(
+                text = "This community is already in every category.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+        } else {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                available.forEach { category ->
+                    val shape = RoundedCornerShape(50)
+                    Box(
+                        modifier = Modifier
+                            .clip(shape)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+                            .clickable { onPick(category) }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            text = category,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The Reddit-style editor: change the wide banner and the round profile picture,
+ * both imported from the device. Each change uploads and saves immediately, so
+ * the header updates live behind the sheet.
+ */
+@Composable
+private fun EditCommunitySheet(
+    community: Community,
+    uploading: CommunityHomeViewModel.Uploading,
+    onChangeBanner: () -> Unit,
+    onChangeAvatar: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    BottomSheet(
+        title = "Edit community",
+        subtitle = "Banner and profile picture",
+        onDismiss = onDismiss,
+    ) {
+        Column {
+            // ---- Banner ----
+            Text(
+                text = "Banner image",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(120.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable(enabled = uploading == CommunityHomeViewModel.Uploading.NONE, onClick = onChangeBanner),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (!community.bannerUrl.isNullOrBlank()) {
+                    coil.compose.AsyncImage(
+                        model = community.bannerUrl,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                if (uploading == CommunityHomeViewModel.Uploading.BANNER) {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                } else {
+                    EditBadge("Change banner")
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // ---- Profile picture ----
+            Text(
+                text = "Profile picture",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(contentAlignment = Alignment.Center) {
+                    com.example.kinetixfsl.community.Avatar(
+                        avatarUrl = community.avatarUrl,
+                        name = community.name,
+                        size = 64.dp,
+                    )
+                    if (uploading == CommunityHomeViewModel.Uploading.AVATAR) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                }
+                Spacer(Modifier.width(16.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
+                        .clickable(enabled = uploading == CommunityHomeViewModel.Uploading.NONE, onClick = onChangeAvatar)
+                        .padding(horizontal = 18.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = "Change profile",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun EditBadge(label: String) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f))
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = CommunityIcons.EditPost,
+            contentDescription = null,
+            tint = androidx.compose.ui.graphics.Color.White,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = androidx.compose.ui.graphics.Color.White,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 

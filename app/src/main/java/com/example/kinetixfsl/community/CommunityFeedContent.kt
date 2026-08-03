@@ -93,6 +93,13 @@ fun CommunityFeedContent(
      * doesn't need one, so its host passes false to hide it.
      */
     showSearchBar: Boolean = true,
+    /**
+     * True in the Home Feed: community posts show the community name and a Join
+     * pill. A community's own feed passes false — it's already that community.
+     */
+    showCommunityBadge: Boolean = false,
+    /** Opens a community from a home-feed post's community header. */
+    onOpenCommunity: (communityId: String) -> Unit = {},
 ) {
     val state by viewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
@@ -100,6 +107,9 @@ fun CommunityFeedContent(
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val actionError by viewModel.actionError.collectAsStateWithLifecycle()
+    val joinedCommunityIds by viewModel.joinedCommunityIds.collectAsStateWithLifecycle()
+    val communityAvatars by viewModel.communityAvatars.collectAsStateWithLifecycle()
+    val ownedCommunityIds by viewModel.ownedCommunityIds.collectAsStateWithLifecycle()
 
     LaunchedEffect(actionError) {
         val message = actionError ?: return@LaunchedEffect
@@ -202,6 +212,31 @@ fun CommunityFeedContent(
                                     // following happens from a user's profile,
                                     // so a second control here is redundant.
                                     onToggleFollow = null,
+                                    // In the home feed a community post advertises
+                                    // its community: the header becomes the
+                                    // community, with a Join pill beside it.
+                                    communityName = if (showCommunityBadge && post.communityId.isNotBlank()) {
+                                        post.communityName.ifBlank { "Community" }
+                                    } else {
+                                        null
+                                    },
+                                    communityAvatarUrl = communityAvatars[post.communityId],
+                                    isCommunityJoined = post.communityId in joinedCommunityIds,
+                                    // No Join pill on your own community's posts —
+                                    // you can't join a community you created.
+                                    onToggleJoinCommunity = if (showCommunityBadge &&
+                                        post.communityId.isNotBlank() &&
+                                        post.communityId !in ownedCommunityIds
+                                    ) {
+                                        { viewModel.toggleJoinCommunity(post) }
+                                    } else {
+                                        null
+                                    },
+                                    onCommunityClick = if (showCommunityBadge && post.communityId.isNotBlank()) {
+                                        { onOpenCommunity(post.communityId) }
+                                    } else {
+                                        null
+                                    },
                                     onClick = { onPostClick(post) },
                                 )
                                 HorizontalDivider(
@@ -415,6 +450,15 @@ internal fun PostCard(
     /** Null on your own posts — you can't follow yourself. */
     onToggleFollow: (() -> Unit)? = null,
     isFollowing: Boolean = false,
+    /**
+     * When set, the card shows this community in place of the author and a Join
+     * pill — the home feed uses it so community posts advertise the community.
+     */
+    communityName: String? = null,
+    communityAvatarUrl: String? = null,
+    isCommunityJoined: Boolean = false,
+    onToggleJoinCommunity: (() -> Unit)? = null,
+    onCommunityClick: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
@@ -423,12 +467,20 @@ internal fun PostCard(
         PostAuthorRow(
             post = post,
             onAuthorClick = onAuthorClick,
-            trailing = if (onToggleFollow == null && onMenuClick == null) {
+            communityName = communityName,
+            communityAvatarUrl = communityAvatarUrl,
+            onCommunityClick = onCommunityClick,
+            trailing = if (onToggleFollow == null && onMenuClick == null && onToggleJoinCommunity == null) {
                 null
             } else {
                 {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (onToggleFollow != null) {
+                        if (onToggleJoinCommunity != null) {
+                            JoinPill(
+                                isJoined = isCommunityJoined,
+                                onClick = onToggleJoinCommunity,
+                            )
+                        } else if (onToggleFollow != null) {
                             FollowPill(
                                 isFollowing = isFollowing,
                                 onClick = onToggleFollow,
@@ -527,6 +579,39 @@ private fun FollowPill(
             text = if (isFollowing) "Followed" else "Follow",
             style = MaterialTheme.typography.labelMedium,
             color = if (isFollowing) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onPrimary
+            },
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+/** "Join" / "Joined" for a community post's header in the home feed. */
+@Composable
+private fun JoinPill(
+    isJoined: Boolean,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .then(
+                if (isJoined) {
+                    Modifier.border(1.dp, MaterialTheme.colorScheme.outline, shape)
+                } else {
+                    Modifier.background(MaterialTheme.colorScheme.primary)
+                }
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 5.dp),
+    ) {
+        Text(
+            text = if (isJoined) "Joined" else "Join",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (isJoined) {
                 MaterialTheme.colorScheme.onSurfaceVariant
             } else {
                 MaterialTheme.colorScheme.onPrimary

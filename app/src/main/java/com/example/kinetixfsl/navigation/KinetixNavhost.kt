@@ -73,8 +73,12 @@ object Route {
 
     private const val COMMUNITY_HOME_BASE = "community_home"
     const val COMMUNITY_HOME_ARG = "communityId"
-    const val COMMUNITY_HOME_PATTERN = "$COMMUNITY_HOME_BASE/{$COMMUNITY_HOME_ARG}"
-    fun communityHome(communityId: String): String = "$COMMUNITY_HOME_BASE/$communityId"
+    const val COMMUNITY_HOME_PINNED_ARG = "pinned"
+    const val COMMUNITY_HOME_PATTERN =
+        "$COMMUNITY_HOME_BASE/{$COMMUNITY_HOME_ARG}?$COMMUNITY_HOME_PINNED_ARG={$COMMUNITY_HOME_PINNED_ARG}"
+    fun communityHome(communityId: String, pinnedPostId: String? = null): String =
+        "$COMMUNITY_HOME_BASE/$communityId" +
+            (pinnedPostId?.let { "?$COMMUNITY_HOME_PINNED_ARG=$it" } ?: "")
 
     private const val COMMUNITY_CATEGORY_BASE = "community_category"
     const val COMMUNITY_CATEGORY_ARG = "category"
@@ -437,6 +441,9 @@ fun KinetixNavHost(
                 onDiscoverCommunities = {
                     navController.navigate(Route.DISCOVER_COMMUNITIES)
                 },
+                onOpenCommunity = { communityId, pinnedPostId ->
+                    navController.navigate(Route.communityHome(communityId, pinnedPostId))
+                },
             )
         }
 
@@ -511,16 +518,25 @@ fun KinetixNavHost(
         // ---- A single community's home (admin or visitor) ----
         composable(
             route = Route.COMMUNITY_HOME_PATTERN,
-            arguments = listOf(navArgument(Route.COMMUNITY_HOME_ARG) { type = NavType.StringType }),
+            arguments = listOf(
+                navArgument(Route.COMMUNITY_HOME_ARG) { type = NavType.StringType },
+                navArgument(Route.COMMUNITY_HOME_PINNED_ARG) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
             enterTransition = { fadeIn(tween(200)) },
             exitTransition = { fadeOut(tween(200)) },
             popEnterTransition = { fadeIn(tween(200)) },
             popExitTransition = { fadeOut(tween(200)) },
         ) { backStackEntry ->
             val communityId = backStackEntry.arguments?.getString(Route.COMMUNITY_HOME_ARG).orEmpty()
+            val pinnedPostId = backStackEntry.arguments?.getString(Route.COMMUNITY_HOME_PINNED_ARG)
             CommunityHomeScreen(
                 communityId = communityId,
                 onClose = { navController.popBackStack() },
+                pinnedPostId = pinnedPostId,
             )
         }
 

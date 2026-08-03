@@ -82,12 +82,22 @@ class CommunityDirectoryRepository(
         val myName = me.displayName?.takeIf { it.isNotBlank() }
             ?: me.email?.substringBefore('@') ?: "Anonymous"
 
+        val myProfileRef = firestore.collection(USERS).document(me.uid)
+
         return try {
             firestore.runTransaction { tx ->
                 if (tx.get(memberRef).exists()) return@runTransaction
                 tx.set(memberRef, mapOf("displayName" to myName, "joinedAt" to Timestamp.now()))
                 tx.set(joinedRef, mapOf("name" to communityName, "joinedAt" to Timestamp.now()))
                 tx.set(communityRef, mapOf("memberCount" to FieldValue.increment(1)), SetOptions.merge())
+                // Mirrored onto the (public) profile doc so anyone can see which
+                // communities a user has joined — the private subcollection
+                // above is only readable by the user themselves.
+                tx.set(
+                    myProfileRef,
+                    mapOf("joinedCommunityIds" to FieldValue.arrayUnion(communityId)),
+                    SetOptions.merge(),
+                )
             }.await()
             Result.success(Unit)
         } catch (e: Exception) {
@@ -102,6 +112,7 @@ class CommunityDirectoryRepository(
         val memberRef = communityRef.collection(MEMBERS).document(me.uid)
         val joinedRef = firestore.collection(USERS).document(me.uid)
             .collection(JOINED).document(communityId)
+        val myProfileRef = firestore.collection(USERS).document(me.uid)
 
         return try {
             firestore.runTransaction { tx ->
@@ -109,10 +120,59 @@ class CommunityDirectoryRepository(
                 tx.delete(memberRef)
                 tx.delete(joinedRef)
                 tx.set(communityRef, mapOf("memberCount" to FieldValue.increment(-1)), SetOptions.merge())
+                tx.set(
+                    myProfileRef,
+                    mapOf("joinedCommunityIds" to FieldValue.arrayRemove(communityId)),
+                    SetOptions.merge(),
+                )
             }.await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Deletes the community document and the creator's own joined markers. The
+     * member *posts* are removed separately (see the ViewModel) because they
+     * live in the top-level `posts` collection.
+     *
+     * The member roster (`members` subcollection) is intentionally left behind:
+     * once the community document is gone nothing ever reads it, so those
+     * markers are harmless orphans — and deleting them in bulk would blow the
+     * per-request budget in the security rules. Creator-only, enforced by rules.
+     */
+    suspend fun deleteCommunity(communityId: String): Result<Unit> {
+        val me = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
+        val communityRef = firestore.collection(COMMUNITIES).document(communityId)
+        return try {
+            // Best-effort: drop it from the creator's own joined list.
+            try {
+                firestore.collection(USERS).document(me.uid)
+                    .collection(JOINED).document(communityId).delete().await()
+                firestore.collection(USERS).document(me.uid)
+                    .set(
+                        mapOf("joinedCommunityIds" to FieldValue.arrayRemove(communityId)),
+                        SetOptions.merge(),
+                    ).await()
+            } catch (_: Exception) { /* dangling markers are harmless */ }
+
+            communityRef.delete().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Fetches full community docs for a set of ids — backs the profile's
+     *  "My Communities" sheet, where names and descriptions are needed. */
+    suspend fun getCommunitiesByIds(ids: List<String>): List<Community> {
+        return ids.distinct().mapNotNull { id ->
+            try {
+                firestore.collection(COMMUNITIES).document(id).get().await().toCommunityOrNull()
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 
@@ -189,6 +249,30 @@ class CommunityDirectoryRepository(
         firestore.collection(COMMUNITIES).document(communityId)
             .set(mapOf("categories" to FieldValue.arrayUnion(category)), SetOptions.merge())
             .await()
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
+    /**
+     * Updates the community's profile picture and/or banner. Only the fields
+     * passed non-null are written, so changing one leaves the other alone.
+     * Admin-only, enforced by rules (only the creator may edit the document).
+     */
+    suspend fun updateCommunityImages(
+        communityId: String,
+        avatarUrl: String? = null,
+        bannerUrl: String? = null,
+    ): Result<Unit> = try {
+        val fields = buildMap {
+            avatarUrl?.let { put("avatarUrl", it) }
+            bannerUrl?.let { put("bannerUrl", it) }
+        }
+        if (fields.isNotEmpty()) {
+            firestore.collection(COMMUNITIES).document(communityId)
+                .set(fields, SetOptions.merge())
+                .await()
+        }
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)

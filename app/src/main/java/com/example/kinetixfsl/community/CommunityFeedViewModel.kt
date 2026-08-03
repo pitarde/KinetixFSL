@@ -14,7 +14,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.log10
+import kotlin.math.max
 
 sealed interface FeedState {
     data object Loading : FeedState
@@ -24,15 +28,76 @@ sealed interface FeedState {
 
 class CommunityFeedViewModel(
     private val repository: CommunityRepository = CommunityRepository(),
+    private val directory: CommunityDirectoryRepository = CommunityDirectoryRepository(),
     /**
      * Non-null makes this a single community's feed: posts are drawn from that
      * community only and ranked by vote score, re-ranking live as votes change.
-     * Null is the Home Feed — every post that belongs to no community, shuffled.
+     * Null is the Home Feed — every post, individual and community alike, so a
+     * community's posts surface to everyone and help the community get noticed.
      */
     private val communityId: String? = null,
+    /**
+     * A post to float to the very top of this community's feed on entry — set
+     * when the user opened the community by tapping that post in the home feed,
+     * so it's the first thing they see. Cleared on the first refresh, which
+     * returns the feed to its normal hot-score order.
+     */
+    private val pinnedPostId: String? = null,
 ) : ViewModel() {
 
-    private val isCommunityFeed: Boolean get() = communityId != null
+    /** True until the first refresh clears the pinned post (see [pinnedPostId]). */
+    private var pinActive: Boolean = pinnedPostId != null
+
+    /** Communities the signed-in user has joined — drives each card's Join pill. */
+    val joinedCommunityIds: StateFlow<Set<String>> =
+        directory.observeJoinedCommunityIds()
+            .catch { emit(emptySet()) }
+            .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    private val currentUid: String? =
+        com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+
+    /**
+     * Community id → its profile picture URL, for the community header a
+     * community post shows in the home feed. Posts don't carry the community's
+     * avatar (it can change after posting), so it's looked up here and cached.
+     */
+    private val _communityAvatars = MutableStateFlow<Map<String, String?>>(emptyMap())
+    val communityAvatars: StateFlow<Map<String, String?>> = _communityAvatars.asStateFlow()
+    private val fetchedCommunityIds = mutableSetOf<String>()
+
+    /** Communities the viewer created — their posts show no Join pill (you can't
+     *  join your own community). */
+    private val _ownedCommunityIds = MutableStateFlow<Set<String>>(emptySet())
+    val ownedCommunityIds: StateFlow<Set<String>> = _ownedCommunityIds.asStateFlow()
+
+    private fun prefetchCommunityAvatars(posts: List<Post>) {
+        val ids = posts
+            .map { it.communityId }
+            .filter { it.isNotBlank() && fetchedCommunityIds.add(it) }
+            .distinct()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            val communities = directory.getCommunitiesByIds(ids)
+            val avatars = communities.associate { it.id to it.avatarUrl }
+            val owned = communities.filter { it.creatorId == currentUid }.map { it.id }.toSet()
+            if (avatars.isNotEmpty()) _communityAvatars.value = _communityAvatars.value + avatars
+            if (owned.isNotEmpty()) _ownedCommunityIds.value = _ownedCommunityIds.value + owned
+        }
+    }
+
+    /** Join or leave the community a home-feed post belongs to. */
+    fun toggleJoinCommunity(post: Post) {
+        val cid = post.communityId
+        if (cid.isBlank()) return
+        viewModelScope.launch {
+            if (cid in joinedCommunityIds.value) {
+                directory.leave(cid)
+            } else {
+                directory.join(cid, post.communityName)
+            }
+        }
+    }
 
     private val _feedState = MutableStateFlow<FeedState>(FeedState.Loading)
     val feedState: StateFlow<FeedState> = _feedState.asStateFlow()
@@ -60,19 +125,11 @@ class CommunityFeedViewModel(
     private var allPosts: List<Post> = emptyList()
 
     /**
-     * When true, the next snapshot will reorder posts and lock the order.
-     * When false, incoming posts are re-sorted to match the existing
-     * [displayOrder], so count updates don't cause the feed to jump.
+     * When true, the next snapshot re-ranks by hot score and locks the order.
+     * When false, incoming posts reuse the existing [displayOrder], so vote
+     * updates don't make the feed jump. Set true on first load and refresh.
      */
     private var shouldReorder = true
-
-    /**
-     * When true, the next reorder uses random shuffle.
-     * When false, the next reorder uses newest-first.
-     * Refresh always sets this to true (shuffle). New-post detection always
-     * uses newest-first so the new post appears at the top without refreshing.
-     */
-    private var nextOrderIsRandom = false
 
     /** Author ids the signed-in user follows. */
     private val _followingIds = MutableStateFlow<Set<String>>(emptySet())
@@ -155,56 +212,68 @@ class CommunityFeedViewModel(
     }
 
     /**
-     * Feed ordering logic:
+     * Feed ordering: Reddit's "Hot" ranking (see [hotScore]).
      *
-     * - First load: newest-first so new posts are visible immediately.
-     * - New post arrives (ID set changes): newest-first so the new post
-     *   appears at the top *without* the user having to refresh.
-     * - Pull-to-refresh: always shuffles randomly to balance old and new.
-     * - Vote/share/comment count update (same IDs): preserve current order.
+     * The order is recomputed from raw data — vote score plus post age — so:
+     *
+     * - First load, pull-to-refresh, or a post added/removed → re-rank by hot
+     *   score. On refresh this naturally reshuffles, because time has moved and
+     *   votes have changed since last time; a brand-new post ranks near the top
+     *   on its recency. No stored order, no special "refresh logic" needed.
+     * - Vote/share/comment update on the same set of posts → keep the current
+     *   order, so the feed doesn't jump under the reader mid-scroll. Reddit
+     *   re-ranks a loaded page on refresh, not on every incoming vote.
+     *
+     * Home and community feeds share this — the only difference is the candidate
+     * pool the snapshot was drawn from (everything vs one community's posts).
      */
     private fun applyPosts(incoming: List<Post>) {
-        // A community feed is ranked purely by vote score and re-ranks on every
-        // snapshot, so a vote immediately moves a post up or down — which is the
-        // dynamic ordering a community is meant to have. The Home Feed instead
-        // shows only posts that belong to no community, in its shuffled order.
-        if (isCommunityFeed) {
-            allPosts = incoming
-            displayOrder = incoming
-                .sortedWith(compareByDescending<Post> { it.score }.thenByDescending { it.createdAt })
-                .map { it.id }
-            emitFiltered()
-            prefetchVotes(incoming)
-            return
-        }
+        allPosts = incoming
 
-        val homePosts = incoming.filter { it.communityId.isBlank() }
-        allPosts = homePosts
-
-        val incomingIds = homePosts.map { it.id }.toSet()
+        val incomingIds = incoming.map { it.id }.toSet()
         val currentIds = displayOrder.toSet()
         val idsChanged = incomingIds != currentIds
 
-        if (shouldReorder) {
-            // Explicit refresh — always shuffle randomly.
-            if (nextOrderIsRandom) {
-                val shuffled = homePosts.shuffled()
-                displayOrder = shuffled.map { it.id }
+        if (shouldReorder || idsChanged) {
+            val sorted = incoming.sortedByDescending { hotScore(it) }
+            // A post the user tapped in the home feed is floated to the top so
+            // they land on it straight away; refresh clears the pin (below).
+            val ordered = if (pinActive && pinnedPostId != null) {
+                val pinned = sorted.firstOrNull { it.id == pinnedPostId }
+                if (pinned != null) listOf(pinned) + sorted.filterNot { it.id == pinnedPostId } else sorted
             } else {
-                val sorted = homePosts.sortedByDescending { it.createdAt }
-                displayOrder = sorted.map { it.id }
+                sorted
             }
+            displayOrder = ordered.map { it.id }
             shouldReorder = false
-        } else if (idsChanged) {
-            // A post was added or deleted — show newest first so the
-            // new post appears at the top automatically.
-            val sorted = homePosts.sortedByDescending { it.createdAt }
-            displayOrder = sorted.map { it.id }
         }
-        // Otherwise: same IDs, just count updates — keep current order.
+        // Otherwise: same posts, only counts changed — hold the order steady.
 
         emitFiltered()
-        prefetchVotes(homePosts)
+        prefetchVotes(incoming)
+        prefetchCommunityAvatars(incoming)
+    }
+
+    /**
+     * Reddit's open-sourced "Hot" score, adapted for up/down votes:
+     *
+     *   sign · log10(max(|score|, 1)) + createdAtSeconds / 45000
+     *
+     * The log makes a post's first few votes count for far more than later ones
+     * (1→10 ≈ 10→100 ≈ 100→1000). The time term lifts the baseline by a fixed
+     * amount every ~12.5 hours, so newer posts outrank older ones at equal
+     * votes and old posts sink even while slowly gaining votes.
+     */
+    private fun hotScore(post: Post): Double {
+        val s = post.score
+        val order = log10(max(abs(s), 1L).toDouble())
+        val sign = when {
+            s > 0L -> 1.0
+            s < 0L -> -1.0
+            else -> 0.0
+        }
+        val seconds = post.createdAt?.seconds ?: 0L
+        return sign * order + seconds / 45000.0
     }
 
     /**
@@ -225,19 +294,9 @@ class CommunityFeedViewModel(
             }
         }
 
-        // Posts from people you follow float to the top, keeping their relative
-        // order underneath. partition is stable, so the shuffle or newest-first
-        // ordering computed above still holds within each group. A community
-        // feed skips this — its ranking is by score alone, nothing jumps ahead.
-        val following = _followingIds.value
-        val prioritised = if (isCommunityFeed || following.isEmpty()) {
-            filtered
-        } else {
-            val (followed, rest) = filtered.partition { it.authorId in following }
-            followed + rest
-        }
-
-        _feedState.value = FeedState.Success(prioritised)
+        // Ranking is the hot score alone — nothing jumps the queue. Following
+        // someone widens the candidate pool elsewhere; it doesn't reorder here.
+        _feedState.value = FeedState.Success(filtered)
     }
 
     /**
@@ -266,9 +325,9 @@ class CommunityFeedViewModel(
     }
 
     /**
-     * Pull-to-refresh. Always shuffles the feed randomly to balance
-     * old and new posts. New posts that arrive between refreshes
-     * automatically go to the top without needing a refresh.
+     * Pull-to-refresh. Re-ranks by hot score against current votes and the
+     * current time, so the order naturally changes since the last refresh —
+     * older posts having decayed, vote counts having moved.
      */
     fun refresh() {
         viewModelScope.launch {
@@ -277,7 +336,9 @@ class CommunityFeedViewModel(
             feedJob?.cancel()
             feedJob = null
             shouldReorder = true
-            nextOrderIsRandom = true
+            // Back to the normal hot-score order — the tapped post is no longer
+            // held at the top once the user refreshes.
+            pinActive = false
 
             observeFeed()
 
