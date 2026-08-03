@@ -161,8 +161,10 @@ service cloud.firestore {
     }
 
     match /communities/{communityId} {
-      // Any signed-in user may browse communities in Discover and open one.
-      allow read: if request.auth != null;
+      // Public, like `posts`: the shared-link web page (/c/{id} on the Worker)
+      // reads a community without signing in, so anyone opening a shared link
+      // in a browser sees it. In-app browsing is signed-in anyway.
+      allow read: if true;
 
       // Only a signed-in user, and only as the creator (who becomes admin).
       allow create: if request.auth != null

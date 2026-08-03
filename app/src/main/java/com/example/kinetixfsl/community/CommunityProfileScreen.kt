@@ -87,6 +87,10 @@ fun CommunityProfileScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    // Whose profile this is — the visitor arg, or the signed-in user for the
+    // own-profile tab. Backs the share link.
+    val shareUid = userId ?: FirebaseAuth.getInstance().currentUser?.uid
+
     val pagerState = rememberPagerState(pageCount = { 2 })
 
     // The post whose 3-dot sheet is open, if any.
@@ -159,6 +163,27 @@ fun CommunityProfileScreen(
                         },
                     )
                 }
+            }
+        }
+
+        // Share this profile — a link that opens the same profile in-app, or a
+        // public web page for people without the app.
+        if (shareUid != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 12.dp, end = 16.dp)
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(50))
+                    .clickable { shareProfile(context, shareUid, state.displayName) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = CommunityIcons.Share,
+                    contentDescription = "Share profile",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp),
+                )
             }
         }
 
@@ -720,6 +745,20 @@ private fun copyPostText(context: Context, post: Post) {
     clipboard.setPrimaryClip(ClipData.newPlainText("Post", text))
 
     Toast.makeText(context, "Text copied", Toast.LENGTH_SHORT).show()
+}
+
+/**
+ * Fires the system share sheet with a link to this profile. Opening the link
+ * drops the recipient on the same profile — see the `/u/` route in ShareLinks
+ * and the deep-link handling in the NavHost.
+ */
+private fun shareProfile(context: Context, userId: String, displayName: String) {
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_SUBJECT, displayName)
+        putExtra(android.content.Intent.EXTRA_TEXT, ShareLinks.profileUrl(userId))
+    }
+    context.startActivity(android.content.Intent.createChooser(intent, "Share profile"))
 }
 
 /**

@@ -88,13 +88,17 @@ fun CommunityFeedContent(
      * goes to whatever the user actually opened.
      */
     isFeedActive: Boolean = true,
+    /**
+     * The Home Feed shows a search bar at the top; a community's own feed
+     * doesn't need one, so its host passes false to hide it.
+     */
+    showSearchBar: Boolean = true,
 ) {
     val state by viewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val followingIds by viewModel.followingIds.collectAsStateWithLifecycle()
     val actionError by viewModel.actionError.collectAsStateWithLifecycle()
 
     LaunchedEffect(actionError) {
@@ -102,7 +106,6 @@ fun CommunityFeedContent(
         android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
         viewModel.clearActionError()
     }
-    val currentUid = remember { com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }
 
     val pullState = rememberPullToRefreshState()
 
@@ -161,13 +164,15 @@ fun CommunityFeedContent(
                     .background(MaterialTheme.colorScheme.background),
                 contentPadding = PaddingValues(vertical = 12.dp),
             ) {
-                item {
-                    SearchBar(
-                        query = searchQuery,
-                        onQueryChange = viewModel::onSearchQueryChange,
-                    )
+                if (showSearchBar) {
+                    item {
+                        SearchBar(
+                            query = searchQuery,
+                            onQueryChange = viewModel::onSearchQueryChange,
+                        )
+                    }
+                    item { Spacer(Modifier.height(8.dp)) }
                 }
-                item { Spacer(Modifier.height(8.dp)) }
 
                 when (val current = state) {
                     is FeedState.Loading -> item { LoadingRow() }
@@ -193,14 +198,10 @@ fun CommunityFeedContent(
                                     // Inert for now — the actions behind it
                                     // are a later piece of work.
                                     onMenuClick = {},
-                                    isFollowing = post.authorId in followingIds,
-                                    onToggleFollow = if (post.authorId == currentUid ||
-                                        post.authorId.isBlank()
-                                    ) {
-                                        null
-                                    } else {
-                                        { viewModel.toggleFollow(post) }
-                                    },
+                                    // No Follow button in the feed on purpose:
+                                    // following happens from a user's profile,
+                                    // so a second control here is redundant.
+                                    onToggleFollow = null,
                                     onClick = { onPostClick(post) },
                                 )
                                 HorizontalDivider(

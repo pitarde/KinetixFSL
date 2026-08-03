@@ -4,6 +4,10 @@ import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -11,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -18,6 +23,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.kinetixfsl.auth.AuthRepository
+import com.example.kinetixfsl.community.CommunityProfileScreen
 import com.example.kinetixfsl.community.CommunityScreen
 import com.example.kinetixfsl.community.SharedPostScreen
 import com.example.kinetixfsl.community.create.StartCommunityScreen
@@ -76,6 +82,11 @@ object Route {
     fun communityCategory(category: String): String =
         "$COMMUNITY_CATEGORY_BASE/${URLEncoder.encode(category, StandardCharsets.UTF_8.name())}"
 
+    private const val PROFILE_BASE = "profile"
+    const val PROFILE_ARG = "userId"
+    const val PROFILE_PATTERN = "$PROFILE_BASE/{$PROFILE_ARG}"
+    fun profile(userId: String): String = "$PROFILE_BASE/$userId"
+
     // ── Shared post (opened from a link) ────────────────────
     private const val POST_BASE = "post"
     const val POST_ARG = "postId"
@@ -119,6 +130,10 @@ fun KinetixNavHost(
      * launch. Changes when a new link arrives while the app is already running.
      */
     deepLinkPostId: String? = null,
+    /** Community id from a shared link, or null for a normal launch. */
+    deepLinkCommunityId: String? = null,
+    /** User id from a shared profile link, or null for a normal launch. */
+    deepLinkUserId: String? = null,
 ) {
     val authRepository = remember { AuthRepository() }
 
@@ -127,6 +142,12 @@ fun KinetixNavHost(
      * as soon as login or registration succeeds.
      */
     var pendingPostId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    /** A community link that arrived before sign-in. Opened after login. */
+    var pendingCommunityId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    /** A profile link that arrived before sign-in. Opened after login. */
+    var pendingUserId by rememberSaveable { mutableStateOf<String?>(null) }
 
     /**
      * Drops the user on the linked post with the community feed underneath, so
@@ -147,6 +168,43 @@ fun KinetixNavHost(
         } else {
             // Sit on it until the user gets through login.
             pendingPostId = id
+        }
+    }
+
+    /**
+     * Drops the user on the shared community's home screen with the dashboard
+     * underneath, so back (or the X) lands on Home rather than closing the app.
+     */
+    fun openSharedCommunity(communityId: String) {
+        navController.navigate(Route.HOME) {
+            popUpTo(Route.SPLASH) { inclusive = true }
+        }
+        navController.navigate(Route.communityHome(communityId))
+    }
+
+    LaunchedEffect(deepLinkCommunityId) {
+        val id = deepLinkCommunityId ?: return@LaunchedEffect
+        if (authRepository.isSignedIn) {
+            openSharedCommunity(id)
+        } else {
+            pendingCommunityId = id
+        }
+    }
+
+    /** Drops the user on a shared profile with the dashboard underneath. */
+    fun openSharedProfile(userId: String) {
+        navController.navigate(Route.HOME) {
+            popUpTo(Route.SPLASH) { inclusive = true }
+        }
+        navController.navigate(Route.profile(userId))
+    }
+
+    LaunchedEffect(deepLinkUserId) {
+        val id = deepLinkUserId ?: return@LaunchedEffect
+        if (authRepository.isSignedIn) {
+            openSharedProfile(id)
+        } else {
+            pendingUserId = id
         }
     }
 
@@ -213,6 +271,14 @@ fun KinetixNavHost(
                         navController.navigate(Route.COMMUNITY)
                         navController.navigate(Route.post(postId))
                     }
+                    pendingCommunityId?.let { communityId ->
+                        pendingCommunityId = null
+                        navController.navigate(Route.communityHome(communityId))
+                    }
+                    pendingUserId?.let { userId ->
+                        pendingUserId = null
+                        navController.navigate(Route.profile(userId))
+                    }
                 },
                 onNavigateToSignUp = {
                     navController.navigate(Route.REGISTER)
@@ -248,6 +314,14 @@ fun KinetixNavHost(
                         pendingPostId = null
                         navController.navigate(Route.COMMUNITY)
                         navController.navigate(Route.post(postId))
+                    }
+                    pendingCommunityId?.let { communityId ->
+                        pendingCommunityId = null
+                        navController.navigate(Route.communityHome(communityId))
+                    }
+                    pendingUserId?.let { userId ->
+                        pendingUserId = null
+                        navController.navigate(Route.profile(userId))
                     }
                 },
                 onNavigateToLogin = {
@@ -447,6 +521,29 @@ fun KinetixNavHost(
             CommunityHomeScreen(
                 communityId = communityId,
                 onClose = { navController.popBackStack() },
+            )
+        }
+
+        // ---- A user's profile, opened from a shared link ----
+        composable(
+            route = Route.PROFILE_PATTERN,
+            arguments = listOf(navArgument(Route.PROFILE_ARG) { type = NavType.StringType }),
+            enterTransition = { fadeIn(tween(200)) },
+            exitTransition = { fadeOut(tween(200)) },
+            popEnterTransition = { fadeIn(tween(200)) },
+            popExitTransition = { fadeOut(tween(200)) },
+        ) { backStackEntry ->
+            val userId = backStackEntry.arguments?.getString(Route.PROFILE_ARG).orEmpty()
+            CommunityProfileScreen(
+                userId = userId,
+                onPostClick = { post -> navController.navigate(Route.post(post.id)) },
+                onEditPost = { /* visitors can't edit */ },
+                onCommentClick = { item -> navController.navigate(Route.post(item.postId)) },
+                onUserClick = { uid -> navController.navigate(Route.profile(uid)) },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .statusBarsPadding(),
             )
         }
 

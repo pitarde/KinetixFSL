@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -49,11 +48,11 @@ import com.example.kinetixfsl.community.CommunityFeedContent
 import com.example.kinetixfsl.community.CommunityFeedViewModel
 import com.example.kinetixfsl.community.CommunityIcons
 import com.example.kinetixfsl.community.CommunityProfileScreen
-import com.example.kinetixfsl.community.CreatePostScreen
 import com.example.kinetixfsl.community.EditPostScreen
 import com.example.kinetixfsl.community.FeedState
 import com.example.kinetixfsl.community.ImmersivePostViewer
 import com.example.kinetixfsl.community.PostDetailScreen
+import com.example.kinetixfsl.community.ShareLinks
 import com.example.kinetixfsl.community.SharedPostScreen
 import com.example.kinetixfsl.community.model.Community
 import com.example.kinetixfsl.community.model.Post
@@ -96,7 +95,12 @@ fun CommunityHomeScreen(
     val feedViewModel = remember(communityId) { CommunityFeedViewModel(communityId = communityId) }
     val feedState by feedViewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by feedViewModel.userVotes.collectAsStateWithLifecycle()
+    val searchQuery by feedViewModel.searchQuery.collectAsStateWithLifecycle()
     val feedListState = rememberLazyListState()
+
+    // The top-bar magnifier opens an inline search field; typing filters this
+    // community's feed the same way the Home Feed's search does.
+    var searchActive by remember { mutableStateOf(false) }
 
     val overlays = remember { mutableStateListOf<HomeOverlay>() }
     fun closeFrom(index: Int) {
@@ -106,7 +110,14 @@ fun CommunityHomeScreen(
     fun liveCopyOf(post: Post): Post =
         (feedState as? FeedState.Success)?.posts?.firstOrNull { it.id == post.id } ?: post
 
-    BackHandler(enabled = overlays.isEmpty(), onBack = onClose)
+    BackHandler(enabled = overlays.isEmpty()) {
+        if (searchActive) {
+            searchActive = false
+            feedViewModel.onSearchQueryChange("")
+        } else {
+            onClose()
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(
@@ -116,9 +127,18 @@ fun CommunityHomeScreen(
                 .statusBarsPadding(),
         ) {
             CommunityHomeTopBar(
+                searchActive = searchActive,
+                query = searchQuery,
+                onQueryChange = feedViewModel::onSearchQueryChange,
+                onOpenSearch = { searchActive = true },
+                onCloseSearch = {
+                    searchActive = false
+                    feedViewModel.onSearchQueryChange("")
+                },
                 onClose = onClose,
-                onSearch = { placeholder("Search") },
-                onShare = { placeholder("Share") },
+                onShare = {
+                    community?.let { shareCommunity(context, it.id, it.name) }
+                },
                 onMenu = { placeholder("Menu") },
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -156,20 +176,11 @@ fun CommunityHomeScreen(
                     onMediaClick = { post -> overlays.add(HomeOverlay.Immersive(post)) },
                     onAuthorClick = { uid -> overlays.add(HomeOverlay.Profile(uid)) },
                     isFeedActive = overlays.isEmpty(),
+                    // Posting happens from the Create tab; this feed needs no
+                    // search bar of its own.
+                    showSearchBar = false,
                 )
             }
-        }
-
-        // Members get a compose button to post straight into this community.
-        val loaded = community
-        if (loaded != null && isMember && overlays.isEmpty()) {
-            CreatePostFab(
-                onClick = { overlays.add(HomeOverlay.Create(loaded.id, loaded.name)) },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(20.dp)
-                    .navigationBarsPadding(),
-            )
         }
 
         // Overlays, drawn bottom-first; back pops exactly one.
@@ -216,18 +227,6 @@ fun CommunityHomeScreen(
                             )
                         }
 
-                        is HomeOverlay.Create -> {
-                            BackHandler(onBack = close)
-                            CreatePostScreen(
-                                onClose = close,
-                                lockedCommunityId = overlay.communityId,
-                                lockedCommunityName = overlay.communityName,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(MaterialTheme.colorScheme.background)
-                                    .statusBarsPadding(),
-                            )
-                        }
 
                         is HomeOverlay.Edit -> EditPostScreen(
                             post = liveCopyOf(overlay.post),
@@ -289,8 +288,12 @@ fun CommunityHomeScreen(
 
 @Composable
 private fun CommunityHomeTopBar(
+    searchActive: Boolean,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onOpenSearch: () -> Unit,
+    onCloseSearch: () -> Unit,
     onClose: () -> Unit,
-    onSearch: () -> Unit,
     onShare: () -> Unit,
     onMenu: () -> Unit,
 ) {
@@ -300,14 +303,96 @@ private fun CommunityHomeTopBar(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CircleIconButton(CommunityIcons.Close, "Close", onClose)
-        Spacer(Modifier.weight(1f))
-        CircleIconButton(CommunityIcons.Search, "Search", onSearch)
-        Spacer(Modifier.width(12.dp))
-        CircleIconButton(CommunityIcons.Share, "Share", onShare)
-        Spacer(Modifier.width(12.dp))
-        CircleIconButton(CommunityIcons.MoreVertical, "More", onMenu)
+        if (searchActive) {
+            // Search mode: back arrow collapses it, the field fills the bar.
+            CircleIconButton(CommunityIcons.ArrowBack, "Close search", onCloseSearch)
+            Spacer(Modifier.width(12.dp))
+            TopBarSearchField(
+                query = query,
+                onQueryChange = onQueryChange,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            CircleIconButton(CommunityIcons.Close, "Close", onClose)
+            Spacer(Modifier.weight(1f))
+            CircleIconButton(CommunityIcons.Search, "Search", onOpenSearch)
+            Spacer(Modifier.width(12.dp))
+            CircleIconButton(CommunityIcons.Share, "Share", onShare)
+            Spacer(Modifier.width(12.dp))
+            CircleIconButton(CommunityIcons.MoreVertical, "More", onMenu)
+        }
     }
+}
+
+/** The inline search input the top-bar magnifier expands into. */
+@Composable
+private fun TopBarSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = CommunityIcons.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        androidx.compose.foundation.text.BasicTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+            modifier = Modifier.weight(1f),
+            decorationBox = { inner ->
+                Box {
+                    if (query.isEmpty()) {
+                        Text(
+                            text = "Search posts, users...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
+        if (query.isNotEmpty()) {
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                imageVector = CommunityIcons.Close,
+                contentDescription = "Clear",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable { onQueryChange("") },
+            )
+        }
+    }
+}
+
+/**
+ * Fires the system share sheet with a link to this community. Opening the link
+ * drops the recipient straight into this community — see the `/c/` route in
+ * ShareLinks and the deep-link handling in the NavHost.
+ */
+private fun shareCommunity(context: android.content.Context, communityId: String, name: String) {
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_SUBJECT, name)
+        putExtra(android.content.Intent.EXTRA_TEXT, ShareLinks.communityUrl(communityId))
+    }
+    context.startActivity(android.content.Intent.createChooser(intent, "Share community"))
 }
 
 // ---------------------------------------------------------------------------
@@ -523,7 +608,6 @@ private sealed interface HomeOverlay {
     data class PostById(val postId: String) : HomeOverlay
     data class Immersive(val post: Post) : HomeOverlay
     data class Edit(val post: Post) : HomeOverlay
-    data class Create(val communityId: String, val communityName: String) : HomeOverlay
 }
 
 /** Join / Joined toggle shown in the header to non-admin viewers. */
@@ -567,25 +651,3 @@ private fun JoinButton(
     }
 }
 
-/** Round "+" button that opens the composer locked to this community. */
-@Composable
-private fun CreatePostFab(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .size(56.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.primary)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = CommunityIcons.Plus,
-            contentDescription = "Create post",
-            tint = MaterialTheme.colorScheme.onPrimary,
-            modifier = Modifier.size(28.dp),
-        )
-    }
-}

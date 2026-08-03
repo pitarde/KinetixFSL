@@ -59,9 +59,19 @@
                     android:scheme="https"
                     android:host="kinetix-upload.pitardeken2024.workers.dev"
                     android:pathPrefix="/p/" />
+                <!-- Shared community links, e.g. .../c/{communityId} -->
+                <data
+                    android:scheme="https"
+                    android:host="kinetix-upload.pitardeken2024.workers.dev"
+                    android:pathPrefix="/c/" />
+                <!-- Shared profile links, e.g. .../u/{userId} -->
+                <data
+                    android:scheme="https"
+                    android:host="kinetix-upload.pitardeken2024.workers.dev"
+                    android:pathPrefix="/u/" />
             </intent-filter>
 
-            <!-- What the web page's "Open in app" button fires. -->
+            <!-- What the web pages' "Open in app" buttons fire. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
 
@@ -71,6 +81,12 @@
                 <data
                     android:scheme="kinetix"
                     android:host="post" />
+                <data
+                    android:scheme="kinetix"
+                    android:host="community" />
+                <data
+                    android:scheme="kinetix"
+                    android:host="user" />
             </intent-filter>
         </activity>
 

@@ -26,6 +26,12 @@ class MainActivity : ComponentActivity() {
      */
     private var deepLinkPostId by mutableStateOf<String?>(null)
 
+    /** The community a shared link pointed at, or null on a normal launch. */
+    private var deepLinkCommunityId by mutableStateOf<String?>(null)
+
+    /** The profile a shared link pointed at, or null on a normal launch. */
+    private var deepLinkUserId by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Must run before super.onCreate(). This is the platform splash — it only
         // covers the gap until our first Compose frame, then hands off to the
@@ -36,10 +42,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         deepLinkPostId = ShareLinks.postIdFrom(intent?.data)
+        deepLinkCommunityId = ShareLinks.communityIdFrom(intent?.data)
+        deepLinkUserId = ShareLinks.profileIdFrom(intent?.data)
 
         setContent {
             KinetixFSLTheme {
-                KinetixNavHost(deepLinkPostId = deepLinkPostId)
+                KinetixNavHost(
+                    deepLinkPostId = deepLinkPostId,
+                    deepLinkCommunityId = deepLinkCommunityId,
+                    deepLinkUserId = deepLinkUserId,
+                )
             }
         }
     }
@@ -62,5 +74,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         ShareLinks.postIdFrom(intent.data)?.let { deepLinkPostId = it }
+        ShareLinks.communityIdFrom(intent.data)?.let { deepLinkCommunityId = it }
+        ShareLinks.profileIdFrom(intent.data)?.let { deepLinkUserId = it }
     }
 }

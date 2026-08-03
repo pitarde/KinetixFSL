@@ -4,6 +4,8 @@
 // Two jobs:
 //   POST /                      multipart upload from the Android app → R2
 //   GET  /p/{postId}            public web page for a shared post
+//   GET  /c/{communityId}       public web page for a shared community
+//   GET  /u/{userId}           public web page for a shared profile
 //   GET  /.well-known/assetlinks.json   Android App Links verification
 //
 // This is the whole Worker. Paste it over the Cloudflare editor's contents.
@@ -313,6 +315,18 @@ async function handleShareRoutes(request, env) {
     return postPageResponse(postId, env);
   }
 
+  if (url.pathname.startsWith("/c/")) {
+    const communityId = url.pathname.slice("/c/".length).split("/")[0];
+    if (!communityId) return null;
+    return communityPageResponse(communityId, env);
+  }
+
+  if (url.pathname.startsWith("/u/")) {
+    const userId = url.pathname.slice("/u/".length).split("/")[0];
+    if (!userId) return null;
+    return userPageResponse(userId, env);
+  }
+
   return null;
 }
 
@@ -465,6 +479,7 @@ async function fetchPost(postId, env) {
     media: readMedia(f.media),
     linkUrl: readString(f.linkUrl),
     upvoteCount: readInt(f.upvoteCount),
+    downvoteCount: readInt(f.downvoteCount),
     commentCount: readInt(f.commentCount),
   };
 }
@@ -531,13 +546,8 @@ function renderPost(postId, post) {
   const appLink = `kinetix://post/${encodeURIComponent(postId)}`;
   const description = preview(post.body || post.title, 180);
 
-  const media = post.videoUrl
-    ? `<video class="media" src="${esc(throughWorker(post.videoUrl))}" ${
-        post.previewUrl ? `poster="${esc(throughWorker(post.previewUrl))}"` : ""
-      } controls playsinline></video>`
-    : post.imageUrl
-      ? `<img class="media" src="${esc(throughWorker(post.imageUrl))}" alt="" />`
-      : "";
+  // Every attachment, as a swipeable carousel when there's more than one.
+  const media = renderMedia(post);
 
   const link = post.linkUrl
     ? `<a class="postlink" href="${esc(post.linkUrl)}" rel="noopener noreferrer nofollow">${esc(post.linkUrl)}</a>`
@@ -599,14 +609,485 @@ function renderPost(postId, post) {
       ${link}
       ${media}
 
-      <div class="counts">
-        <span>${post.upvoteCount} upvotes</span>
-        <span>${post.commentCount} comments</span>
+      <div class="votes">
+        <span class="vote" role="button" tabindex="0" aria-label="Upvote">
+          &#9650; ${post.upvoteCount}
+        </span>
+        <span class="vote" role="button" tabindex="0" aria-label="Downvote">
+          &#9660; ${post.downvoteCount}
+        </span>
+        <span class="cmt">&#128172; ${post.commentCount}</span>
       </div>
 
       <p class="cta">
         Get the ${APP_NAME} app to upvote, comment, and see the full discussion.
       </p>
+    </main>`,
+  });
+}
+
+// --- The community page ------------------------------------------------
+
+async function communityPageResponse(communityId, env) {
+  const community = await fetchCommunity(communityId, env);
+
+  if (!community) {
+    return htmlResponse(renderMissingCommunity(), 404);
+  }
+
+  // The community's own posts, ranked by score the same way the app ranks a
+  // community feed. A failure here just renders the page with no posts.
+  const posts = await fetchCommunityPosts(communityId, env);
+
+  return htmlResponse(renderCommunity(communityId, community, posts), 200);
+}
+
+/**
+ * Every post in one community, newest-scoring first.
+ *
+ * Uses Firestore's `:runQuery` REST endpoint with an equality filter on
+ * communityId — equality alone needs no composite index — then ranks by score
+ * in JS, exactly as the app's community feed does.
+ */
+async function fetchCommunityPosts(communityId, env) {
+  const projectId = env.FIREBASE_PROJECT_ID;
+  const apiKey = env.FIREBASE_API_KEY;
+  if (!projectId || !apiKey) return [];
+
+  const endpoint =
+    `https://firestore.googleapis.com/v1/projects/${projectId}` +
+    `/databases/(default)/documents:runQuery?key=${apiKey}`;
+
+  const query = {
+    structuredQuery: {
+      from: [{ collectionId: "posts" }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: "communityId" },
+          op: "EQUAL",
+          value: { stringValue: communityId },
+        },
+      },
+      limit: 100,
+    },
+  };
+
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(query),
+    });
+  } catch (_) {
+    return [];
+  }
+  if (!response.ok) return [];
+
+  let rows;
+  try {
+    rows = await response.json();
+  } catch (_) {
+    return [];
+  }
+  if (!Array.isArray(rows)) return [];
+
+  const posts = [];
+  for (const row of rows) {
+    const doc = row && row.document;
+    if (!doc || !doc.fields) continue;
+    const f = doc.fields;
+    posts.push({
+      id: doc.name ? doc.name.split("/").pop() : "",
+      title: readString(f.title),
+      body: readString(f.body),
+      authorName: readString(f.authorName) || "Unknown",
+      imageUrl: readString(f.imageUrl),
+      videoUrl: readString(f.videoUrl),
+      previewUrl: readString(f.previewUrl),
+      media: readMedia(f.media),
+      upvoteCount: readInt(f.upvoteCount),
+      downvoteCount: readInt(f.downvoteCount),
+      commentCount: readInt(f.commentCount),
+      score: readInt(f.score),
+    });
+  }
+
+  posts.sort((a, b) => b.score - a.score);
+  return posts;
+}
+
+/**
+ * Every attachment on a post, in order — mirrors the app's Post.mediaItems.
+ * New posts carry a `media` array; older ones only have the legacy single
+ * image/video fields, which are adapted here so both render the same way.
+ */
+function mediaItemsOf(post) {
+  if (Array.isArray(post.media) && post.media.length) return post.media;
+  if (post.videoUrl) return [{ url: post.videoUrl, type: "video", thumbUrl: post.previewUrl || "" }];
+  if (post.imageUrl) return [{ url: post.imageUrl, type: "image", thumbUrl: "" }];
+  return [];
+}
+
+/**
+ * One attachment. Video points at the full file with the still as its poster —
+ * a video's thumbUrl is only an image, so it can't be the <video> source.
+ */
+function renderMediaItem(item) {
+  if ((item.type || "image") === "video") {
+    const poster = item.thumbUrl || "";
+    return `<video class="media" src="${esc(throughWorker(item.url))}" ${
+      poster ? `poster="${esc(throughWorker(poster))}"` : ""
+    } controls playsinline preload="metadata"></video>`;
+  }
+  return `<img class="media" src="${esc(throughWorker(item.url))}" alt="" loading="lazy" />`;
+}
+
+/**
+ * A post's media. One attachment renders on its own; several become a swipeable
+ * carousel with a counter and dots, the same as the app's post card.
+ */
+function renderMedia(post) {
+  const items = mediaItemsOf(post);
+  if (!items.length) return "";
+  if (items.length === 1) return renderMediaItem(items[0]);
+
+  const slides = items
+    .map((it) => `<div class="slide">${renderMediaItem(it)}</div>`)
+    .join("");
+  const dots = items
+    .map((_, i) => `<span class="dot${i === 0 ? " on" : ""}"></span>`)
+    .join("");
+
+  return `
+    <div class="carousel">
+      <div class="track">${slides}</div>
+      <div class="counter"><span class="cur">1</span> / ${items.length}</div>
+      <div class="dots">${dots}</div>
+    </div>`;
+}
+
+/** One post as a card in the community page's feed. Read-only, no navigation. */
+function renderCommunityPost(post) {
+  return `
+    <div class="pcard">
+      <div class="author">
+        <span class="avatar">${esc((post.authorName[0] || "?").toUpperCase())}</span>
+        <span class="name">${esc(post.authorName)}</span>
+      </div>
+      <h2>${esc(post.title)}</h2>
+      ${post.body ? `<p class="body">${esc(post.body)}</p>` : ""}
+      ${renderMedia(post)}
+      <div class="votes">
+        <span class="vote" role="button" tabindex="0" aria-label="Upvote">
+          &#9650; ${post.upvoteCount}
+        </span>
+        <span class="vote" role="button" tabindex="0" aria-label="Downvote">
+          &#9660; ${post.downvoteCount}
+        </span>
+        <span class="cmt">&#128172; ${post.commentCount}</span>
+      </div>
+    </div>`;
+}
+
+/** Reads communities/{communityId} through the Firestore REST API. */
+async function fetchCommunity(communityId, env) {
+  const projectId = env.FIREBASE_PROJECT_ID;
+  const apiKey = env.FIREBASE_API_KEY;
+  if (!projectId || !apiKey) return null;
+
+  const endpoint =
+    `https://firestore.googleapis.com/v1/projects/${projectId}` +
+    `/databases/(default)/documents/communities/${encodeURIComponent(communityId)}` +
+    `?key=${apiKey}`;
+
+  let response;
+  try {
+    response = await fetch(endpoint);
+  } catch (_) {
+    return null;
+  }
+  if (!response.ok) return null;
+
+  const doc = await response.json();
+  if (!doc || !doc.fields) return null;
+
+  const f = doc.fields;
+  return {
+    name: readString(f.name) || "Community",
+    description: readString(f.description),
+    categories: readStringArray(f.categories),
+    creatorName: readString(f.creatorName) || "Unknown",
+    memberCount: readInt(f.memberCount),
+  };
+}
+
+/** Unwraps Firestore's array-of-strings encoding for the `categories` field. */
+function readStringArray(field) {
+  const values = field && field.arrayValue && field.arrayValue.values;
+  if (!Array.isArray(values)) return [];
+  return values.map((v) => readString(v)).filter(Boolean);
+}
+
+function renderCommunity(communityId, community, posts) {
+  const appLink = `kinetix://community/${encodeURIComponent(communityId)}`;
+  const description = preview(community.description || community.name, 180);
+  const memberLabel = `${community.memberCount} ${
+    community.memberCount === 1 ? "member" : "members"
+  }`;
+
+  const chips = community.categories.length
+    ? `<div class="chips">${community.categories
+        .map((c) => `<span class="chip">${esc(c)}</span>`)
+        .join("")}</div>`
+    : "";
+
+  const feed = (posts && posts.length)
+    ? `<section class="feed">${posts.map(renderCommunityPost).join("")}</section>`
+    : `<p class="empty">No posts in this community yet.</p>`;
+
+  return page({
+    title: `${community.name} — ${APP_NAME}`,
+    head: `
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="${APP_NAME}" />
+    <meta property="og:url" content="https://${SHARE_HOST}/c/${encodeURIComponent(communityId)}" />
+    <meta property="og:title" content="${esc(community.name)}" />
+    <meta property="og:description" content="${esc(description)}" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="description" content="${esc(description)}" />`,
+    body: `
+    <header class="bar">
+      <button class="close" id="closeBtn" aria-label="Close">&#10005;</button>
+      <span class="brand">${APP_NAME}</span>
+      <a class="open" href="${esc(appLink)}">Open in app</a>
+    </header>
+
+    <main class="post">
+      <div class="author">
+        <span class="avatar">${esc((community.name[0] || "?").toUpperCase())}</span>
+        <span class="name">${esc(community.name)}</span>
+        <span class="joinbtn" role="button" tabindex="0" aria-label="Join">Join</span>
+      </div>
+
+      <p class="counts"><span>${esc(memberLabel)}</span></p>
+      ${community.description ? `<p class="body">${esc(community.description)}</p>` : ""}
+      ${chips}
+
+      <p class="cta">
+        Get the ${APP_NAME} app to join this community, post, and see the full discussion.
+      </p>
+
+      ${feed}
+    </main>`,
+  });
+}
+
+function renderMissingCommunity() {
+  return page({
+    title: `Community unavailable — ${APP_NAME}`,
+    head: '<meta name="robots" content="noindex" />',
+    body: `
+    <header class="bar">
+      <button class="close" id="closeBtn" aria-label="Close">&#10005;</button>
+      <span class="brand">${APP_NAME}</span>
+      <span></span>
+    </header>
+    <main class="post">
+      <h1>Community unavailable</h1>
+      <p class="body">This community may have been deleted, or the link is incorrect.</p>
+    </main>`,
+  });
+}
+
+// --- The profile page --------------------------------------------------
+
+async function userPageResponse(userId, env) {
+  const user = await fetchUser(userId, env);
+
+  if (!user) {
+    return htmlResponse(renderMissingUser(), 404);
+  }
+
+  const posts = await fetchUserPosts(userId, env);
+
+  return htmlResponse(renderUser(userId, user, posts), 200);
+}
+
+/** Reads users/{userId} through the Firestore REST API. */
+async function fetchUser(userId, env) {
+  const projectId = env.FIREBASE_PROJECT_ID;
+  const apiKey = env.FIREBASE_API_KEY;
+  if (!projectId || !apiKey) return null;
+
+  const endpoint =
+    `https://firestore.googleapis.com/v1/projects/${projectId}` +
+    `/databases/(default)/documents/users/${encodeURIComponent(userId)}` +
+    `?key=${apiKey}`;
+
+  let response;
+  try {
+    response = await fetch(endpoint);
+  } catch (_) {
+    return null;
+  }
+  if (!response.ok) return null;
+
+  const doc = await response.json();
+  if (!doc || !doc.fields) return null;
+
+  const f = doc.fields;
+  return {
+    displayName: readString(f.displayName) || "Anonymous",
+    avatarUrl: readString(f.avatarUrl),
+    followerCount: readInt(f.followerCount),
+    followingCount: readInt(f.followingCount),
+  };
+}
+
+/** Every post by one author, newest first. */
+async function fetchUserPosts(userId, env) {
+  const projectId = env.FIREBASE_PROJECT_ID;
+  const apiKey = env.FIREBASE_API_KEY;
+  if (!projectId || !apiKey) return [];
+
+  const endpoint =
+    `https://firestore.googleapis.com/v1/projects/${projectId}` +
+    `/databases/(default)/documents:runQuery?key=${apiKey}`;
+
+  const query = {
+    structuredQuery: {
+      from: [{ collectionId: "posts" }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: "authorId" },
+          op: "EQUAL",
+          value: { stringValue: userId },
+        },
+      },
+      limit: 100,
+    },
+  };
+
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(query),
+    });
+  } catch (_) {
+    return [];
+  }
+  if (!response.ok) return [];
+
+  let rows;
+  try {
+    rows = await response.json();
+  } catch (_) {
+    return [];
+  }
+  if (!Array.isArray(rows)) return [];
+
+  const posts = [];
+  for (const row of rows) {
+    const doc = row && row.document;
+    if (!doc || !doc.fields) continue;
+    const f = doc.fields;
+    posts.push({
+      id: doc.name ? doc.name.split("/").pop() : "",
+      title: readString(f.title),
+      body: readString(f.body),
+      authorName: readString(f.authorName) || "Unknown",
+      imageUrl: readString(f.imageUrl),
+      videoUrl: readString(f.videoUrl),
+      previewUrl: readString(f.previewUrl),
+      media: readMedia(f.media),
+      upvoteCount: readInt(f.upvoteCount),
+      downvoteCount: readInt(f.downvoteCount),
+      commentCount: readInt(f.commentCount),
+      createdAtSeconds: readTimestampSeconds(f.createdAt),
+    });
+  }
+
+  // Newest first — a profile reads as a timeline, not a leaderboard.
+  posts.sort((a, b) => b.createdAtSeconds - a.createdAtSeconds);
+  return posts;
+}
+
+/** Firestore timestampValue -> epoch seconds, for sorting. */
+function readTimestampSeconds(field) {
+  const t = field && field.timestampValue;
+  if (!t) return 0;
+  const ms = Date.parse(t);
+  return Number.isNaN(ms) ? 0 : Math.floor(ms / 1000);
+}
+
+function renderUser(userId, user, posts) {
+  const appLink = `kinetix://user/${encodeURIComponent(userId)}`;
+  const shareUrl = `https://${SHARE_HOST}/u/${encodeURIComponent(userId)}`;
+  const description = `${user.displayName} on ${APP_NAME} — ${user.followerCount} ${
+    user.followerCount === 1 ? "follower" : "followers"
+  }`;
+
+  const avatar = user.avatarUrl
+    ? `<img class="pavatar" src="${esc(throughWorker(user.avatarUrl))}" alt="" />`
+    : `<span class="pavatar pavatar-fallback">${esc(
+        (user.displayName[0] || "?").toUpperCase(),
+      )}</span>`;
+
+  const feed = (posts && posts.length)
+    ? `<section class="feed">${posts.map(renderCommunityPost).join("")}</section>`
+    : `<p class="empty">No posts yet.</p>`;
+
+  return page({
+    title: `${user.displayName} — ${APP_NAME}`,
+    head: `
+    <meta property="og:type" content="profile" />
+    <meta property="og:site_name" content="${APP_NAME}" />
+    <meta property="og:url" content="${esc(shareUrl)}" />
+    <meta property="og:title" content="${esc(user.displayName)}" />
+    <meta property="og:description" content="${esc(description)}" />
+    ${user.avatarUrl ? `<meta property="og:image" content="${esc(throughWorker(user.avatarUrl))}" />` : ""}
+    <meta name="twitter:card" content="summary" />
+    <meta name="description" content="${esc(description)}" />`,
+    body: `
+    <header class="bar">
+      <button class="close" id="closeBtn" aria-label="Close">&#10005;</button>
+      <span class="brand">${APP_NAME}</span>
+      <a class="open" href="${esc(appLink)}">Open in app</a>
+    </header>
+
+    <main class="post">
+      <div class="phead">
+        ${avatar}
+        <div class="pmeta">
+          <span class="pname">${esc(user.displayName)}</span>
+          <span class="csub">${user.followerCount} ${
+            user.followerCount === 1 ? "follower" : "followers"
+          }</span>
+        </div>
+        <span class="joinbtn" role="button" tabindex="0" aria-label="Follow">Follow</span>
+      </div>
+
+      ${feed}
+    </main>`,
+  });
+}
+
+function renderMissingUser() {
+  return page({
+    title: `Profile unavailable — ${APP_NAME}`,
+    head: '<meta name="robots" content="noindex" />',
+    body: `
+    <header class="bar">
+      <button class="close" id="closeBtn" aria-label="Close">&#10005;</button>
+      <span class="brand">${APP_NAME}</span>
+      <span></span>
+    </header>
+    <main class="post">
+      <h1>Profile unavailable</h1>
+      <p class="body">This account may not exist, or the link is incorrect.</p>
     </main>`,
   });
 }
@@ -702,10 +1183,77 @@ ${head}
     object-fit: contain; background: #000;
     border-radius: 12px; border: 1px solid var(--outline);
   }
+  .carousel { position: relative; }
+  .track {
+    display: flex; overflow-x: auto; scroll-snap-type: x mandatory;
+    border-radius: 12px; border: 1px solid var(--outline); background: #000;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .track::-webkit-scrollbar { display: none; }
+  .slide { flex: 0 0 100%; scroll-snap-align: center; display: flex; }
+  .slide .media { border: 0; border-radius: 0; }
+  .counter {
+    position: absolute; top: 10px; right: 10px;
+    background: rgba(0,0,0,.62); color: #fff; font-size: 12px; font-weight: 600;
+    padding: 3px 10px; border-radius: 999px; pointer-events: none;
+  }
+  .dots { display: flex; justify-content: center; gap: 6px; margin-top: 10px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--outline); transition: background .15s; }
+  .dot.on { background: var(--accent); }
   .counts {
     display: flex; gap: 16px; margin-top: 16px;
     color: var(--muted); font-size: 14px;
   }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .chip {
+    border: 1px solid var(--outline); border-radius: 999px;
+    padding: 6px 14px; font-size: 13px; color: var(--text);
+  }
+  .feed { margin-top: 8px; border-top: 1px solid var(--outline); }
+  .pcard {
+    color: inherit;
+    padding: 20px 0; border-bottom: 1px solid var(--outline);
+  }
+  .pcard h2 { font-size: 18px; margin: 4px 0 8px; }
+  .empty { color: var(--muted); margin-top: 24px; }
+  .votes { display: flex; gap: 10px; margin-top: 14px; align-items: center; }
+  .vote {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--outline); border-radius: 999px;
+    padding: 6px 14px; font-size: 14px; color: var(--text);
+    cursor: pointer; user-select: none;
+  }
+  .vote:hover { background: var(--bg); border-color: var(--accent); }
+  .cmt {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 8px; font-size: 14px; color: var(--muted);
+  }
+  .joinbtn {
+    margin-left: auto; cursor: pointer; user-select: none;
+    background: var(--accent); color: #fff; font-weight: 600; font-size: 14px;
+    padding: 8px 20px; border-radius: 999px;
+  }
+  .joinbtn:hover { filter: brightness(1.08); }
+  .phead { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+  .pavatar {
+    width: 64px; height: 64px; border-radius: 50%; object-fit: cover;
+    border: 1px solid var(--outline); flex-shrink: 0;
+  }
+  .pavatar-fallback {
+    display: grid; place-items: center;
+    background: var(--surface); color: var(--accent);
+    font-weight: 700; font-size: 24px;
+  }
+  .pmeta { display: flex; flex-direction: column; }
+  .pname { font-weight: 700; font-size: 20px; }
+  .csub { color: var(--muted); font-size: 14px; }
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+    background: var(--accent); color: #fff; font-weight: 600; font-size: 14px;
+    padding: 12px 20px; border-radius: 999px; box-shadow: 0 6px 24px rgba(0,0,0,.25);
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 10;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .cta {
     margin-top: 28px; padding-top: 16px;
     border-top: 1px solid var(--outline);
@@ -715,6 +1263,7 @@ ${head}
 </head>
 <body>
 ${body}
+<div class="toast" id="toast"></div>
 <script>
   // Close behaves the way it does on other social platforms: go back if
   // there's somewhere to go, otherwise try to close the tab outright.
@@ -724,6 +1273,42 @@ ${body}
     } else {
       window.close();
     }
+  });
+
+  // A small toast, used for the vote buttons on the community feed.
+  var toastTimer;
+  function showToast(message) {
+    var el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2200);
+  }
+
+  // Voting and joining both need an account, so on the web these buttons just
+  // prompt to open the app. preventDefault stops the surrounding card link (for
+  // the vote buttons) from also navigating.
+  document.querySelectorAll('.vote, .joinbtn').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      showToast('Login to the app');
+    });
+  });
+
+  // Multi-attachment carousels: keep the "N / M" counter and dots in step with
+  // whichever slide is snapped into view as the user swipes.
+  document.querySelectorAll('.carousel').forEach(function (c) {
+    var track = c.querySelector('.track');
+    var cur = c.querySelector('.cur');
+    var dots = c.querySelectorAll('.dot');
+    if (!track) return;
+    track.addEventListener('scroll', function () {
+      var i = Math.round(track.scrollLeft / track.clientWidth);
+      if (cur) cur.textContent = String(i + 1);
+      dots.forEach(function (d, di) { d.classList.toggle('on', di === i); });
+    }, { passive: true });
   });
 </script>
 </body>
