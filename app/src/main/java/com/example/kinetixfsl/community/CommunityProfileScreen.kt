@@ -81,6 +81,8 @@ fun CommunityProfileScreen(
     onUserClick: ((String) -> Unit)? = null,
     /** Tapping My Communities. Also a placeholder until communities exist. */
     onCommunitiesClick: () -> Unit = {},
+    /** Tapping a community in the My Communities sheet opens it. */
+    onOpenCommunity: (String) -> Unit = {},
     viewModel: CommunityProfileViewModel =
         remember(userId) { CommunityProfileViewModel(userId = userId) },
 ) {
@@ -281,6 +283,10 @@ fun CommunityProfileScreen(
                 communities = state.myCommunities,
                 joinedIds = state.viewerJoinedCommunityIds,
                 onToggleJoin = { viewModel.toggleJoinCommunity(it) },
+                onOpenCommunity = { community ->
+                    isCommunitiesOpen = false
+                    onOpenCommunity(community.id)
+                },
                 onDismiss = { isCommunitiesOpen = false },
             )
         }
@@ -877,6 +883,7 @@ private fun MyCommunitiesSheet(
     communities: List<Community>,
     joinedIds: Set<String>,
     onToggleJoin: (Community) -> Unit,
+    onOpenCommunity: (Community) -> Unit,
     onDismiss: () -> Unit,
 ) {
     Box(
@@ -946,6 +953,7 @@ private fun MyCommunitiesSheet(
                             community = community,
                             isJoined = community.id in joinedIds,
                             onToggleJoin = { onToggleJoin(community) },
+                            onClick = { onOpenCommunity(community) },
                         )
                     }
                 }
@@ -961,15 +969,23 @@ private fun MyCommunityRow(
     community: Community,
     isJoined: Boolean,
     onToggleJoin: () -> Unit,
+    onClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Avatar(
+            avatarUrl = community.avatarUrl,
+            name = community.name,
+            size = 44.dp,
+        )
+        Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = community.name,
@@ -978,6 +994,12 @@ private fun MyCommunityRow(
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "${community.memberCount} " +
+                    if (community.memberCount == 1L) "member" else "members",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (community.description.isNotBlank()) {
                 Spacer(Modifier.height(2.dp))

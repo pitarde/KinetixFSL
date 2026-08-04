@@ -7,4 +7,8 @@
     <color name="kinetix_green">#FF1D9E75</color>
     <color name="kinetix_mint">#FF95D4CC</color>
     <color name="kinetix_white">#FFFFFFFF</color>
+    <!-- Window background. Has a values-night variant so the window itself is
+         dark in dark mode — otherwise the white default flashes through during
+         screen transitions before Compose paints its own background. -->
+    <color name="kinetix_window">#FFFFFFFF</color>
 </resources>

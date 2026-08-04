@@ -35,7 +35,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,7 +69,10 @@ fun EditPostScreen(
 ) {
     val viewModel = remember(post.id) { EditPostViewModel(post) }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val joinedCommunities by viewModel.joinedCommunities.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    var showCommunityPicker by remember { mutableStateOf(false) }
 
     BackHandler(onBack = onClose)
 
@@ -145,6 +150,42 @@ fun EditPostScreen(
                         fontWeight = FontWeight.Bold,
                     )
                 }
+            }
+        }
+
+        // ---- Community selector: post to a community, or the Home Feed ----
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 20.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Posting to",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(8.dp))
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable { showCommunityPicker = true }
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = state.communityLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    imageVector = CommunityIcons.ChevronDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(16.dp),
+                )
             }
         }
 
@@ -295,6 +336,18 @@ fun EditPostScreen(
                     },
             )
         }
+    }
+
+    if (showCommunityPicker) {
+        CommunityPickerSheet(
+            communities = joinedCommunities,
+            selectedId = state.selectedCommunityId,
+            onPick = { id, name ->
+                viewModel.selectCommunity(id, name)
+                showCommunityPicker = false
+            },
+            onDismiss = { showCommunityPicker = false },
+        )
     }
 }
 

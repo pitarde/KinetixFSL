@@ -62,6 +62,8 @@ fun PostDetailScreen(
     onClose: () -> Unit,
     /** Opens the author's profile from their avatar or name in the top bar. */
     onAuthorClick: (String) -> Unit = {},
+    /** Opens the post's community from its name in the top bar. No-op if unset. */
+    onCommunityClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -98,30 +100,69 @@ fun PostDetailScreen(
                     .clickable(onClick = onClose),
             )
             Spacer(Modifier.width(12.dp))
-            // Avatar and name together are the tap target for the author's
-            // profile — the same gesture as in the feed.
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(50))
-                    .clickable(enabled = post.authorId.isNotBlank()) {
-                        onAuthorClick(post.authorId)
+            if (post.communityId.isNotBlank()) {
+                // Community post: the community up top, "Posted by {author}"
+                // underneath — Reddit's pattern, so the post still credits
+                // whoever made it even though the community leads the header.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Avatar(
+                        avatarUrl = null,
+                        name = post.communityName.ifBlank { "Community" },
+                        size = 30.dp,
+                        modifier = Modifier.clickable { onCommunityClick(post.communityId) },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = post.communityName.ifBlank { "Community" },
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable { onCommunityClick(post.communityId) },
+                        )
+                        Text(
+                            text = "Posted by " + post.authorName.ifBlank { "Unknown" },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable(enabled = post.authorId.isNotBlank()) {
+                                    onAuthorClick(post.authorId)
+                                },
+                        )
                     }
-                    .padding(vertical = 2.dp),
-            ) {
-                Avatar(
-                    avatarUrl = post.authorAvatarUrl,
-                    name = post.authorName,
-                    size = 30.dp,
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = post.authorName.ifBlank { "Unknown" },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                }
+            } else {
+                // Avatar and name together are the tap target for the author's
+                // profile — the same gesture as in the feed.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(50))
+                        .clickable(enabled = post.authorId.isNotBlank()) {
+                            onAuthorClick(post.authorId)
+                        }
+                        .padding(vertical = 2.dp),
+                ) {
+                    Avatar(
+                        avatarUrl = post.authorAvatarUrl,
+                        name = post.authorName,
+                        size = 30.dp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = post.authorName.ifBlank { "Unknown" },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
             Icon(
                 imageVector = CommunityIcons.Share,

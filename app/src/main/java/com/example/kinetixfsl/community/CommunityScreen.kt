@@ -2,6 +2,11 @@ package com.example.kinetixfsl.community
 
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -27,6 +32,7 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -41,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.kinetixfsl.community.home.CommunityHomeScreen
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.tabs.CommunityProfilePlaceholder
 import com.example.kinetixfsl.community.tabs.NotificationsPlaceholder
@@ -53,12 +60,6 @@ fun CommunityScreen(
     onStartCommunity: () -> Unit = {},
     onDiscoverCommunities: () -> Unit = {},
     modifier: Modifier = Modifier,
-    /**
-     * Opens a community from the home feed. [pinnedPostId] is set when the user
-     * tapped a specific community post — that post is shown at the top of the
-     * community until they refresh.
-     */
-    onOpenCommunity: (communityId: String, pinnedPostId: String?) -> Unit = { _, _ -> },
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -79,6 +80,17 @@ fun CommunityScreen(
     /** Drops [index] and everything stacked above it. */
     fun closeFrom(index: Int) {
         while (overlays.size > index) overlays.removeAt(overlays.lastIndex)
+    }
+
+    /**
+     * Opens a community as another layer on this same overlay stack, rather
+     * than as a separate navigation destination — so back correctly unwinds to
+     * whatever was showing before (a profile, a post, the feed), instead of
+     * resetting this screen's own state (selected tab, other open overlays)
+     * the way navigating away and back through the NavController would.
+     */
+    val openCommunity: (String) -> Unit = { communityId ->
+        overlays.add(CommunityOverlay.Community(communityId))
     }
 
     // Shared list state so the bottom nav can scroll it to top.
@@ -135,22 +147,17 @@ fun CommunityScreen(
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it },
                 onMenuClick = { scope.launch { drawerState.open() } },
+                // Tapping the card or the comment button both land on the
+                // detail screen — for a community post that's the same full
+                // post-and-comments view an individual post gets, just with the
+                // community's name and the poster credited underneath it.
                 onCommentClick = { post -> overlays.add(CommunityOverlay.Detail(post)) },
-                // Tapping a community post opens that community with the post
-                // pinned to the top; an individual post opens the detail screen.
-                onPostClick = { post ->
-                    if (post.communityId.isNotBlank()) {
-                        onOpenCommunity(post.communityId, post.id)
-                    } else {
-                        overlays.add(CommunityOverlay.Detail(post))
-                    }
-                },
+                onPostClick = { post -> overlays.add(CommunityOverlay.Detail(post)) },
                 onMediaClick = { post -> overlays.add(CommunityOverlay.Immersive(post)) },
                 onEditPost = { post -> overlays.add(CommunityOverlay.Edit(post)) },
                 onAuthorClick = { uid -> overlays.add(CommunityOverlay.Profile(uid)) },
-                // The community badge/header tap just browses the community —
-                // no specific post pinned.
-                onOpenCommunity = { communityId -> onOpenCommunity(communityId, null) },
+                // The community badge/header tap browses the community itself.
+                onOpenCommunity = openCommunity,
                 // Anything layered over the feed takes it out of the running
                 // for bandwidth: no autoplay, no prefetch behind the overlay.
                 isFeedActive = overlays.isEmpty(),
@@ -178,7 +185,17 @@ fun CommunityScreen(
             // order, the topmost screen's back always wins.
             overlays.forEachIndexed { index, overlay ->
                 key(index) {
-                    val close = { closeFrom(index) }
+                    // Fades in when pushed, fades out before it's removed — a
+                    // crossfade over whatever's beneath (feed or lower overlay),
+                    // so opening and closing a screen is smooth rather than an
+                    // instant pop. Fade (not a slide) so it never fights the
+                    // immersive viewer's own drag-to-dismiss animation.
+                    val visible = remember { MutableTransitionState(false).apply { targetState = true } }
+                    // Once the exit animation settles, actually drop it.
+                    LaunchedEffect(visible.isIdle) {
+                        if (visible.isIdle && !visible.currentState) closeFrom(index)
+                    }
+                    val close = { visible.targetState = false }
                     // A background only paints — it doesn't absorb touches. Without
                     // this, any tap that missed an interactive element fell through
                     // the overlay and hit the feed underneath, so tapping a dead
@@ -195,6 +212,11 @@ fun CommunityScreen(
                         overlays.add(CommunityOverlay.Profile(uid))
                     }
 
+                    AnimatedVisibility(
+                        visibleState = visible,
+                        enter = fadeIn(tween(220)),
+                        exit = fadeOut(tween(200)),
+                    ) {
                     Box(modifier = blockPassThrough) {
                     when (overlay) {
                         is CommunityOverlay.Profile -> {
@@ -211,6 +233,7 @@ fun CommunityScreen(
                                     overlays.add(CommunityOverlay.PostById(item.postId))
                                 },
                                 onUserClick = openProfile,
+                                onOpenCommunity = openCommunity,
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(MaterialTheme.colorScheme.background)
@@ -242,6 +265,7 @@ fun CommunityScreen(
                                 onDownvote = { feedViewModel.vote(post.id, "down") },
                                 onShare = { feedViewModel.share(context, post) },
                                 onAuthorClick = openProfile,
+                                onCommunityClick = openCommunity,
                                 onClose = close,
                             )
                         }
@@ -262,6 +286,7 @@ fun CommunityScreen(
                                     onDownvote = { feedViewModel.vote(post.id, "down") },
                                     onShare = { feedViewModel.share(context, post) },
                                     onAuthorClick = openProfile,
+                                    onCommunityClick = openCommunity,
                                     onClose = close,
                                 )
                             } else {
@@ -277,6 +302,16 @@ fun CommunityScreen(
                                 )
                             }
                         }
+
+                        is CommunityOverlay.Community -> {
+                            // CommunityHomeScreen registers its own BackHandler
+                            // wired to onClose, so it needs nothing extra here.
+                            CommunityHomeScreen(
+                                communityId = overlay.communityId,
+                                onClose = close,
+                            )
+                        }
+                    }
                     }
                     }
                 }
@@ -329,6 +364,7 @@ private fun CommunityScaffold(
                     onEditPost = onEditPost,
                     onCommentClick = onProfileCommentClick,
                     onUserClick = onAuthorClick,
+                    onOpenCommunity = onOpenCommunity,
                 )
                 CommunityTab.CREATE -> CreatePostScreen(
                     onClose = { onTabSelected(CommunityTab.HOME) },
@@ -459,4 +495,7 @@ private sealed interface CommunityOverlay {
 
     /** The editor, reached from your own post's menu. */
     data class Edit(val post: Post) : CommunityOverlay
+
+    /** A community, opened from a post's badge or a profile's My Communities. */
+    data class Community(val communityId: String) : CommunityOverlay
 }

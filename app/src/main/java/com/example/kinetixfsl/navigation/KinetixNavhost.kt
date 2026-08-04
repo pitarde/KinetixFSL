@@ -1,6 +1,8 @@
 package com.example.kinetixfsl.navigation
 
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -73,12 +75,8 @@ object Route {
 
     private const val COMMUNITY_HOME_BASE = "community_home"
     const val COMMUNITY_HOME_ARG = "communityId"
-    const val COMMUNITY_HOME_PINNED_ARG = "pinned"
-    const val COMMUNITY_HOME_PATTERN =
-        "$COMMUNITY_HOME_BASE/{$COMMUNITY_HOME_ARG}?$COMMUNITY_HOME_PINNED_ARG={$COMMUNITY_HOME_PINNED_ARG}"
-    fun communityHome(communityId: String, pinnedPostId: String? = null): String =
-        "$COMMUNITY_HOME_BASE/$communityId" +
-            (pinnedPostId?.let { "?$COMMUNITY_HOME_PINNED_ARG=$it" } ?: "")
+    const val COMMUNITY_HOME_PATTERN = "$COMMUNITY_HOME_BASE/{$COMMUNITY_HOME_ARG}"
+    fun communityHome(communityId: String): String = "$COMMUNITY_HOME_BASE/$communityId"
 
     private const val COMMUNITY_CATEGORY_BASE = "community_category"
     const val COMMUNITY_CATEGORY_ARG = "category"
@@ -125,6 +123,37 @@ private const val ANIM_DURATION = 450
 /** Shorter fade for the modules flow — feels snappier. */
 private const val MODULES_FADE = 100
 private const val MODULES_OUT_FADE = 250
+
+// ── Community-area screen transitions ───────────────────────────────────
+//
+// One consistent horizontal "push": a screen enters from the right sliding
+// over the one below, which recedes a little to the left. Going back reverses
+// it. Every part fades alongside the slide so nothing ever hard-cuts, and
+// because both screens stay opaque throughout there's no gap for the window
+// to show through — that plus the day/night window background is what kills
+// the dark-mode white flash.
+
+private const val PUSH_DURATION = 300
+
+/** New screen slides in from the right edge. */
+private fun pushEnter(): EnterTransition =
+    slideInHorizontally(tween(PUSH_DURATION, easing = FastOutSlowInEasing)) { it } +
+        fadeIn(tween(PUSH_DURATION))
+
+/** A dismissed screen slides back off to the right. */
+private fun pushPopExit(): ExitTransition =
+    slideOutHorizontally(tween(PUSH_DURATION, easing = FastOutSlowInEasing)) { it } +
+        fadeOut(tween(PUSH_DURATION))
+
+/** The screen underneath recedes a quarter-width to the left as one covers it. */
+private fun recedeExit(): ExitTransition =
+    slideOutHorizontally(tween(PUSH_DURATION, easing = FastOutSlowInEasing)) { -it / 4 } +
+        fadeOut(tween(PUSH_DURATION))
+
+/** …and slides back into place when the screen above it is dismissed. */
+private fun recedePopEnter(): EnterTransition =
+    slideInHorizontally(tween(PUSH_DURATION, easing = FastOutSlowInEasing)) { -it / 4 } +
+        fadeIn(tween(PUSH_DURATION))
 
 @Composable
 fun KinetixNavHost(
@@ -215,6 +244,11 @@ fun KinetixNavHost(
     NavHost(
         navController = navController,
         startDestination = Route.SPLASH,
+        // A themed backstop behind every destination, so during a transition the
+        // exposed sliver is the app's own background — never the bare window.
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
     ) {
         // ---- Splash: no animation (it fades on its own) ----
         composable(Route.SPLASH) {
@@ -418,13 +452,14 @@ fun KinetixNavHost(
             )
         }
 
-        // ---- Community: quick fade (drawer provides the visual motion) ----
+        // ---- Community: fades in from the dashboard; recedes when Start /
+        //      Discover push over it, then slides back when they're dismissed.
         composable(
             route = Route.COMMUNITY,
-            enterTransition = { fadeIn(tween(200)) },
-            exitTransition = { fadeOut(tween(200)) },
-            popEnterTransition = { fadeIn(tween(200)) },
-            popExitTransition = { fadeOut(tween(200)) },
+            enterTransition = { fadeIn(tween(PUSH_DURATION)) },
+            exitTransition = { recedeExit() },
+            popEnterTransition = { recedePopEnter() },
+            popExitTransition = { fadeOut(tween(PUSH_DURATION)) },
         ) {
             CommunityScreen(
                 onNavigateToDashboard = {
@@ -441,22 +476,16 @@ fun KinetixNavHost(
                 onDiscoverCommunities = {
                     navController.navigate(Route.DISCOVER_COMMUNITIES)
                 },
-                onOpenCommunity = { communityId, pinnedPostId ->
-                    navController.navigate(Route.communityHome(communityId, pinnedPostId))
-                },
             )
         }
 
         // ---- Start a community: two-step wizard from the drawer ----
         composable(
             route = Route.START_COMMUNITY,
-            enterTransition = {
-                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
-            },
-            exitTransition = { fadeOut(tween(200)) },
-            popExitTransition = {
-                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
-            },
+            enterTransition = { pushEnter() },
+            exitTransition = { recedeExit() },
+            popEnterTransition = { recedePopEnter() },
+            popExitTransition = { pushPopExit() },
         ) {
             StartCommunityScreen(
                 onClose = { navController.popBackStack() },
@@ -473,13 +502,10 @@ fun KinetixNavHost(
         // ---- Discover communities: category filter + list ----
         composable(
             route = Route.DISCOVER_COMMUNITIES,
-            enterTransition = {
-                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
-            },
-            exitTransition = { fadeOut(tween(200)) },
-            popExitTransition = {
-                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
-            },
+            enterTransition = { pushEnter() },
+            exitTransition = { recedeExit() },
+            popEnterTransition = { recedePopEnter() },
+            popExitTransition = { pushPopExit() },
         ) {
             DiscoverCommunitiesScreen(
                 onClose = { navController.popBackStack() },
@@ -496,13 +522,10 @@ fun KinetixNavHost(
         composable(
             route = Route.COMMUNITY_CATEGORY_PATTERN,
             arguments = listOf(navArgument(Route.COMMUNITY_CATEGORY_ARG) { type = NavType.StringType }),
-            enterTransition = {
-                slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Left, tween(ANIM_DURATION))
-            },
-            exitTransition = { fadeOut(tween(200)) },
-            popExitTransition = {
-                slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Right, tween(ANIM_DURATION))
-            },
+            enterTransition = { pushEnter() },
+            exitTransition = { recedeExit() },
+            popEnterTransition = { recedePopEnter() },
+            popExitTransition = { pushPopExit() },
         ) { backStackEntry ->
             val encoded = backStackEntry.arguments?.getString(Route.COMMUNITY_CATEGORY_ARG).orEmpty()
             val category = URLDecoder.decode(encoded, StandardCharsets.UTF_8.name())
@@ -518,25 +541,16 @@ fun KinetixNavHost(
         // ---- A single community's home (admin or visitor) ----
         composable(
             route = Route.COMMUNITY_HOME_PATTERN,
-            arguments = listOf(
-                navArgument(Route.COMMUNITY_HOME_ARG) { type = NavType.StringType },
-                navArgument(Route.COMMUNITY_HOME_PINNED_ARG) {
-                    type = NavType.StringType
-                    nullable = true
-                    defaultValue = null
-                },
-            ),
-            enterTransition = { fadeIn(tween(200)) },
-            exitTransition = { fadeOut(tween(200)) },
-            popEnterTransition = { fadeIn(tween(200)) },
-            popExitTransition = { fadeOut(tween(200)) },
+            arguments = listOf(navArgument(Route.COMMUNITY_HOME_ARG) { type = NavType.StringType }),
+            enterTransition = { pushEnter() },
+            exitTransition = { recedeExit() },
+            popEnterTransition = { recedePopEnter() },
+            popExitTransition = { pushPopExit() },
         ) { backStackEntry ->
             val communityId = backStackEntry.arguments?.getString(Route.COMMUNITY_HOME_ARG).orEmpty()
-            val pinnedPostId = backStackEntry.arguments?.getString(Route.COMMUNITY_HOME_PINNED_ARG)
             CommunityHomeScreen(
                 communityId = communityId,
                 onClose = { navController.popBackStack() },
-                pinnedPostId = pinnedPostId,
             )
         }
 
@@ -556,6 +570,7 @@ fun KinetixNavHost(
                 onEditPost = { /* visitors can't edit */ },
                 onCommentClick = { item -> navController.navigate(Route.post(item.postId)) },
                 onUserClick = { uid -> navController.navigate(Route.profile(uid)) },
+                onOpenCommunity = { id -> navController.navigate(Route.communityHome(id)) },
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-mode window background, matching KinetixDarkBackground in the
+         Compose theme so the window and the first Compose frame are the same
+         colour — no white flash between screens in dark mode. -->
+    <color name="kinetix_window">#FF14162F</color>
+</resources>

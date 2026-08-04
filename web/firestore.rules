@@ -73,9 +73,12 @@ service cloud.firestore {
                     && request.resource.data.authorId == request.auth.uid
                     && postCommunityAllowed();
 
-      // The author can edit their own post; anyone signed in may move counters.
+      // The author can edit their own post — including moving it to a
+      // community they've joined, or back to the Home Feed — subject to the
+      // same membership check as creating one. Anyone signed in may move
+      // counters (voting, sharing, commenting).
       allow update: if request.auth != null
-                    && (resource.data.authorId == request.auth.uid
+                    && ((resource.data.authorId == request.auth.uid && postCommunityAllowed())
                         || onlyCounterFieldsChanged());
 
       // The author deletes their own post; the community's creator may also

@@ -419,7 +419,7 @@ fun CreatePostScreen(
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun CommunityPickerSheet(
+internal fun CommunityPickerSheet(
     communities: List<com.example.kinetixfsl.community.model.Community>,
     selectedId: String,
     onPick: (id: String, name: String) -> Unit,

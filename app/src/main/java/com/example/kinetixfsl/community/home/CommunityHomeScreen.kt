@@ -1,6 +1,11 @@
 package com.example.kinetixfsl.community.home
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -82,11 +88,6 @@ fun CommunityHomeScreen(
     communityId: String,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
-    /**
-     * A post to show at the top on entry — set when the user arrived by tapping
-     * this post in the home feed. Refreshing the feed returns to hot order.
-     */
-    pinnedPostId: String? = null,
 ) {
     val viewModel = remember(communityId) { CommunityHomeViewModel(communityId) }
     val community by viewModel.community.collectAsStateWithLifecycle()
@@ -128,9 +129,7 @@ fun CommunityHomeScreen(
     // Feed + overlay plumbing, mirroring CommunityScreen so posts stay fully
     // interactive (tap → detail, media → immersive, author → profile). Scoped
     // to this community, so the feed shows only its posts, ranked by vote score.
-    val feedViewModel = remember(communityId, pinnedPostId) {
-        CommunityFeedViewModel(communityId = communityId, pinnedPostId = pinnedPostId)
-    }
+    val feedViewModel = remember(communityId) { CommunityFeedViewModel(communityId = communityId) }
     val feedState by feedViewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by feedViewModel.userVotes.collectAsStateWithLifecycle()
     val searchQuery by feedViewModel.searchQuery.collectAsStateWithLifecycle()
@@ -144,6 +143,14 @@ fun CommunityHomeScreen(
     fun closeFrom(index: Int) {
         while (overlays.size > index) overlays.removeAt(overlays.lastIndex)
     }
+
+    /**
+     * Opens another community on this same overlay stack rather than as a
+     * separate navigation destination, so back correctly unwinds to whatever
+     * was showing before (this community's own profile view, its feed) instead
+     * of losing that state — same reasoning as [CommunityScreen]'s equivalent.
+     */
+    val openCommunity: (String) -> Unit = { id -> overlays.add(HomeOverlay.Community(id)) }
 
     fun liveCopyOf(post: Post): Post =
         (feedState as? FeedState.Success)?.posts?.firstOrNull { it.id == post.id } ?: post
@@ -287,7 +294,13 @@ fun CommunityHomeScreen(
         // Overlays, drawn bottom-first; back pops exactly one.
         overlays.forEachIndexed { index, overlay ->
             key(index) {
-                val close = { closeFrom(index) }
+                // Fade in on push, fade out before removal — see CommunityScreen
+                // for why a fade (not a slide) is used here.
+                val visible = remember { MutableTransitionState(false).apply { targetState = true } }
+                LaunchedEffect(visible.isIdle) {
+                    if (visible.isIdle && !visible.currentState) closeFrom(index)
+                }
+                val close = { visible.targetState = false }
                 val blockPassThrough = Modifier
                     .fillMaxSize()
                     .clickable(
@@ -298,6 +311,11 @@ fun CommunityHomeScreen(
                     overlays.add(HomeOverlay.Profile(uid))
                 }
 
+                AnimatedVisibility(
+                    visibleState = visible,
+                    enter = fadeIn(tween(220)),
+                    exit = fadeOut(tween(200)),
+                ) {
                 Box(modifier = blockPassThrough) {
                     when (overlay) {
                         is HomeOverlay.Profile -> {
@@ -310,6 +328,7 @@ fun CommunityHomeScreen(
                                     overlays.add(HomeOverlay.PostById(item.postId))
                                 },
                                 onUserClick = openProfile,
+                                onOpenCommunity = openCommunity,
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(MaterialTheme.colorScheme.background)
@@ -376,7 +395,21 @@ fun CommunityHomeScreen(
                                 )
                             }
                         }
+
+                        is HomeOverlay.Community -> {
+                            // CommunityHomeScreen registers its own BackHandler
+                            // wired to onClose, so it needs nothing extra here.
+                            // Recursing into itself is exactly what lets this
+                            // nest to any depth — community, profile, another
+                            // community, another profile — each layer closing
+                            // back to the one beneath it.
+                            CommunityHomeScreen(
+                                communityId = overlay.communityId,
+                                onClose = close,
+                            )
+                        }
                     }
+                }
                 }
             }
         }
@@ -747,6 +780,9 @@ private sealed interface HomeOverlay {
     data class PostById(val postId: String) : HomeOverlay
     data class Immersive(val post: Post) : HomeOverlay
     data class Edit(val post: Post) : HomeOverlay
+
+    /** A different community, opened from a profile's My Communities sheet. */
+    data class Community(val communityId: String) : HomeOverlay
 }
 
 /** Join / Joined toggle shown in the header to non-admin viewers. */

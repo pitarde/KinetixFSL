@@ -4,14 +4,17 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.kinetixfsl.community.model.Community
 import com.example.kinetixfsl.community.model.MAX_POST_MEDIA
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.model.PostMedia
 import com.example.kinetixfsl.community.upload.R2MediaUploader
 import com.example.kinetixfsl.community.upload.SharePreviewGenerator
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -29,10 +32,17 @@ data class EditPostUiState(
     val savingLabel: String = "",
     val errorMessage: String? = null,
     val isSaved: Boolean = false,
+    /** Where the post lives. Blank id means the Home Feed. */
+    val selectedCommunityId: String = "",
+    val selectedCommunityName: String = "",
 ) {
     val totalMedia: Int get() = existingMedia.size + newMedia.size
     val canAddMore: Boolean get() = totalMedia < MAX_POST_MEDIA
     val canSave: Boolean get() = title.isNotBlank() && !isSaving
+
+    /** Label for the community pill: the name, or the Home Feed default. */
+    val communityLabel: String
+        get() = selectedCommunityName.ifBlank { "Home Feed" }
 }
 
 /**
@@ -44,6 +54,7 @@ data class EditPostUiState(
 class EditPostViewModel(
     post: Post,
     private val repository: CommunityRepository = CommunityRepository(),
+    private val directory: CommunityDirectoryRepository = CommunityDirectoryRepository(),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -54,9 +65,25 @@ class EditPostViewModel(
             linkUrl = post.linkUrl.orEmpty(),
             isLinkFieldVisible = !post.linkUrl.isNullOrBlank(),
             existingMedia = post.mediaItems,
+            selectedCommunityId = post.communityId,
+            selectedCommunityName = post.communityName,
         )
     )
     val uiState: StateFlow<EditPostUiState> = _uiState.asStateFlow()
+
+    /**
+     * Communities the user has joined — the options in the community picker.
+     * The post's own community is included even if it isn't in this list yet
+     * (e.g. the picker opens before the join listener has caught up), so
+     * switching away and back never loses the current selection.
+     */
+    val joinedCommunities: StateFlow<List<Community>> =
+        directory.observeJoinedCommunities()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Picks the target community. A blank [id] means the Home Feed. */
+    fun selectCommunity(id: String, name: String) =
+        _uiState.update { it.copy(selectedCommunityId = id, selectedCommunityName = name) }
 
     fun onTitleChange(value: String) =
         _uiState.update { it.copy(title = value, errorMessage = null) }
@@ -159,6 +186,8 @@ class EditPostViewModel(
                 body = state.body,
                 linkUrl = state.linkUrl.takeIf { it.isNotBlank() },
                 media = state.existingMedia + uploaded,
+                communityId = state.selectedCommunityId,
+                communityName = state.selectedCommunityName,
             ).fold(
                 onSuccess = { _uiState.update { it.copy(isSaving = false, isSaved = true) } },
                 onFailure = { error ->

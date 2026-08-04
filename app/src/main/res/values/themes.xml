@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <!-- The theme the app runs on after the splash hands off. -->
-    <style name="Theme.KinetixFSL" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- The theme the app runs on after the splash hands off. The window
+         background follows day/night (see values-night/colors.xml) so nothing
+         white flashes through while screens transition in dark mode. -->
+    <style name="Theme.KinetixFSL" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/kinetix_window</item>
+    </style>
 
     <!--
       The launch theme. This is what Android draws in the milliseconds before

@@ -450,6 +450,9 @@ class CommunityRepository(
         body: String,
         linkUrl: String?,
         media: List<PostMedia>,
+        /** Where the post lives. Blank publishes to the Home Feed. */
+        communityId: String = "",
+        communityName: String = "",
     ): Result<Unit> = try {
         // Legacy single-media fields are rewritten too, so the share page and
         // any older client stay consistent with the new attachment list.
@@ -463,6 +466,8 @@ class CommunityRepository(
                 },
                 "imageUrl" to media.firstOrNull { !it.isVideo }?.url,
                 "videoUrl" to media.firstOrNull { it.isVideo }?.url,
+                "communityId" to communityId,
+                "communityName" to communityName,
                 "editedAt" to Timestamp.now(),
             )
         ).await()

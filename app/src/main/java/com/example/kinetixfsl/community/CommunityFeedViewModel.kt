@@ -36,17 +36,7 @@ class CommunityFeedViewModel(
      * community's posts surface to everyone and help the community get noticed.
      */
     private val communityId: String? = null,
-    /**
-     * A post to float to the very top of this community's feed on entry — set
-     * when the user opened the community by tapping that post in the home feed,
-     * so it's the first thing they see. Cleared on the first refresh, which
-     * returns the feed to its normal hot-score order.
-     */
-    private val pinnedPostId: String? = null,
 ) : ViewModel() {
-
-    /** True until the first refresh clears the pinned post (see [pinnedPostId]). */
-    private var pinActive: Boolean = pinnedPostId != null
 
     /** Communities the signed-in user has joined — drives each card's Join pill. */
     val joinedCommunityIds: StateFlow<Set<String>> =
@@ -235,16 +225,9 @@ class CommunityFeedViewModel(
         val idsChanged = incomingIds != currentIds
 
         if (shouldReorder || idsChanged) {
-            val sorted = incoming.sortedByDescending { hotScore(it) }
-            // A post the user tapped in the home feed is floated to the top so
-            // they land on it straight away; refresh clears the pin (below).
-            val ordered = if (pinActive && pinnedPostId != null) {
-                val pinned = sorted.firstOrNull { it.id == pinnedPostId }
-                if (pinned != null) listOf(pinned) + sorted.filterNot { it.id == pinnedPostId } else sorted
-            } else {
-                sorted
-            }
-            displayOrder = ordered.map { it.id }
+            displayOrder = incoming
+                .sortedByDescending { hotScore(it) }
+                .map { it.id }
             shouldReorder = false
         }
         // Otherwise: same posts, only counts changed — hold the order steady.
@@ -336,9 +319,6 @@ class CommunityFeedViewModel(
             feedJob?.cancel()
             feedJob = null
             shouldReorder = true
-            // Back to the normal hot-score order — the tapped post is no longer
-            // held at the top once the user refreshes.
-            pinActive = false
 
             observeFeed()
 

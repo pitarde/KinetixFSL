@@ -43,7 +43,14 @@ import com.example.kinetixfsl.ui.theme.KinetixGreen
  * follow the system light/dark setting.
  */
 
-/** Avatar + display name + "3h · 1.2k views" metadata line. */
+/**
+ * Avatar + display name + "3h · 1.2k views" metadata line.
+ *
+ * When [communityName] is set (a community post in the home feed), the row
+ * instead shows the community on top and a "Posted by {author}" byline
+ * underneath — the same two-line pattern Reddit uses so a community post still
+ * credits the person who made it.
+ */
 @Composable
 internal fun PostAuthorRow(
     post: Post,
@@ -64,12 +71,72 @@ internal fun PostAuthorRow(
     communityAvatarUrl: String? = null,
     onCommunityClick: (() -> Unit)? = null,
 ) {
+    val timeLabel = post.createdAt.relativeToNow()
+    val viewsLabel = if (post.viewCount > 0) "${post.viewCount.compact()} views" else null
+
+    if (communityName != null) {
+        Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+            val communityClickable = if (onCommunityClick != null) {
+                Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable(onClick = onCommunityClick)
+            } else {
+                Modifier
+            }
+            Box(modifier = communityClickable) {
+                Avatar(
+                    avatarUrl = communityAvatarUrl,
+                    name = communityName,
+                    size = 32.dp,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        communityName.ifBlank { "Community" },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = communityClickable,
+                    )
+                    if (timeLabel.isNotBlank()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            timeLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                val byline = "Posted by " + post.authorName.ifBlank { "Unknown" } +
+                    (viewsLabel?.let { " · $it" } ?: "")
+                Text(
+                    byline,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = if (onAuthorClick != null) {
+                        Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable(onClick = onAuthorClick)
+                    } else {
+                        Modifier
+                    },
+                )
+            }
+            if (trailing != null) {
+                Spacer(Modifier.weight(1f))
+                trailing()
+            }
+        }
+        return
+    }
+
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        val headerClick = onCommunityClick ?: onAuthorClick
-        val headerModifier = if (headerClick != null) {
+        val headerModifier = if (onAuthorClick != null) {
             Modifier
                 .clip(RoundedCornerShape(50))
-                .clickable(onClick = headerClick)
+                .clickable(onClick = onAuthorClick)
         } else {
             Modifier
         }
@@ -79,21 +146,19 @@ internal fun PostAuthorRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Avatar(
-                avatarUrl = if (communityName != null) communityAvatarUrl else post.authorAvatarUrl,
-                name = communityName ?: post.authorName,
+                avatarUrl = post.authorAvatarUrl,
+                name = post.authorName,
                 size = 32.dp,
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                communityName?.ifBlank { "Community" } ?: post.authorName.ifBlank { "Unknown" },
+                post.authorName.ifBlank { "Unknown" },
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.SemiBold,
             )
         }
         Spacer(Modifier.width(8.dp))
-        val timeLabel = post.createdAt.relativeToNow()
-        val viewsLabel = if (post.viewCount > 0) "${post.viewCount.compact()} views" else null
         val meta = listOfNotNull(timeLabel.takeIf { it.isNotBlank() }, viewsLabel)
             .joinToString(" · ")
         if (meta.isNotBlank()) {
