@@ -93,6 +93,18 @@ fun CommunityScreen(
         overlays.add(CommunityOverlay.Community(communityId))
     }
 
+    /** Opens a post by id as an overlay — used by in-app share links in posts. */
+    val openPostById: (String) -> Unit = { postId ->
+        overlays.add(CommunityOverlay.PostById(postId))
+    }
+
+    // The home-feed post whose 3-dot sheet is open, and one pending delete.
+    var actionsPost: Post? by remember { mutableStateOf(null) }
+    var pendingDeletePost: Post? by remember { mutableStateOf(null) }
+    val currentUid = remember {
+        com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+    }
+
     // Shared list state so the bottom nav can scroll it to top.
     val feedListState = rememberLazyListState()
 
@@ -100,6 +112,7 @@ fun CommunityScreen(
     val feedViewModel = remember { CommunityFeedViewModel() }
     val feedState by feedViewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by feedViewModel.userVotes.collectAsStateWithLifecycle()
+    val communityAvatars by feedViewModel.communityAvatars.collectAsStateWithLifecycle()
 
     /**
      * Swaps in the live copy of a post from the feed so counts keep ticking
@@ -164,6 +177,8 @@ fun CommunityScreen(
                 onProfileCommentClick = { item ->
                     overlays.add(CommunityOverlay.PostById(item.postId))
                 },
+                onFeedMenuClick = { post -> actionsPost = post },
+                onOpenPostById = openPostById,
                 feedListState = feedListState,
                 feedViewModel = feedViewModel,
                 onScrollToTopAndRefresh = {
@@ -266,6 +281,13 @@ fun CommunityScreen(
                                 onShare = { feedViewModel.share(context, post) },
                                 onAuthorClick = openProfile,
                                 onCommunityClick = openCommunity,
+                                communityAvatarUrl = communityAvatars[post.communityId],
+                                onEdit = { overlays.add(CommunityOverlay.Edit(post)) },
+                                onDelete = { feedViewModel.deletePost(post); close() },
+                                onHide = { feedViewModel.hidePost(post.id); close() },
+                                onOpenPostLink = openPostById,
+                                onOpenCommunityLink = openCommunity,
+                                onOpenProfileLink = openProfile,
                                 onClose = close,
                             )
                         }
@@ -287,6 +309,10 @@ fun CommunityScreen(
                                     onShare = { feedViewModel.share(context, post) },
                                     onAuthorClick = openProfile,
                                     onCommunityClick = openCommunity,
+                                    communityAvatarUrl = communityAvatars[post.communityId],
+                                    onEdit = { overlays.add(CommunityOverlay.Edit(post)) },
+                                    onDelete = { feedViewModel.deletePost(post); close() },
+                                    onHide = { feedViewModel.hidePost(post.id); close() },
                                     onClose = close,
                                 )
                             } else {
@@ -298,6 +324,8 @@ fun CommunityScreen(
                                     onDownvote = { feedViewModel.vote(post.id, "down") },
                                     onShare = { feedViewModel.share(context, post) },
                                     onAuthorClick = openProfile,
+                                    onCommunityClick = openCommunity,
+                                    communityAvatarUrl = communityAvatars[post.communityId],
                                     onClose = close,
                                 )
                             }
@@ -316,6 +344,65 @@ fun CommunityScreen(
                     }
                 }
             }
+
+            // The home-feed post's 3-dot sheet: own post gets Copy/Delete/Edit,
+            // anyone else's gets Copy/Report/Share/Hide.
+            val target = actionsPost
+            if (target != null) {
+                if (target.authorId == currentUid) {
+                    PostActionsSheet(
+                        onCopyText = {
+                            copyPostText(context, target)
+                            actionsPost = null
+                        },
+                        onDelete = {
+                            pendingDeletePost = target
+                            actionsPost = null
+                        },
+                        onEdit = {
+                            actionsPost = null
+                            overlays.add(CommunityOverlay.Edit(target))
+                        },
+                        onDismiss = { actionsPost = null },
+                    )
+                } else {
+                    OtherPostActionsSheet(
+                        onCopyText = {
+                            copyPostText(context, target)
+                            actionsPost = null
+                        },
+                        onReport = {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Post reported. We'll review it soon.",
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                            actionsPost = null
+                        },
+                        onShare = {
+                            feedViewModel.share(context, target)
+                            actionsPost = null
+                        },
+                        onHide = {
+                            feedViewModel.hidePost(target.id)
+                            actionsPost = null
+                        },
+                        onDismiss = { actionsPost = null },
+                    )
+                }
+            }
+
+            val deleting = pendingDeletePost
+            if (deleting != null) {
+                ConfirmDeleteDialog(
+                    title = deleting.title,
+                    onConfirm = {
+                        feedViewModel.deletePost(deleting)
+                        pendingDeletePost = null
+                    },
+                    onDismiss = { pendingDeletePost = null },
+                )
+            }
         }
     }
 }
@@ -333,6 +420,8 @@ private fun CommunityScaffold(
     onOpenCommunity: (String) -> Unit,
     isFeedActive: Boolean,
     onProfileCommentClick: (com.example.kinetixfsl.community.model.UserComment) -> Unit,
+    onFeedMenuClick: (Post) -> Unit,
+    onOpenPostById: (String) -> Unit,
     feedListState: LazyListState,
     feedViewModel: CommunityFeedViewModel,
     onScrollToTopAndRefresh: () -> Unit,
@@ -358,6 +447,8 @@ private fun CommunityScaffold(
                     showCommunityBadge = true,
                     onOpenCommunity = onOpenCommunity,
                     isFeedActive = isFeedActive,
+                    onMenuClick = onFeedMenuClick,
+                    onOpenPostById = onOpenPostById,
                 )
                 CommunityTab.PROFILE -> CommunityProfileScreen(
                     onPostClick = onPostClick,

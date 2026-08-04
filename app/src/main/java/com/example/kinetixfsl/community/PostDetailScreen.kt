@@ -34,8 +34,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -64,9 +64,29 @@ fun PostDetailScreen(
     onAuthorClick: (String) -> Unit = {},
     /** Opens the post's community from its name in the top bar. No-op if unset. */
     onCommunityClick: (String) -> Unit = {},
+    /** The community's profile picture, looked up by the caller. Null shows the
+     *  letter-avatar fallback, same as everywhere else a community avatar shows. */
+    communityAvatarUrl: String? = null,
+    /**
+     * The top-bar 3-dot menu. On your own post it offers Edit and Delete; on
+     * anyone else's it offers Hide. Each is only shown when its handler is set,
+     * so a screen that can't support one (e.g. a shared link) just omits it.
+     * [onDelete] and [onHide] should also close this screen — the post is gone.
+     */
+    onEdit: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
+    onHide: (() -> Unit)? = null,
+    /**
+     * Open the app's own share links (a post, community, or profile pasted into
+     * a post's links) in-app rather than the browser. See [PostLinks].
+     */
+    onOpenPostLink: ((String) -> Unit)? = null,
+    onOpenCommunityLink: ((String) -> Unit)? = null,
+    onOpenProfileLink: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     // Full-screen media opened from inside the detail screen (post media or a
     // comment's image). Kept local so back closes the viewer before the screen.
@@ -75,6 +95,14 @@ fun PostDetailScreen(
 
     // The comment composer, opened from the bottom bar or the comment button.
     var isComposerOpen by remember { mutableStateOf(false) }
+
+    // The top-bar 3-dot menu and its delete confirmation.
+    var isMenuOpen by remember { mutableStateOf(false) }
+    var isConfirmingDelete by remember { mutableStateOf(false) }
+    val isOwnPost = remember(post.authorId) {
+        post.authorId.isNotBlank() &&
+            post.authorId == com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+    }
 
     BackHandler(onBack = onClose)
 
@@ -109,7 +137,7 @@ fun PostDetailScreen(
                     modifier = Modifier.weight(1f),
                 ) {
                     Avatar(
-                        avatarUrl = null,
+                        avatarUrl = communityAvatarUrl,
                         name = post.communityName.ifBlank { "Community" },
                         size = 30.dp,
                         modifier = Modifier.clickable { onCommunityClick(post.communityId) },
@@ -165,12 +193,12 @@ fun PostDetailScreen(
                 }
             }
             Icon(
-                imageVector = CommunityIcons.Share,
-                contentDescription = "Share post",
+                imageVector = CommunityIcons.MoreVertical,
+                contentDescription = "Post options",
                 tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier
                     .size(24.dp)
-                    .clickable(onClick = onShare),
+                    .clickable { isMenuOpen = true },
             )
         }
 
@@ -203,13 +231,14 @@ fun PostDetailScreen(
                         )
                     }
 
-                    if (!post.linkUrl.isNullOrBlank()) {
+                    val links = post.allLinks
+                    if (links.isNotEmpty()) {
                         Spacer(Modifier.height(10.dp))
-                        Text(
-                            text = post.linkUrl,
-                            style = MaterialTheme.typography.bodyMedium
-                                .copy(textDecoration = TextDecoration.Underline),
-                            color = MaterialTheme.colorScheme.primary,
+                        PostLinks(
+                            links = links,
+                            onOpenPost = onOpenPostLink,
+                            onOpenCommunity = onOpenCommunityLink,
+                            onOpenProfile = onOpenProfileLink,
                         )
                     }
 
@@ -331,6 +360,67 @@ fun PostDetailScreen(
                 fullScreenImageUrl = null
                 fullScreenVideoUrl = null
             },
+        )
+    }
+
+    // ---- The 3-dot menu: your own post gets Copy/Delete/Edit, anyone else's
+    // gets Copy/Report/Share/Hide — matching the feed's menus. ----
+    if (isMenuOpen) {
+        if (isOwnPost) {
+            PostActionsSheet(
+                onCopyText = {
+                    copyPostText(context, post)
+                    isMenuOpen = false
+                },
+                onDelete = {
+                    isMenuOpen = false
+                    if (onDelete != null) isConfirmingDelete = true
+                },
+                onEdit = {
+                    isMenuOpen = false
+                    onEdit?.invoke()
+                },
+                onDismiss = { isMenuOpen = false },
+            )
+        } else {
+            OtherPostActionsSheet(
+                onCopyText = {
+                    copyPostText(context, post)
+                    isMenuOpen = false
+                },
+                onReport = {
+                    android.widget.Toast.makeText(
+                        context,
+                        "Post reported. We'll review it soon.",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                    isMenuOpen = false
+                },
+                onShare = {
+                    onShare()
+                    isMenuOpen = false
+                },
+                onHide = if (onHide != null) {
+                    {
+                        onHide()
+                        isMenuOpen = false
+                    }
+                } else {
+                    null
+                },
+                onDismiss = { isMenuOpen = false },
+            )
+        }
+    }
+
+    if (isConfirmingDelete) {
+        ConfirmDeleteDialog(
+            title = post.title,
+            onConfirm = {
+                isConfirmingDelete = false
+                onDelete?.invoke()
+            },
+            onDismiss = { isConfirmingDelete = false },
         )
     }
 }

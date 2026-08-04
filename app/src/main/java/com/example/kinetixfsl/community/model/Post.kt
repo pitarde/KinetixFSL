@@ -49,7 +49,14 @@ data class Post(
     val communityName: String = "",
     val title: String = "",
     val body: String = "",
+    /**
+     * Legacy single link. Still written (as the first of [links]) so older
+     * clients and the un-redeployed web worker keep rendering something.
+     * [allLinks] is what the UI should read.
+     */
     val linkUrl: String? = null,
+    /** Every link the author attached, in order. Empty on older posts. */
+    val links: List<String> = emptyList(),
     /**
      * Legacy single-media fields. Still written for the first image/video on
      * every new post so the share page and any older client keep working, but
@@ -93,6 +100,15 @@ data class Post(
             !imageUrl.isNullOrBlank() -> listOf(PostMedia(imageUrl, "image"))
             else -> emptyList()
         }
+
+    /**
+     * Every link to show, newest scheme first. Posts made before multi-link
+     * existed only carry [linkUrl], so they're adapted here rather than
+     * migrated — every screen reads this.
+     */
+    val allLinks: List<String>
+        get() = links.map { it.trim() }.filter { it.isNotBlank() }
+            .ifEmpty { listOfNotNull(linkUrl?.trim()?.takeIf { it.isNotBlank() }) }
 
     /**
      * Every file this post owns in storage, as bucket keys.

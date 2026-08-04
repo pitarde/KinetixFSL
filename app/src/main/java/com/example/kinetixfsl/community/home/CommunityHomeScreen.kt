@@ -46,7 +46,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -133,6 +137,7 @@ fun CommunityHomeScreen(
     val feedState by feedViewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by feedViewModel.userVotes.collectAsStateWithLifecycle()
     val searchQuery by feedViewModel.searchQuery.collectAsStateWithLifecycle()
+    val communityAvatars by feedViewModel.communityAvatars.collectAsStateWithLifecycle()
     val feedListState = rememberLazyListState()
 
     // The top-bar magnifier opens an inline search field; typing filters this
@@ -144,6 +149,13 @@ fun CommunityHomeScreen(
         while (overlays.size > index) overlays.removeAt(overlays.lastIndex)
     }
 
+    // The feed post whose 3-dot sheet is open, and one pending delete.
+    var actionsPost by remember { mutableStateOf<Post?>(null) }
+    var pendingDeletePost by remember { mutableStateOf<Post?>(null) }
+    val currentUid = remember {
+        com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+    }
+
     /**
      * Opens another community on this same overlay stack rather than as a
      * separate navigation destination, so back correctly unwinds to whatever
@@ -151,6 +163,9 @@ fun CommunityHomeScreen(
      * of losing that state — same reasoning as [CommunityScreen]'s equivalent.
      */
     val openCommunity: (String) -> Unit = { id -> overlays.add(HomeOverlay.Community(id)) }
+
+    /** Opens a post by id as an overlay — used by in-app share links in posts. */
+    val openPostById: (String) -> Unit = { id -> overlays.add(HomeOverlay.PostById(id)) }
 
     fun liveCopyOf(post: Post): Post =
         (feedState as? FeedState.Success)?.posts?.firstOrNull { it.id == post.id } ?: post
@@ -164,13 +179,29 @@ fun CommunityHomeScreen(
         }
     }
 
+    // How far the header has scrolled away, 0 (fully expanded) → 1 (collapsed).
+    // Drives the top bar crossfade: as the banner and name card scroll up under
+    // the bar, the bar fades in the blurred banner and the community name, so the
+    // posts get the whole screen while the community stays identifiable.
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val collapseProgress by remember {
+        androidx.compose.runtime.derivedStateOf {
+            if (feedListState.firstVisibleItemIndex > 0) {
+                1f
+            } else {
+                val rangePx = with(density) { 140.dp.toPx() }
+                (feedListState.firstVisibleItemScrollOffset / rangePx).coerceIn(0f, 1f)
+            }
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
-                .statusBarsPadding(),
+                .background(MaterialTheme.colorScheme.background),
         ) {
+            val current = community
             CommunityHomeTopBar(
                 searchActive = searchActive,
                 query = searchQuery,
@@ -185,33 +216,20 @@ fun CommunityHomeScreen(
                     community?.let { shareCommunity(context, it.id, it.name) }
                 },
                 onMenu = { showOptions = true },
+                // Only reveal the collapsed name/banner once there's a community
+                // to name; while loading the bar stays plain.
+                collapseProgress = if (current != null) collapseProgress else 0f,
+                communityName = current?.name.orEmpty(),
+                bannerUrl = current?.bannerUrl,
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-            val current = community
             if (current == null) {
                 Box(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     contentAlignment = Alignment.Center,
                 ) { CircularProgressIndicator() }
             } else {
-                CommunityHeader(
-                    community = current,
-                    isMember = isMember,
-                    isAdmin = isAdmin,
-                    onJoin = viewModel::join,
-                    onLeave = viewModel::leave,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                CategoryStrip(
-                    categories = current.categories,
-                    isAdmin = isAdmin,
-                    onAdd = { showAddCategory = true },
-                    onRemove = viewModel::removeCategory,
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
                 CommunityFeedContent(
                     modifier = Modifier.weight(1f),
                     viewModel = feedViewModel,
@@ -224,6 +242,31 @@ fun CommunityHomeScreen(
                     // Posting happens from the Create tab; this feed needs no
                     // search bar of its own.
                     showSearchBar = false,
+                    onMenuClick = { post -> actionsPost = post },
+                    onOpenCommunity = openCommunity,
+                    onOpenPostById = openPostById,
+                    // The banner, name card and categories ride inside the feed
+                    // so they scroll away on swipe-up — see [collapseProgress].
+                    headerContent = {
+                        Column {
+                            CommunityHeader(
+                                community = current,
+                                isMember = isMember,
+                                isAdmin = isAdmin,
+                                onJoin = viewModel::join,
+                                onLeave = viewModel::leave,
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                            CategoryStrip(
+                                categories = current.categories,
+                                isAdmin = isAdmin,
+                                onAdd = { showAddCategory = true },
+                                onRemove = viewModel::removeCategory,
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                    },
                 )
             }
         }
@@ -364,6 +407,13 @@ fun CommunityHomeScreen(
                                 onDownvote = { feedViewModel.vote(post.id, "down") },
                                 onShare = { feedViewModel.share(context, post) },
                                 onAuthorClick = openProfile,
+                                communityAvatarUrl = communityAvatars[post.communityId],
+                                onEdit = { overlays.add(HomeOverlay.Edit(post)) },
+                                onDelete = { feedViewModel.deletePost(post); close() },
+                                onHide = { feedViewModel.hidePost(post.id); close() },
+                                onOpenPostLink = openPostById,
+                                onOpenCommunityLink = openCommunity,
+                                onOpenProfileLink = openProfile,
                                 onClose = close,
                             )
                         }
@@ -380,6 +430,10 @@ fun CommunityHomeScreen(
                                     onDownvote = { feedViewModel.vote(post.id, "down") },
                                     onShare = { feedViewModel.share(context, post) },
                                     onAuthorClick = openProfile,
+                                    communityAvatarUrl = communityAvatars[post.communityId],
+                                    onEdit = { overlays.add(HomeOverlay.Edit(post)) },
+                                    onDelete = { feedViewModel.deletePost(post); close() },
+                                    onHide = { feedViewModel.hidePost(post.id); close() },
                                     onClose = close,
                                 )
                             } else {
@@ -391,6 +445,7 @@ fun CommunityHomeScreen(
                                     onDownvote = { feedViewModel.vote(post.id, "down") },
                                     onShare = { feedViewModel.share(context, post) },
                                     onAuthorClick = openProfile,
+                                    communityAvatarUrl = communityAvatars[post.communityId],
                                     onClose = close,
                                 )
                             }
@@ -412,6 +467,58 @@ fun CommunityHomeScreen(
                 }
                 }
             }
+        }
+
+        // The feed post's 3-dot sheet: own post gets Copy/Delete/Edit; anyone
+        // else's gets Copy/Report only — a community feed has no Share or Hide
+        // (there's nowhere else here for a post to go).
+        val target = actionsPost
+        if (target != null) {
+            if (target.authorId == currentUid) {
+                com.example.kinetixfsl.community.PostActionsSheet(
+                    onCopyText = {
+                        com.example.kinetixfsl.community.copyPostText(context, target)
+                        actionsPost = null
+                    },
+                    onDelete = {
+                        pendingDeletePost = target
+                        actionsPost = null
+                    },
+                    onEdit = {
+                        actionsPost = null
+                        overlays.add(HomeOverlay.Edit(target))
+                    },
+                    onDismiss = { actionsPost = null },
+                )
+            } else {
+                com.example.kinetixfsl.community.OtherPostActionsSheet(
+                    onCopyText = {
+                        com.example.kinetixfsl.community.copyPostText(context, target)
+                        actionsPost = null
+                    },
+                    onReport = {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Post reported. We'll review it soon.",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                        actionsPost = null
+                    },
+                    onDismiss = { actionsPost = null },
+                )
+            }
+        }
+
+        val deleting = pendingDeletePost
+        if (deleting != null) {
+            com.example.kinetixfsl.community.ConfirmDeleteDialog(
+                title = deleting.title,
+                onConfirm = {
+                    feedViewModel.deletePost(deleting)
+                    pendingDeletePost = null
+                },
+                onDismiss = { pendingDeletePost = null },
+            )
         }
 
         // The photo cropper sits over everything while it's open.
@@ -449,30 +556,108 @@ private fun CommunityHomeTopBar(
     onClose: () -> Unit,
     onShare: () -> Unit,
     onMenu: () -> Unit,
+    collapseProgress: Float,
+    communityName: String,
+    bannerUrl: String?,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (searchActive) {
-            // Search mode: back arrow collapses it, the field fills the bar.
-            CircleIconButton(CommunityIcons.ArrowBack, "Close search", onCloseSearch)
-            Spacer(Modifier.width(12.dp))
-            TopBarSearchField(
-                query = query,
-                onQueryChange = onQueryChange,
-                modifier = Modifier.weight(1f),
-            )
+    Box(modifier = Modifier.fillMaxWidth()) {
+        // Full-bleed community banner behind the controls — it fills the whole
+        // bar including the status-bar strip, so there's no white band at the
+        // very top. The sharp image shows while expanded and crossfades to a
+        // blurred version as the header scrolls away; a scrim keeps the white
+        // controls and name legible over any banner, in both themes.
+        val hasBanner = !bannerUrl.isNullOrBlank()
+        if (!searchActive) {
+            if (hasBanner) {
+                coil.compose.AsyncImage(
+                    model = bannerUrl,
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .graphicsLayer { alpha = 1f - collapseProgress },
+                )
+                coil.compose.AsyncImage(
+                    model = bannerUrl,
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .blur(18.dp)
+                        .graphicsLayer { alpha = collapseProgress },
+                )
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            androidx.compose.ui.graphics.Color.Black.copy(
+                                alpha = 0.22f + 0.18f * collapseProgress,
+                            ),
+                        ),
+                )
+            } else {
+                // No banner set — a neutral strip rather than a bare white band.
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
+            }
+        }
+
+        // White controls read cleanly over the banner+scrim; with no banner they
+        // keep the normal on-surface tint against the neutral strip.
+        val controlColor = if (hasBanner && !searchActive) {
+            Color.White
         } else {
-            CircleIconButton(CommunityIcons.Close, "Close", onClose)
-            Spacer(Modifier.weight(1f))
-            CircleIconButton(CommunityIcons.Search, "Search", onOpenSearch)
-            Spacer(Modifier.width(12.dp))
-            CircleIconButton(CommunityIcons.Share, "Share", onShare)
-            Spacer(Modifier.width(12.dp))
-            CircleIconButton(CommunityIcons.MoreVertical, "More", onMenu)
+            MaterialTheme.colorScheme.onSurface
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                // The controls clear the notch/status bar, but the blurred banner
+                // behind them still runs to the very top edge.
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (searchActive) {
+                // Search mode: back arrow collapses it, the field fills the bar.
+                CircleIconButton(CommunityIcons.ArrowBack, "Close search", onCloseSearch)
+                Spacer(Modifier.width(12.dp))
+                TopBarSearchField(
+                    query = query,
+                    onQueryChange = onQueryChange,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                CircleIconButton(CommunityIcons.Close, "Close", onClose, tint = controlColor)
+                // The community name slides in as the header collapses, sitting
+                // between Close and the actions like the reference design.
+                if (collapseProgress > 0f) {
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = communityName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = controlColor,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .graphicsLayer { alpha = collapseProgress },
+                    )
+                    Spacer(Modifier.width(12.dp))
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                CircleIconButton(CommunityIcons.Search, "Search", onOpenSearch, tint = controlColor)
+                Spacer(Modifier.width(12.dp))
+                CircleIconButton(CommunityIcons.Share, "Share", onShare, tint = controlColor)
+                Spacer(Modifier.width(12.dp))
+                CircleIconButton(CommunityIcons.MoreVertical, "More", onMenu, tint = controlColor)
+            }
         }
     }
 }
@@ -562,24 +747,9 @@ private fun CommunityHeader(
 ) {
     var expanded by remember { mutableStateOf(false) }
 
+    // The banner now lives full-bleed behind the top bar, so the header card
+    // itself starts straight at the avatar/name row.
     Column {
-        // ---- Banner: the community's image, or a plain colored strip ----
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(120.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        ) {
-            if (!community.bannerUrl.isNullOrBlank()) {
-                coil.compose.AsyncImage(
-                    model = community.bannerUrl,
-                    contentDescription = null,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-        }
-
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Community profile picture (falls back to a letter avatar).
@@ -612,9 +782,11 @@ private fun CommunityHeader(
                     }
                 }
                 // The admin is always a member and can't leave their own
-                // community, so the toggle is only shown to everyone else.
-                if (!isAdmin) {
-                    Spacer(Modifier.width(12.dp))
+                // community, so Join/Joined is replaced by a plain badge.
+                Spacer(Modifier.width(12.dp))
+                if (isAdmin) {
+                    YourCommunityBadge()
+                } else {
                     JoinButton(isMember = isMember, onJoin = onJoin, onLeave = onLeave)
                 }
             }
@@ -705,7 +877,11 @@ private fun AddChip(onClick: () -> Unit) {
     }
 }
 
-/** A category pill. For the admin it carries an "x" that removes it. */
+/**
+ * A category pill. Filled brand-indigo to match the reference design (legible in
+ * both themes via primary/onPrimary). For the admin it carries an "x" that
+ * removes it, drawn in a translucent-white circle so it reads on the fill.
+ */
 @Composable
 private fun CategoryChip(
     label: String,
@@ -716,14 +892,15 @@ private fun CategoryChip(
     Row(
         modifier = Modifier
             .clip(shape)
-            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
-            .padding(start = 14.dp, end = if (removable) 8.dp else 14.dp, top = 8.dp, bottom = 8.dp),
+            .background(MaterialTheme.colorScheme.primary)
+            .padding(start = 16.dp, end = if (removable) 8.dp else 16.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MaterialTheme.colorScheme.onPrimary,
+            fontWeight = FontWeight.SemiBold,
         )
         if (removable) {
             Spacer(Modifier.width(6.dp))
@@ -731,14 +908,14 @@ private fun CategoryChip(
                 modifier = Modifier
                     .size(20.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f))
                     .clickable(onClick = onRemove),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = CommunityIcons.Close,
                     contentDescription = "Remove $label",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(12.dp),
                 )
             }
@@ -755,19 +932,20 @@ private fun CircleIconButton(
     icon: ImageVector,
     description: String,
     onClick: () -> Unit,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     Box(
         modifier = Modifier
             .size(40.dp)
             .clip(CircleShape)
-            .border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape)
+            .border(1.5.dp, tint.copy(alpha = 0.6f), CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = description,
-            tint = MaterialTheme.colorScheme.onSurface,
+            tint = tint,
             modifier = Modifier.size(20.dp),
         )
     }
@@ -783,6 +961,29 @@ private sealed interface HomeOverlay {
 
     /** A different community, opened from a profile's My Communities sheet. */
     data class Community(val communityId: String) : HomeOverlay
+}
+
+/**
+ * Stands in for the Join button on the creator's own community — there's
+ * nothing to join or leave, so it's a plain, non-interactive label instead of
+ * a button pretending to do something.
+ */
+@Composable
+private fun YourCommunityBadge() {
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+            .padding(horizontal = 18.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = "Your community",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
 }
 
 /** Join / Joined toggle shown in the header to non-admin viewers. */

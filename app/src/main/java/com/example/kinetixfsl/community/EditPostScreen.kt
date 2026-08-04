@@ -1,10 +1,14 @@
 package com.example.kinetixfsl.community
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -43,6 +47,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -74,21 +80,41 @@ fun EditPostScreen(
 
     var showCommunityPicker by remember { mutableStateOf(false) }
 
+    // On Android 13+ the upload notification needs permission; ask once, then
+    // save either way (a denied prompt only costs the progress notification).
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { _ -> viewModel.save(context) }
+
+    fun saveWithNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            viewModel.save(context)
+        }
+    }
+
     BackHandler(onBack = onClose)
 
     LaunchedEffect(state.isSaved) {
         if (state.isSaved) onClose()
     }
 
-    val mediaPicker = rememberLauncherForActivityResult(
+    // Separate image and video pickers, mirroring the create screen — so a user
+    // who forgot to add a video can add one here just as they would on create.
+    val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(MAX_POST_MEDIA),
     ) { uris: List<Uri> ->
-        viewModel.onMediaPicked(
-            uris.map { uri ->
-                val mime = context.contentResolver.getType(uri).orEmpty()
-                PickedMedia(uri, if (mime.startsWith("video")) "video" else "image")
-            }
-        )
+        viewModel.onMediaPicked(uris.map { PickedMedia(it, "image") })
+    }
+    val videoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(MAX_POST_MEDIA),
+    ) { uris: List<Uri> ->
+        viewModel.onMediaPicked(uris.map { PickedMedia(it, "video") })
     }
 
     Column(
@@ -97,7 +123,22 @@ fun EditPostScreen(
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding(),
     ) {
-        // ---- Top bar: X | Edit post | Save post ----
+        // ---- Screen title: the one thing that differs from the create screen ----
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "Edit post",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+
+        // ---- Top bar: X + community pill + Post (identical to create) ----
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -109,19 +150,37 @@ fun EditPostScreen(
                 contentDescription = "Close",
                 tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(32.dp)
                     .clickable(onClick = onClose),
             )
 
-            Spacer(Modifier.width(14.dp))
+            Spacer(Modifier.width(12.dp))
 
-            Text(
-                text = "Edit post",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
+            // Community selector pill.
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable { showCommunityPicker = true }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = state.communityLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    imageVector = CommunityIcons.ChevronDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+
+            Spacer(Modifier.weight(1f))
 
             Box(
                 modifier = Modifier
@@ -133,8 +192,8 @@ fun EditPostScreen(
                             MaterialTheme.colorScheme.outline
                         }
                     )
-                    .clickable(enabled = state.canSave) { viewModel.save(context) }
-                    .padding(horizontal = 18.dp, vertical = 8.dp),
+                    .clickable(enabled = state.canSave) { saveWithNotificationPermission() }
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
             ) {
                 if (state.isSaving) {
                     CircularProgressIndicator(
@@ -144,48 +203,12 @@ fun EditPostScreen(
                     )
                 } else {
                     Text(
-                        text = "Save post",
+                        text = "Post",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onPrimary,
                         fontWeight = FontWeight.Bold,
                     )
                 }
-            }
-        }
-
-        // ---- Community selector: post to a community, or the Home Feed ----
-        Row(
-            modifier = Modifier
-                .padding(horizontal = 20.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Posting to",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(8.dp))
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(MaterialTheme.colorScheme.primary)
-                    .clickable { showCommunityPicker = true }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = state.communityLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.width(4.dp))
-                Icon(
-                    imageVector = CommunityIcons.ChevronDown,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(16.dp),
-                )
             }
         }
 
@@ -220,7 +243,7 @@ fun EditPostScreen(
                 value = state.title,
                 onValueChange = viewModel::onTitleChange,
                 placeholder = "Title",
-                textStyle = MaterialTheme.typography.headlineSmall.copy(
+                textStyle = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
@@ -237,25 +260,14 @@ fun EditPostScreen(
                 ),
             )
 
-            if (state.isLinkFieldVisible) {
+            // One field per link — the toolbar link button adds another.
+            state.links.forEachIndexed { index, link ->
                 Spacer(Modifier.height(12.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                ) {
-                    EditField(
-                        value = state.linkUrl,
-                        onValueChange = viewModel::onLinkUrlChange,
-                        placeholder = "Paste your link here",
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(
-                            color = MaterialTheme.colorScheme.primary,
-                        ),
-                        singleLine = true,
-                    )
-                }
+                LinkFieldRow(
+                    value = link,
+                    onValueChange = { viewModel.onLinkChange(index, it) },
+                    onRemove = { viewModel.removeLink(index) },
+                )
             }
 
             Spacer(Modifier.height(16.dp))
@@ -298,7 +310,7 @@ fun EditPostScreen(
             Spacer(Modifier.height(16.dp))
         }
 
-        // ---- Toolbar ----
+        // ---- Bottom toolbar: link, image, video (identical to create) ----
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         Row(
             modifier = Modifier
@@ -309,17 +321,17 @@ fun EditPostScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = CommunityIcons.EditPost,
+                imageVector = CommunityIcons.Link,
                 contentDescription = "Add link",
                 tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier
                     .size(26.dp)
-                    .clickable { viewModel.toggleLinkField() },
+                    .clickable { viewModel.addLinkField() },
             )
             Spacer(Modifier.width(20.dp))
             Icon(
                 imageVector = CommunityIcons.Image,
-                contentDescription = "Add photos or videos",
+                contentDescription = "Add images",
                 tint = if (state.canAddMore) {
                     MaterialTheme.colorScheme.onSurface
                 } else {
@@ -328,9 +340,28 @@ fun EditPostScreen(
                 modifier = Modifier
                     .size(26.dp)
                     .clickable(enabled = state.canAddMore) {
-                        mediaPicker.launch(
+                        imagePicker.launch(
                             PickVisualMediaRequest(
-                                ActivityResultContracts.PickVisualMedia.ImageAndVideo
+                                ActivityResultContracts.PickVisualMedia.ImageOnly
+                            )
+                        )
+                    },
+            )
+            Spacer(Modifier.width(20.dp))
+            Icon(
+                imageVector = VideoToolbarIcon,
+                contentDescription = "Add videos",
+                tint = if (state.canAddMore) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.outline
+                },
+                modifier = Modifier
+                    .size(26.dp)
+                    .clickable(enabled = state.canAddMore) {
+                        videoPicker.launch(
+                            PickVisualMediaRequest(
+                                ActivityResultContracts.PickVisualMedia.VideoOnly
                             )
                         )
                     },
@@ -349,6 +380,16 @@ fun EditPostScreen(
             onDismiss = { showCommunityPicker = false },
         )
     }
+}
+
+/** Video-camera glyph for the toolbar — matches the create screen's. */
+private val VideoToolbarIcon: ImageVector by lazy {
+    ImageVector.Builder("Video", 24.dp, 24.dp, 24f, 24f).apply {
+        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+            moveTo(3f, 6f); lineTo(16f, 6f); lineTo(16f, 18f); lineTo(3f, 18f); close()
+            moveTo(16f, 9f); lineTo(21f, 6f); lineTo(21f, 18f); lineTo(16f, 15f)
+        }
+    }.build()
 }
 
 @Composable

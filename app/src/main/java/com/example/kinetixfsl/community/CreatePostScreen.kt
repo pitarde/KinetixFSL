@@ -254,37 +254,15 @@ fun CreatePostScreen(
             )
 
 
-            // Link URL field (shows when user taps the link icon)
-            if (state.isLinkFieldVisible) {
+            // One field per link the user added — the toolbar link button adds
+            // another. Each has an "x" to drop it.
+            state.links.forEachIndexed { index, link ->
                 Spacer(Modifier.height(12.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                ) {
-                    BasicTextField(
-                        value = state.linkUrl,
-                        onValueChange = viewModel::onLinkUrlChange,
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.primary),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        decorationBox = { inner ->
-                            Box {
-                                if (state.linkUrl.isEmpty()) {
-                                    Text(
-                                        "Paste your link here",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                inner()
-                            }
-                        },
-                    )
-                }
+                LinkFieldRow(
+                    value = link,
+                    onValueChange = { viewModel.onLinkChange(index, it) },
+                    onRemove = { viewModel.removeLink(index) },
+                )
             }
 
             Spacer(Modifier.height(16.dp))
@@ -370,9 +348,9 @@ fun CreatePostScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ToolbarIcon(
-                icon = LinkIcon,
+                icon = CommunityIcons.Link,
                 description = "Add link",
-                onClick = { viewModel.toggleLinkField() },
+                onClick = { viewModel.addLinkField() },
             )
             Spacer(Modifier.width(20.dp))
             ToolbarIcon(
@@ -496,6 +474,70 @@ private fun CommunityPickerRow(
     }
 }
 
+/**
+ * One editable link, in a bordered pill with an "x" to remove it. Shared by the
+ * create and edit composers so a link field looks the same in both.
+ */
+@Composable
+internal fun LinkFieldRow(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onRemove: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+            .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = CommunityIcons.Link,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.primary),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+            decorationBox = { inner ->
+                Box {
+                    if (value.isEmpty()) {
+                        Text(
+                            "Paste your link here",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    inner()
+                }
+            },
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable(onClick = onRemove),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = CommunityIcons.Close,
+                contentDescription = "Remove link",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(12.dp),
+            )
+        }
+    }
+}
+
 /** A bare text field with no border — just the text and a placeholder. */
 @Composable
 private fun PlainTextField(
@@ -560,22 +602,6 @@ private val ChevronDownIcon: ImageVector by lazy {
     ImageVector.Builder("ChevronDown", 24.dp, 24.dp, 24f, 24f).apply {
         path(stroke = SolidColor(Color.White), strokeLineWidth = 2.2f) {
             moveTo(6f, 9f); lineTo(12f, 15f); lineTo(18f, 9f)
-        }
-    }.build()
-}
-
-private val LinkIcon: ImageVector by lazy {
-    ImageVector.Builder("Link", 24.dp, 24.dp, 24f, 24f).apply {
-        path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
-            moveTo(10f, 14f); lineTo(14f, 10f)
-            moveTo(8f, 12f)
-            curveTo(5f, 9f, 5f, 5f, 8f, 5f)
-            lineTo(10f, 3f)
-            curveTo(13f, 3f, 13f, 7f, 10f, 7f)
-            moveTo(14f, 17f)
-            curveTo(17f, 17f, 17f, 21f, 14f, 21f)
-            lineTo(12f, 19f)
-            curveTo(9f, 19f, 9f, 15f, 12f, 15f)
         }
     }.build()
 }

@@ -448,19 +448,22 @@ class CommunityRepository(
         postId: String,
         title: String,
         body: String,
-        linkUrl: String?,
+        /** Every link, in order. Empty clears them. */
+        links: List<String>,
         media: List<PostMedia>,
         /** Where the post lives. Blank publishes to the Home Feed. */
         communityId: String = "",
         communityName: String = "",
     ): Result<Unit> = try {
+        val cleanLinks = links.map { it.trim() }.filter { it.isNotBlank() }
         // Legacy single-media fields are rewritten too, so the share page and
         // any older client stay consistent with the new attachment list.
         firestore.collection(POSTS).document(postId).update(
             mapOf(
                 "title" to title.trim(),
                 "body" to body.trim(),
-                "linkUrl" to linkUrl?.trim()?.takeIf { it.isNotBlank() },
+                "linkUrl" to cleanLinks.firstOrNull(),
+                "links" to cleanLinks,
                 "media" to media.map {
                     hashMapOf("url" to it.url, "type" to it.type, "thumbUrl" to it.thumbUrl)
                 },
@@ -484,6 +487,8 @@ class CommunityRepository(
         title: String,
         body: String,
         linkUrl: String? = null,
+        /** Every link the author attached, in order. */
+        links: List<String> = emptyList(),
         media: List<PostMedia> = emptyList(),
         previewUrl: String? = null,
         previewBlur: String? = null,
@@ -492,6 +497,12 @@ class CommunityRepository(
         communityName: String = "",
     ): Result<String> {
         val user = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
+
+        // Normalize the link list, and keep the legacy single field pointed at
+        // the first one so older clients and the web worker still show a link.
+        val cleanLinks = links.map { it.trim() }.filter { it.isNotBlank() }
+            .ifEmpty { listOfNotNull(linkUrl?.trim()?.takeIf { it.isNotBlank() }) }
+        val firstLink = cleanLinks.firstOrNull()
 
         // The legacy single-media fields still get the first image and the
         // first video, so the share page and any older build keep rendering
@@ -508,7 +519,8 @@ class CommunityRepository(
             "communityName" to communityName,
             "title" to title.trim(),
             "body" to body.trim(),
-            "linkUrl" to linkUrl?.trim()?.takeIf { it.isNotBlank() },
+            "linkUrl" to firstLink,
+            "links" to cleanLinks,
             "imageUrl" to imageUrl,
             "videoUrl" to videoUrl,
             "media" to media.map {
@@ -675,6 +687,42 @@ class CommunityRepository(
         } catch (_: Exception) { /* best-effort */ }
     }
 
+    // -------------------------------------------------------------------------
+    // Hidden posts
+    // -------------------------------------------------------------------------
+
+    /**
+     * Hides a post from the signed-in user's feeds, for good — a private marker
+     * under their own profile.
+     */
+    suspend fun hidePost(postId: String) {
+        val uid = auth.currentUser?.uid ?: return
+        try {
+            firestore.collection(USERS).document(uid)
+                .collection(HIDDEN_POSTS).document(postId)
+                .set(hashMapOf("hiddenAt" to Timestamp.now()))
+                .await()
+        } catch (_: Exception) { /* best-effort */ }
+    }
+
+    /** Live set of post ids the signed-in user has hidden. */
+    fun observeHiddenPostIds(): Flow<Set<String>> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(emptySet())
+            awaitClose { }
+            return@callbackFlow
+        }
+        val registration = firestore.collection(USERS).document(uid)
+            .collection(HIDDEN_POSTS)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) { close(error); return@addSnapshotListener }
+                if (snapshot == null) return@addSnapshotListener
+                trySend(snapshot.documents.map { it.id }.toSet())
+            }
+        awaitClose { registration.remove() }
+    }
+
     /** Loads a single post by id — used when opening a shared link. */
     suspend fun getPost(postId: String): Result<Post> {
         return try {
@@ -724,6 +772,7 @@ class CommunityRepository(
         const val COMMENTS = "comments"
         const val SHARES = "shares"
         const val USERS = "users"
+        const val HIDDEN_POSTS = "hiddenPosts"
         const val FOLLOWERS = "followers"
         const val FOLLOWING = "following"
         const val FIELD_CREATED_AT = "createdAt"

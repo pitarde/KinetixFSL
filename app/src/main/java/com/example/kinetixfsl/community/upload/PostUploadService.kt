@@ -45,11 +45,27 @@ class PostUploadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val title = intent?.getStringExtra(EXTRA_TITLE) ?: ""
         val body = intent?.getStringExtra(EXTRA_BODY) ?: ""
-        val linkUrl = intent?.getStringExtra(EXTRA_LINK_URL)
+        val links = intent?.getStringArrayListExtra(EXTRA_LINK_URLS).orEmpty()
         val communityId = intent?.getStringExtra(EXTRA_COMMUNITY_ID) ?: ""
         val communityName = intent?.getStringExtra(EXTRA_COMMUNITY_NAME) ?: ""
         val mediaUriStrings = intent?.getStringArrayListExtra(EXTRA_MEDIA_URIS).orEmpty()
         val mediaTypes = intent?.getStringArrayListExtra(EXTRA_MEDIA_TYPES).orEmpty()
+
+        // Edit mode: a non-blank post id means update that post instead of
+        // creating a new one. The media already on the post arrives as three
+        // parallel arrays (url/type/thumb) and is kept ahead of any new uploads.
+        val postId = intent?.getStringExtra(EXTRA_POST_ID).orEmpty()
+        val isEdit = postId.isNotBlank()
+        val existingUrls = intent?.getStringArrayListExtra(EXTRA_EXISTING_URLS).orEmpty()
+        val existingTypes = intent?.getStringArrayListExtra(EXTRA_EXISTING_TYPES).orEmpty()
+        val existingThumbs = intent?.getStringArrayListExtra(EXTRA_EXISTING_THUMBS).orEmpty()
+        val existingMedia = existingUrls.indices.map { i ->
+            PostMedia(
+                url = existingUrls[i],
+                type = existingTypes.getOrNull(i) ?: "image",
+                thumbUrl = existingThumbs.getOrNull(i)?.takeIf { it.isNotBlank() },
+            )
+        }
 
         startForeground(NOTIFICATION_ID, buildUploadingNotification())
 
@@ -201,22 +217,37 @@ class PostUploadService : Service() {
                 // ── Step 3: write the post to Firestore ──────────────────
                 updateProgress("Saving post…", 95)
 
-                val result = repository.createPost(
-                    title = title,
-                    body = body,
-                    linkUrl = linkUrl,
-                    media = uploaded,
-                    previewUrl = previewUrl,
-                    previewBlur = previewBlur,
-                    communityId = communityId,
-                    communityName = communityName,
-                )
+                val result = if (isEdit) {
+                    // Retained media first, then anything just uploaded — the
+                    // same order the edit screen showed.
+                    repository.updatePost(
+                        postId = postId,
+                        title = title,
+                        body = body,
+                        links = links,
+                        media = existingMedia + uploaded,
+                        communityId = communityId,
+                        communityName = communityName,
+                    )
+                } else {
+                    repository.createPost(
+                        title = title,
+                        body = body,
+                        links = links,
+                        media = uploaded,
+                        previewUrl = previewUrl,
+                        previewBlur = previewBlur,
+                        communityId = communityId,
+                        communityName = communityName,
+                    ).map { }
+                }
 
                 result.fold(
-                    onSuccess = { showSuccessNotification() },
+                    onSuccess = { showSuccessNotification(isEdit) },
                     onFailure = { e ->
                         showFailedNotification(
-                            e.localizedMessage ?: "Couldn't create post."
+                            e.localizedMessage
+                                ?: if (isEdit) "Couldn't save changes." else "Couldn't create post."
                         )
                     },
                 )
@@ -313,12 +344,12 @@ class PostUploadService : Service() {
     private fun scale(percent: Int, from: Int, to: Int): Int =
         from + (percent.coerceIn(0, 100) * (to - from)) / 100
 
-    private fun showSuccessNotification() {
+    private fun showSuccessNotification(isEdit: Boolean = false) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("KinetixFSL")
-            .setContentText("Post uploaded!")
+            .setContentText(if (isEdit) "Post updated!" else "Post uploaded!")
             .setOngoing(false)
             .setAutoCancel(true)
             .setTimeoutAfter(4_000)
@@ -352,11 +383,18 @@ class PostUploadService : Service() {
 
         const val EXTRA_TITLE = "title"
         const val EXTRA_BODY = "body"
-        const val EXTRA_LINK_URL = "link_url"
+        const val EXTRA_LINK_URLS = "link_urls"
         const val EXTRA_COMMUNITY_ID = "community_id"
         const val EXTRA_COMMUNITY_NAME = "community_name"
         const val EXTRA_MEDIA_URIS = "media_uris"
         const val EXTRA_MEDIA_TYPES = "media_types"
+
+        /** Present (non-blank) only when editing: the post to update. */
+        const val EXTRA_POST_ID = "post_id"
+        /** Media already on the post, kept as-is — parallel arrays. */
+        const val EXTRA_EXISTING_URLS = "existing_urls"
+        const val EXTRA_EXISTING_TYPES = "existing_types"
+        const val EXTRA_EXISTING_THUMBS = "existing_thumbs"
 
         /** Media uploads occupy 0..85%; preview and Firestore take the rest. */
         private const val MEDIA_BAND_END = 85

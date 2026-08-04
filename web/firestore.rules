@@ -165,6 +165,14 @@ service cloud.firestore {
         allow create, delete: if request.auth != null && request.auth.uid == userId;
         allow update: if false;
       }
+
+      // Posts this user chose to hide from their feed. Private to them — it
+      // never shows up anywhere else, so only they may read or write it.
+      match /hiddenPosts/{postId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow create, delete: if request.auth != null && request.auth.uid == userId;
+        allow update: if false;
+      }
     }
 
     // Communities created through the "Start a community" wizard and browsed

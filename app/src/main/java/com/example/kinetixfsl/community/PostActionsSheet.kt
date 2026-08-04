@@ -80,6 +80,33 @@ internal fun VisitorPostActionsSheet(
     }
 }
 
+/**
+ * The post menu on someone else's post in a feed — the Home Feed and a
+ * community's own feed both use it. Copy and Report are always there; Share
+ * and Hide are Home Feed-only (a community feed already has nowhere else for
+ * a post to hide to), so they're only shown when a handler is passed.
+ */
+@Composable
+internal fun OtherPostActionsSheet(
+    onCopyText: () -> Unit,
+    onReport: () -> Unit,
+    onDismiss: () -> Unit,
+    onShare: (() -> Unit)? = null,
+    onHide: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    ActionsSheet(onDismiss = onDismiss, modifier = modifier) {
+        ActionRow(CommunityIcons.CopyText, "Copy text", onCopyText)
+        ActionRow(CommunityIcons.Report, "Report", onReport)
+        if (onShare != null) {
+            ActionRow(CommunityIcons.Share, "Share", onShare)
+        }
+        if (onHide != null) {
+            ActionRow(CommunityIcons.Hide, "Hide", onHide)
+        }
+    }
+}
+
 @Composable
 internal fun CommentActionsSheet(
     onEdit: () -> Unit,

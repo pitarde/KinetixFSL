@@ -61,6 +61,16 @@ class CommunityFeedViewModel(
     private val _ownedCommunityIds = MutableStateFlow<Set<String>>(emptySet())
     val ownedCommunityIds: StateFlow<Set<String>> = _ownedCommunityIds.asStateFlow()
 
+    /**
+     * Posts the viewer hid — filtered out of every emission below. Backed by a
+     * live listener, so hiding one never needs a local patch: it just drops out
+     * of [allPosts] the moment Firestore confirms the write.
+     */
+    private val hiddenPostIds: StateFlow<Set<String>> =
+        repository.observeHiddenPostIds()
+            .catch { emit(emptySet()) }
+            .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptySet())
+
     private fun prefetchCommunityAvatars(posts: List<Post>) {
         val ids = posts
             .map { it.communityId }
@@ -149,6 +159,26 @@ class CommunityFeedViewModel(
             }
             .catch { /* following is optional — the feed still works */ }
             .launchIn(viewModelScope)
+
+        // Re-emit the instant a hide lands, so the post disappears immediately
+        // rather than waiting for the next post snapshot.
+        hiddenPostIds
+            .onEach { emitFiltered() }
+            .launchIn(viewModelScope)
+    }
+
+    /** Hides a post from this and every other feed, permanently. */
+    fun hidePost(postId: String) {
+        viewModelScope.launch { repository.hidePost(postId) }
+    }
+
+    /** Deletes a post the signed-in user authored. */
+    fun deletePost(post: Post) {
+        viewModelScope.launch {
+            repository.deletePost(post).onFailure { error ->
+                _actionError.value = error.localizedMessage ?: "Couldn't delete post."
+            }
+        }
     }
 
     /**
@@ -265,7 +295,9 @@ class CommunityFeedViewModel(
     private fun emitFiltered() {
         val query = _searchQuery.value.trim().lowercase()
         val postById = allPosts.associateBy { it.id }
+        val hidden = hiddenPostIds.value
         val ordered = displayOrder.mapNotNull { id -> postById[id] }
+            .filter { it.id !in hidden }
 
         val filtered = if (query.isEmpty()) {
             ordered

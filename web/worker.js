@@ -478,6 +478,7 @@ async function fetchPost(postId, env) {
     previewUrl: readString(f.previewUrl),
     media: readMedia(f.media),
     linkUrl: readString(f.linkUrl),
+    links: readStringArray(f.links),
     upvoteCount: readInt(f.upvoteCount),
     downvoteCount: readInt(f.downvoteCount),
     commentCount: readInt(f.commentCount),
@@ -549,9 +550,16 @@ function renderPost(postId, post) {
   // Every attachment, as a swipeable carousel when there's more than one.
   const media = renderMedia(post);
 
-  const link = post.linkUrl
-    ? `<a class="postlink" href="${esc(post.linkUrl)}" rel="noopener noreferrer nofollow">${esc(post.linkUrl)}</a>`
-    : "";
+  // Every link, each on its own line. Falls back to the legacy single field
+  // for posts written before the multi-link `links` array existed.
+  const allLinks =
+    post.links && post.links.length ? post.links : post.linkUrl ? [post.linkUrl] : [];
+  const link = allLinks
+    .map(
+      (u) =>
+        `<a class="postlink" href="${esc(u)}" rel="noopener noreferrer nofollow">${esc(u)}</a>`,
+    )
+    .join("");
 
   // The rich card: image, title underneath, app name as the source.
   //

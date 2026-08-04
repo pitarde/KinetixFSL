@@ -404,6 +404,77 @@ internal object CommunityIcons {
         }.build()
     }
 
+    /** A flag on a pole — "report". */
+    val Report: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Report",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                // Pole
+                moveTo(6f, 3f); lineTo(6f, 21f)
+                // Flag
+                moveTo(6f, 4f)
+                lineTo(19f, 4f)
+                lineTo(15.5f, 8.5f)
+                lineTo(19f, 13f)
+                lineTo(6f, 13f)
+                close()
+            }
+        }.build()
+    }
+
+    /** An eye with a slash through it — "hide". */
+    val Hide: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Hide",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                moveTo(3f, 12f)
+                curveTo(4.5f, 8.5f, 8f, 6f, 12f, 6f)
+                curveTo(16f, 6f, 19.5f, 8.5f, 21f, 12f)
+                curveTo(19.5f, 15.5f, 16f, 18f, 12f, 18f)
+                curveTo(8f, 18f, 4.5f, 15.5f, 3f, 12f)
+                close()
+                moveTo(9.5f, 12f)
+                arcTo(2.5f, 2.5f, 0f, true, true, 14.5f, 12f)
+                arcTo(2.5f, 2.5f, 0f, true, true, 9.5f, 12f)
+                close()
+                moveTo(4f, 4f); lineTo(20f, 20f)
+            }
+        }.build()
+    }
+
+    /** Two interlocking chain links at 45° — "attach a link". */
+    val Link: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Link",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                // Left link half.
+                moveTo(10.5f, 13.5f)
+                lineTo(8f, 16f)
+                curveTo(6.3f, 17.7f, 4.3f, 17.7f, 3f, 16.4f)
+                curveTo(1.7f, 15.1f, 1.7f, 13.1f, 3.4f, 11.4f)
+                lineTo(6f, 8.8f)
+                // Right link half.
+                moveTo(13.5f, 10.5f)
+                lineTo(16f, 8f)
+                curveTo(17.7f, 6.3f, 19.7f, 6.3f, 21f, 7.6f)
+                curveTo(22.3f, 8.9f, 22.3f, 10.9f, 20.6f, 12.6f)
+                lineTo(18f, 15.2f)
+                // The bar joining them.
+                moveTo(9f, 15f)
+                lineTo(15f, 9f)
+            }
+        }.build()
+    }
+
     /** A share arrow — curving out to the upper right. */
     val Share: ImageVector by lazy {
         ImageVector.Builder(

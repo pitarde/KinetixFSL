@@ -26,8 +26,11 @@ data class PickedMedia(
 data class CreatePostUiState(
     val title: String = "",
     val body: String = "",
-    val linkUrl: String = "",
-    val isLinkFieldVisible: Boolean = false,
+    /**
+     * One entry per link field the user has added. A post can carry several
+     * links; each is edited in its own field and blank ones are dropped on post.
+     */
+    val links: List<String> = emptyList(),
     /**
      * Everything the user attached, in pick order. Images and videos can be
      * mixed freely, capped at [MAX_POST_MEDIA].
@@ -88,11 +91,29 @@ class CreatePostViewModel(
     fun onBodyChange(value: String) =
         _uiState.update { it.copy(body = value, errorMessage = null) }
 
-    fun onLinkUrlChange(value: String) =
-        _uiState.update { it.copy(linkUrl = value, errorMessage = null) }
+    /** Edits the link field at [index]. */
+    fun onLinkChange(index: Int, value: String) =
+        _uiState.update { state ->
+            if (index !in state.links.indices) return@update state
+            state.copy(
+                links = state.links.toMutableList().also { it[index] = value },
+                errorMessage = null,
+            )
+        }
 
-    fun toggleLinkField() =
-        _uiState.update { it.copy(isLinkFieldVisible = !it.isLinkFieldVisible) }
+    /** Adds one more empty link field (the toolbar's link button). */
+    fun addLinkField() =
+        _uiState.update { it.copy(links = it.links + "", errorMessage = null) }
+
+    /** Removes the link field at [index]. */
+    fun removeLink(index: Int) =
+        _uiState.update { state ->
+            if (index !in state.links.indices) return@update state
+            state.copy(
+                links = state.links.toMutableList().also { it.removeAt(index) },
+                errorMessage = null,
+            )
+        }
 
     /**
      * Appends everything the user just picked, skipping duplicates and
@@ -158,8 +179,10 @@ class CreatePostViewModel(
         val intent = Intent(context, PostUploadService::class.java).apply {
             putExtra(PostUploadService.EXTRA_TITLE, state.title)
             putExtra(PostUploadService.EXTRA_BODY, state.body)
-            putExtra(PostUploadService.EXTRA_LINK_URL,
-                state.linkUrl.takeIf { it.isNotBlank() })
+            putStringArrayListExtra(
+                PostUploadService.EXTRA_LINK_URLS,
+                ArrayList(state.links.map { it.trim() }.filter { it.isNotBlank() }),
+            )
             putExtra(PostUploadService.EXTRA_COMMUNITY_ID, state.selectedCommunityId)
             putExtra(PostUploadService.EXTRA_COMMUNITY_NAME, state.selectedCommunityName)
             if (state.media.isNotEmpty()) {

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -44,11 +46,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kinetixfsl.community.model.Community
 import com.example.kinetixfsl.community.model.Post
@@ -111,26 +123,70 @@ fun CommunityProfileScreen(
     var isFollowersOpen by remember { mutableStateOf(false) }
     var isCommunitiesOpen by remember { mutableStateOf(false) }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    // Swipe-up collapse: the identity card (avatar, name, followers) slides up
+    // and out while the stat pills and Posts/Comments tabs stay pinned, so the
+    // posts and comments take over the screen. The card's real height is measured
+    // once, then the nested-scroll connection drives its offset in step with the
+    // active tab's list — see the reference design.
+    val density = LocalDensity.current
+    var cardHeightPx by remember { mutableFloatStateOf(0f) }
+    var cardOffsetPx by remember { mutableFloatStateOf(0f) }
+    val headerAlpha = if (cardHeightPx > 0f) {
+        (1f + cardOffsetPx / cardHeightPx).coerceIn(0f, 1f)
+    } else {
+        1f
+    }
+    val collapseConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // Swiping up (negative) collapses the card before the list scrolls.
+                val delta = available.y
+                if (delta < 0f && cardHeightPx > 0f) {
+                    val previous = cardOffsetPx
+                    cardOffsetPx = (cardOffsetPx + delta).coerceIn(-cardHeightPx, 0f)
+                    return Offset(0f, cardOffsetPx - previous)
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                // Swiping down (positive) re-expands only once the list is back
+                // at the top and hands the leftover scroll up to us.
+                val delta = available.y
+                if (delta > 0f && cardHeightPx > 0f) {
+                    val previous = cardOffsetPx
+                    cardOffsetPx = (cardOffsetPx + delta).coerceIn(-cardHeightPx, 0f)
+                    return Offset(0f, cardOffsetPx - previous)
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize().clipToBounds()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
+                .background(MaterialTheme.colorScheme.background)
+                .nestedScroll(collapseConnection),
         ) {
-            ProfileHeader(
-                displayName = state.displayName,
-                avatarUrl = state.avatarUrl,
+            // Reserves the shrinking space the overlaid identity card occupies.
+            Spacer(
+                modifier = Modifier.height(
+                    with(density) { (cardHeightPx + cardOffsetPx).coerceAtLeast(0f).toDp() },
+                ),
+            )
+
+            StatPillsRow(
                 contributions = state.contributions,
                 communityCount = state.myCommunityCount,
-                followerCount = state.followerCount,
                 accountAge = state.accountAge,
                 activeTime = state.activeTime,
-                isOwnProfile = state.isOwnProfile,
-                isFollowing = state.isFollowing,
-                onFollowersClick = { isFollowersOpen = true },
                 onContributionsClick = { isContributionsOpen = true },
-                onFollowClick = { viewModel.toggleFollow() },
-                onMessageClick = onMessageClick,
                 onCommunitiesClick = { isCommunitiesOpen = true },
             )
 
@@ -154,6 +210,8 @@ fun CommunityProfileScreen(
                         onUpvote = { viewModel.vote(it.id, "up") },
                         onDownvote = { viewModel.vote(it.id, "down") },
                         onShare = { viewModel.share(context, it) },
+                        onOpenCommunityLink = onOpenCommunity,
+                        onOpenProfileLink = onUserClick,
                     )
                     else -> CommentsTab(
                         comments = state.comments,
@@ -172,15 +230,38 @@ fun CommunityProfileScreen(
             }
         }
 
+        // The collapsible identity card, drawn over the reserved space and
+        // sliding up out of view as the lists are swiped up.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(0, cardOffsetPx.roundToInt()) }
+                .onSizeChanged { cardHeightPx = it.height.toFloat() }
+                .graphicsLayer { alpha = headerAlpha },
+        ) {
+            ProfileCard(
+                displayName = state.displayName,
+                avatarUrl = state.avatarUrl,
+                followerCount = state.followerCount,
+                isOwnProfile = state.isOwnProfile,
+                isFollowing = state.isFollowing,
+                onFollowersClick = { isFollowersOpen = true },
+                onFollowClick = { viewModel.toggleFollow() },
+                onMessageClick = onMessageClick,
+            )
+        }
+
         // Share this profile — a link that opens the same profile in-app, or a
-        // public web page for people without the app.
-        if (shareUid != null) {
+        // public web page for people without the app. Fades away with the card so
+        // it never floats over the pinned tabs once collapsed.
+        if (shareUid != null && headerAlpha > 0.05f) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = 12.dp, end = 16.dp)
                     .size(40.dp)
                     .clip(RoundedCornerShape(50))
+                    .graphicsLayer { alpha = headerAlpha }
                     .clickable { shareProfile(context, shareUid, state.displayName) },
                 contentAlignment = Alignment.Center,
             ) {
@@ -324,22 +405,21 @@ fun CommunityProfileScreen(
 
 // ---- Header ----
 
+/**
+ * The identity card at the top of a profile — avatar, name, Edit/Follow and the
+ * follower count. This is the piece that collapses away on swipe-up; the stat
+ * pills and tabs below it stay pinned.
+ */
 @Composable
-private fun ProfileHeader(
+private fun ProfileCard(
     displayName: String,
     avatarUrl: String?,
-    contributions: Int,
-    communityCount: Int,
     followerCount: Long,
-    accountAge: String,
-    activeTime: String,
     isOwnProfile: Boolean,
     isFollowing: Boolean,
     onFollowersClick: () -> Unit,
-    onContributionsClick: () -> Unit,
     onFollowClick: () -> Unit,
     onMessageClick: () -> Unit,
-    onCommunitiesClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -347,6 +427,7 @@ private fun ProfileHeader(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.background)
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
                 .padding(20.dp),
         ) {
@@ -408,48 +489,65 @@ private fun ProfileHeader(
                     .padding(vertical = 2.dp),
             )
         }
+    }
+}
 
-        Spacer(Modifier.height(12.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            // Account Age and Active time are read-only by design and stay
-            // untappable; My Communities and Contributions open a sheet.
-            StatPill(
-                "$communityCount",
-                "My Communities",
-                Modifier
-                    .weight(1f)
-                    .clickable(onClick = onCommunitiesClick),
-            )
-            StatPill(
-                "$contributions",
-                "Contributions ›",
-                Modifier
-                    .weight(1f)
-                    .clickable(onClick = onContributionsClick),
-            )
-            StatPill(accountAge, "Account Age", Modifier.weight(1f))
-            StatPill(activeTime, "Active time", Modifier.weight(1f))
-        }
+/**
+ * The four stat pills. Pinned below the collapsing card, so they — together with
+ * the tabs — stay put as the posts and comments take over the screen.
+ */
+@Composable
+private fun StatPillsRow(
+    contributions: Int,
+    communityCount: Int,
+    accountAge: String,
+    activeTime: String,
+    onContributionsClick: () -> Unit,
+    onCommunitiesClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        // Account Age and Active time are read-only by design and stay
+        // untappable; My Communities and Contributions open a sheet.
+        StatPill(
+            "$communityCount",
+            "My Communities",
+            Modifier
+                .weight(1f)
+                .clickable(onClick = onCommunitiesClick),
+        )
+        StatPill(
+            "$contributions",
+            "Contributions ›",
+            Modifier
+                .weight(1f)
+                .clickable(onClick = onContributionsClick),
+        )
+        StatPill(accountAge, "Account Age", Modifier.weight(1f))
+        StatPill(activeTime, "Active time", Modifier.weight(1f))
     }
 }
 
 @Composable
 private fun StatPill(value: String, label: String, modifier: Modifier = Modifier) {
+    // Filled brand-indigo pill (onPrimary text) to match the reference design;
+    // primary/onPrimary keep it legible in both light and dark themes.
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.primary)
             .padding(vertical = 10.dp, horizontal = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             text = value,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = MaterialTheme.colorScheme.onPrimary,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
             // "Active now" needs a second line in a quarter-width pill.
@@ -459,7 +557,7 @@ private fun StatPill(value: String, label: String, modifier: Modifier = Modifier
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -474,12 +572,15 @@ private fun ProfileTabs(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
-        Row(modifier = Modifier.fillMaxWidth()) {
-            TabLabel("Posts", selectedIndex == 0, Modifier.weight(1f)) { onSelect(0) }
-            TabLabel("Comments", selectedIndex == 1, Modifier.weight(1f)) { onSelect(1) }
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    // Filled indigo tab bar from the reference design; onPrimary text and
+    // underline keep it readable in both themes.
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.primary),
+    ) {
+        TabLabel("Posts", selectedIndex == 0, Modifier.weight(1f)) { onSelect(0) }
+        TabLabel("Comments", selectedIndex == 1, Modifier.weight(1f)) { onSelect(1) }
     }
 }
 
@@ -497,11 +598,9 @@ private fun TabLabel(
         Text(
             text = text,
             style = MaterialTheme.typography.titleSmall,
-            color = if (selected) {
-                MaterialTheme.colorScheme.onBackground
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
+            color = MaterialTheme.colorScheme.onPrimary.copy(
+                alpha = if (selected) 1f else 0.7f,
+            ),
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             modifier = Modifier.padding(vertical = 12.dp),
         )
@@ -511,7 +610,7 @@ private fun TabLabel(
                 .height(2.dp)
                 .background(
                     if (selected) {
-                        MaterialTheme.colorScheme.onBackground
+                        MaterialTheme.colorScheme.onPrimary
                     } else {
                         androidx.compose.ui.graphics.Color.Transparent
                     }
@@ -532,6 +631,9 @@ private fun PostsTab(
     onUpvote: (Post) -> Unit,
     onDownvote: (Post) -> Unit,
     onShare: (Post) -> Unit,
+    /** In-app openers for the app's own share links pasted into a post. */
+    onOpenCommunityLink: ((String) -> Unit)? = null,
+    onOpenProfileLink: ((String) -> Unit)? = null,
 ) {
     when {
         isLoading -> CenteredSpinner()
@@ -566,6 +668,8 @@ private fun PostsTab(
                         onMediaClick = { onPostClick(post) },
                         onClick = { onPostClick(post) },
                         onMenuClick = { onMenuClick(post) },
+                        onOpenCommunityLink = onOpenCommunityLink,
+                        onOpenProfileLink = onOpenProfileLink,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
@@ -755,11 +859,16 @@ private fun EmptyMessage(text: String) {
     }
 }
 
-/** Copies the post's title and body together, as the mockup's "Copy text". */
-private fun copyPostText(context: Context, post: Post) {
-    val text = listOf(post.title, post.body)
-        .filter { it.isNotBlank() }
-        .joinToString("\n\n")
+/**
+ * Copies the post's title, body and any links together, as the mockup's
+ * "Copy text". Links go last, one per line, so pasting keeps them clickable.
+ */
+internal fun copyPostText(context: Context, post: Post) {
+    val text = buildList {
+        add(post.title)
+        add(post.body)
+        addAll(post.allLinks)
+    }.filter { it.isNotBlank() }.joinToString("\n\n")
 
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("Post", text))

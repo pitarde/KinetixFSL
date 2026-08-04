@@ -99,6 +99,10 @@ fun ImmersivePostViewer(
     onClose: () -> Unit,
     /** Opens the author's profile from the sheet's avatar or name. */
     onAuthorClick: (String) -> Unit = {},
+    /** Opens the post's community from the sheet's header. No-op if unset. */
+    onCommunityClick: (String) -> Unit = {},
+    /** The community's profile picture, looked up by the caller. */
+    communityAvatarUrl: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -286,6 +290,20 @@ fun ImmersivePostViewer(
                             null
                         } else {
                             { onAuthorClick(post.authorId) }
+                        },
+                        // A community post credits the community up top with
+                        // "Posted by {author}" underneath, same as everywhere
+                        // else a community post shows — see PostDetailScreen.
+                        communityName = if (post.communityId.isBlank()) {
+                            null
+                        } else {
+                            post.communityName.ifBlank { "Community" }
+                        },
+                        communityAvatarUrl = communityAvatarUrl,
+                        onCommunityClick = if (post.communityId.isBlank()) {
+                            null
+                        } else {
+                            { onCommunityClick(post.communityId) }
                         },
                     )
                     Spacer(Modifier.height(8.dp))

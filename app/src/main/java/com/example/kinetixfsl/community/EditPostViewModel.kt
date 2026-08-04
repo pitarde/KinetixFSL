@@ -1,6 +1,7 @@
 package com.example.kinetixfsl.community
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -8,22 +9,20 @@ import com.example.kinetixfsl.community.model.Community
 import com.example.kinetixfsl.community.model.MAX_POST_MEDIA
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.model.PostMedia
-import com.example.kinetixfsl.community.upload.R2MediaUploader
-import com.example.kinetixfsl.community.upload.SharePreviewGenerator
+import com.example.kinetixfsl.community.upload.PostUploadService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 
 data class EditPostUiState(
     val postId: String = "",
     val title: String = "",
     val body: String = "",
-    val linkUrl: String = "",
-    val isLinkFieldVisible: Boolean = false,
+    /** One entry per link field; blank ones are dropped on save. */
+    val links: List<String> = emptyList(),
     /** Attachments the post already has, minus anything the user removed. */
     val existingMedia: List<PostMedia> = emptyList(),
     /** Newly picked attachments, not yet uploaded. */
@@ -53,7 +52,6 @@ data class EditPostUiState(
  */
 class EditPostViewModel(
     post: Post,
-    private val repository: CommunityRepository = CommunityRepository(),
     private val directory: CommunityDirectoryRepository = CommunityDirectoryRepository(),
 ) : ViewModel() {
 
@@ -62,8 +60,7 @@ class EditPostViewModel(
             postId = post.id,
             title = post.title,
             body = post.body,
-            linkUrl = post.linkUrl.orEmpty(),
-            isLinkFieldVisible = !post.linkUrl.isNullOrBlank(),
+            links = post.allLinks,
             existingMedia = post.mediaItems,
             selectedCommunityId = post.communityId,
             selectedCommunityName = post.communityName,
@@ -91,11 +88,26 @@ class EditPostViewModel(
     fun onBodyChange(value: String) =
         _uiState.update { it.copy(body = value, errorMessage = null) }
 
-    fun onLinkUrlChange(value: String) =
-        _uiState.update { it.copy(linkUrl = value, errorMessage = null) }
+    fun onLinkChange(index: Int, value: String) =
+        _uiState.update { state ->
+            if (index !in state.links.indices) return@update state
+            state.copy(
+                links = state.links.toMutableList().also { it[index] = value },
+                errorMessage = null,
+            )
+        }
 
-    fun toggleLinkField() =
-        _uiState.update { it.copy(isLinkFieldVisible = !it.isLinkFieldVisible) }
+    fun addLinkField() =
+        _uiState.update { it.copy(links = it.links + "", errorMessage = null) }
+
+    fun removeLink(index: Int) =
+        _uiState.update { state ->
+            if (index !in state.links.indices) return@update state
+            state.copy(
+                links = state.links.toMutableList().also { it.removeAt(index) },
+                errorMessage = null,
+            )
+        }
 
     /** Drops one of the post's current attachments. */
     fun removeExisting(item: PostMedia) =
@@ -126,11 +138,11 @@ class EditPostViewModel(
     }
 
     /**
-     * Uploads any newly added attachments, then writes the whole post back.
-     *
-     * Unlike creating, this runs in the ViewModel rather than the upload
-     * service — the user is waiting on the result to close the screen, and
-     * there's no partial state worth surviving the screen being dismissed.
+     * Hands the edit off to [PostUploadService] and closes the screen at once —
+     * exactly like creating a post. Any newly added photo or video uploads in
+     * the background with a status-bar notification, and the post is written
+     * when that finishes; the user is returned to wherever they were (their
+     * profile, a community, the feed) without waiting.
      */
     fun save(context: Context) {
         val state = _uiState.value
@@ -138,67 +150,61 @@ class EditPostViewModel(
             _uiState.update { it.copy(errorMessage = "Please add a title.") }
             return
         }
-        if (state.isSaving) return
+        if (state.isSaved) return
 
-        _uiState.update { it.copy(isSaving = true, errorMessage = null, savingLabel = "Saving…") }
-
-        viewModelScope.launch {
-            val uploaded = mutableListOf<PostMedia>()
-
-            state.newMedia.forEachIndexed { index, item ->
-                _uiState.update {
-                    it.copy(savingLabel = "Uploading ${index + 1} of ${state.newMedia.size}…")
-                }
-
-                val result = R2MediaUploader.upload(context, item.uri, item.type)
-                when (result) {
-                    is R2MediaUploader.UploadResult.Success -> {
-                        val derived = try {
-                            SharePreviewGenerator.derive(
-                                context = context,
-                                uri = item.uri,
-                                mediaType = item.type,
-                                includeShareArtifacts = false,
-                            )
-                        } catch (_: Exception) {
-                            SharePreviewGenerator.Derivatives()
-                        }
-                        uploaded += PostMedia(
-                            url = result.secureUrl,
-                            type = item.type,
-                            thumbUrl = derived.feedUrl,
-                        )
-                    }
-                    is R2MediaUploader.UploadResult.Error -> {
-                        _uiState.update {
-                            it.copy(isSaving = false, errorMessage = result.message)
-                        }
-                        return@launch
-                    }
-                }
+        // The background service reads the new media after this screen is gone,
+        // so take persistable read permission on each URI first — same as create.
+        state.newMedia.forEach { item ->
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    item.uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            } catch (_: SecurityException) {
+                // Not all URIs support it; the service still reads them normally.
             }
-
-            _uiState.update { it.copy(savingLabel = "Saving…") }
-
-            repository.updatePost(
-                postId = state.postId,
-                title = state.title,
-                body = state.body,
-                linkUrl = state.linkUrl.takeIf { it.isNotBlank() },
-                media = state.existingMedia + uploaded,
-                communityId = state.selectedCommunityId,
-                communityName = state.selectedCommunityName,
-            ).fold(
-                onSuccess = { _uiState.update { it.copy(isSaving = false, isSaved = true) } },
-                onFailure = { error ->
-                    _uiState.update {
-                        it.copy(
-                            isSaving = false,
-                            errorMessage = error.localizedMessage ?: "Couldn't save changes.",
-                        )
-                    }
-                },
-            )
         }
+
+        val cleanLinks = state.links.map { it.trim() }.filter { it.isNotBlank() }
+
+        val intent = Intent(context, PostUploadService::class.java).apply {
+            putExtra(PostUploadService.EXTRA_POST_ID, state.postId)
+            putExtra(PostUploadService.EXTRA_TITLE, state.title)
+            putExtra(PostUploadService.EXTRA_BODY, state.body)
+            putStringArrayListExtra(PostUploadService.EXTRA_LINK_URLS, ArrayList(cleanLinks))
+            putExtra(PostUploadService.EXTRA_COMMUNITY_ID, state.selectedCommunityId)
+            putExtra(PostUploadService.EXTRA_COMMUNITY_NAME, state.selectedCommunityName)
+
+            // Media already on the post, kept as-is (three parallel arrays).
+            putStringArrayListExtra(
+                PostUploadService.EXTRA_EXISTING_URLS,
+                ArrayList(state.existingMedia.map { it.url }),
+            )
+            putStringArrayListExtra(
+                PostUploadService.EXTRA_EXISTING_TYPES,
+                ArrayList(state.existingMedia.map { it.type }),
+            )
+            putStringArrayListExtra(
+                PostUploadService.EXTRA_EXISTING_THUMBS,
+                ArrayList(state.existingMedia.map { it.thumbUrl.orEmpty() }),
+            )
+
+            // Newly picked media to upload.
+            if (state.newMedia.isNotEmpty()) {
+                putStringArrayListExtra(
+                    PostUploadService.EXTRA_MEDIA_URIS,
+                    ArrayList(state.newMedia.map { it.uri.toString() }),
+                )
+                putStringArrayListExtra(
+                    PostUploadService.EXTRA_MEDIA_TYPES,
+                    ArrayList(state.newMedia.map { it.type }),
+                )
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+        context.startForegroundService(intent)
+
+        // Close immediately — the upload and save continue in the background.
+        _uiState.update { it.copy(isSaved = true) }
     }
 }

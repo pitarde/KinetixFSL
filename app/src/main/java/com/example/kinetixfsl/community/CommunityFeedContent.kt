@@ -53,7 +53,6 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -65,6 +64,13 @@ import kotlin.math.abs
 import com.example.kinetixfsl.ui.theme.KinetixGreen
 import com.example.kinetixfsl.ui.theme.KinetixIndigo
 import com.example.kinetixfsl.ui.theme.KinetixMint
+
+/**
+ * List key for the optional collapsing header. Deliberately an Int, not a
+ * String, so the String-keyed post logic (video autoplay, image prefetch) never
+ * mistakes the header for a post.
+ */
+private const val COMMUNITY_HEADER_KEY = -1
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,6 +106,21 @@ fun CommunityFeedContent(
     showCommunityBadge: Boolean = false,
     /** Opens a community from a home-feed post's community header. */
     onOpenCommunity: (communityId: String) -> Unit = {},
+    /** Tapping a post's 3-dot menu — the host decides what the sheet shows. */
+    onMenuClick: (Post) -> Unit = {},
+    /**
+     * Opens a post by id from an in-app share link pasted into a post. Community
+     * and profile share links reuse [onOpenCommunity] and [onAuthorClick].
+     */
+    onOpenPostById: (postId: String) -> Unit = {},
+    /**
+     * Optional collapsing header rendered as the very first list item — the
+     * community banner, name card and category strip on a community's own feed.
+     * Because it lives inside the feed's own list it scrolls away naturally as
+     * the user swipes up, letting the posts take over the screen. Null in the
+     * home feed, which has no per-community header.
+     */
+    headerContent: (@Composable () -> Unit)? = null,
 ) {
     val state by viewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
@@ -172,8 +193,19 @@ fun CommunityFeedContent(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background),
-                contentPadding = PaddingValues(vertical = 12.dp),
+                contentPadding = PaddingValues(
+                    // A collapsing header is full-bleed and sits flush at the top;
+                    // the plain feed keeps its usual breathing room.
+                    top = if (headerContent != null) 0.dp else 12.dp,
+                    bottom = 12.dp,
+                ),
             ) {
+                // Rendered first so it scrolls away before the posts. The Int key
+                // keeps it out of the String-keyed post logic (autoplay, prefetch).
+                if (headerContent != null) {
+                    item(key = COMMUNITY_HEADER_KEY) { headerContent() }
+                }
+
                 if (showSearchBar) {
                     item {
                         SearchBar(
@@ -205,9 +237,7 @@ fun CommunityFeedContent(
                                     onShare = { viewModel.share(context, post) },
                                     onMediaClick = { onMediaClick(post) },
                                     onAuthorClick = { onAuthorClick(post.authorId) },
-                                    // Inert for now — the actions behind it
-                                    // are a later piece of work.
-                                    onMenuClick = {},
+                                    onMenuClick = { onMenuClick(post) },
                                     // No Follow button in the feed on purpose:
                                     // following happens from a user's profile,
                                     // so a second control here is redundant.
@@ -237,6 +267,9 @@ fun CommunityFeedContent(
                                     } else {
                                         null
                                     },
+                                    onOpenPostLink = onOpenPostById,
+                                    onOpenCommunityLink = onOpenCommunity,
+                                    onOpenProfileLink = onAuthorClick,
                                     onClick = { onPostClick(post) },
                                 )
                                 HorizontalDivider(
@@ -459,6 +492,10 @@ internal fun PostCard(
     isCommunityJoined: Boolean = false,
     onToggleJoinCommunity: (() -> Unit)? = null,
     onCommunityClick: (() -> Unit)? = null,
+    /** In-app openers for the app's own share links pasted into a post. */
+    onOpenPostLink: ((String) -> Unit)? = null,
+    onOpenCommunityLink: ((String) -> Unit)? = null,
+    onOpenProfileLink: ((String) -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
@@ -512,16 +549,31 @@ internal fun PostCard(
             overflow = TextOverflow.Ellipsis,
         )
 
+        // A clamped body ("see more") hides the link until the post is opened;
+        // a short body — or none — shows the link right here, since otherwise a
+        // link-only post's link would never be seen in the feed.
+        var bodyClamped by remember(post.id) { mutableStateOf(false) }
         if (post.body.isNotBlank()) {
             Spacer(Modifier.height(4.dp))
             // Long bodies get clamped with a "see more" hint; tapping the card
             // opens the detail screen where the full body is shown.
-            TruncatedBodyText(text = post.body, maxLines = 3)
+            TruncatedBodyText(
+                text = post.body,
+                maxLines = 3,
+                onOverflowChange = { bodyClamped = it },
+            )
         }
 
-        if (!post.linkUrl.isNullOrBlank()) {
+        val links = post.allLinks
+        if (links.isNotEmpty() && (post.body.isBlank() || !bodyClamped)) {
             Spacer(Modifier.height(4.dp))
-            Text(post.linkUrl, style = MaterialTheme.typography.bodyMedium.copy(textDecoration = TextDecoration.Underline), color = MaterialTheme.colorScheme.primary, maxLines = 1)
+            PostLinks(
+                links = links,
+                maxLines = 1,
+                onOpenPost = onOpenPostLink,
+                onOpenCommunity = onOpenCommunityLink,
+                onOpenProfile = onOpenProfileLink,
+            )
         }
 
         // ---- Media: one item, or a swipeable carousel ----

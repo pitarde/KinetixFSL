@@ -19,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -226,6 +227,12 @@ internal fun TruncatedBodyText(
     text: String,
     modifier: Modifier = Modifier,
     maxLines: Int = 3,
+    /**
+     * Reports whether the body was clamped (has a "see more"). The feed card
+     * uses it to decide whether to show the link: a clamped body hides the link
+     * until the post is opened; a short one shows it inline.
+     */
+    onOverflowChange: (Boolean) -> Unit = {},
 ) {
     var isOverflowing by remember(text) { mutableStateOf(false) }
 
@@ -236,7 +243,10 @@ internal fun TruncatedBodyText(
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
-            onTextLayout = { result -> isOverflowing = result.hasVisualOverflow },
+            onTextLayout = { result ->
+                isOverflowing = result.hasVisualOverflow
+                onOverflowChange(result.hasVisualOverflow)
+            },
         )
         if (isOverflowing) {
             Text(
@@ -247,6 +257,104 @@ internal fun TruncatedBodyText(
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
+    }
+}
+
+/**
+ * The post's links, each on its own line and each opening in the browser when
+ * tapped. Renders nothing when the post has no links. Shared by the feed card
+ * and the detail screen so a link looks and behaves the same in both.
+ */
+@Composable
+internal fun PostLinks(
+    links: List<String>,
+    modifier: Modifier = Modifier,
+    maxLines: Int = Int.MAX_VALUE,
+    /**
+     * When a link is one of the app's own share links, these open the target
+     * in-app instead of the browser: a post, a community, or a profile. Left
+     * null (or on a link the app can't resolve) the link opens in the browser.
+     *
+     * Routing in-app is what makes such a link open every time and close back
+     * to the previous screen — going out through the browser bounces the link
+     * back in through App Links, which resets the stack to the dashboard and
+     * won't re-fire for the same id.
+     */
+    onOpenPost: ((String) -> Unit)? = null,
+    onOpenCommunity: ((String) -> Unit)? = null,
+    onOpenProfile: ((String) -> Unit)? = null,
+) {
+    if (links.isEmpty()) return
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    // Launch the browser off the tap frame, not straight from the click.
+    // Calling startActivity inline — right after coming back from the browser —
+    // was intermittently dropped: the tap landed while the window was still
+    // regaining focus. Bouncing through a state + LaunchedEffect lets the tap
+    // and the focus settle first, so the link opens every time.
+    var pendingUrl by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(pendingUrl) {
+        val target = pendingUrl ?: return@LaunchedEffect
+        openLink(context, target)
+        pendingUrl = null
+    }
+
+    fun onLinkTap(link: String) {
+        val normalized = if (link.contains("://")) link.trim() else "https://${link.trim()}"
+        val uri = runCatching { android.net.Uri.parse(normalized) }.getOrNull()
+        val postId = ShareLinks.postIdFrom(uri)
+        val communityId = ShareLinks.communityIdFrom(uri)
+        val userId = ShareLinks.profileIdFrom(uri)
+        when {
+            postId != null && onOpenPost != null -> onOpenPost(postId)
+            communityId != null && onOpenCommunity != null -> onOpenCommunity(communityId)
+            userId != null && onOpenProfile != null -> onOpenProfile(userId)
+            // Not one of ours (or no in-app handler): open it in the browser.
+            else -> pendingUrl = link
+        }
+    }
+
+    Column(modifier = modifier) {
+        links.forEachIndexed { index, link ->
+            if (index > 0) Spacer(Modifier.height(4.dp))
+            Text(
+                text = link,
+                style = MaterialTheme.typography.bodyMedium
+                    .copy(textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline),
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = maxLines,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable { onLinkTap(link) }
+                    .padding(vertical = 2.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Opens [url] in the browser (or whatever app claims it). A URL the user typed
+ * often has no scheme — "example.com" — which ACTION_VIEW can't resolve, so a
+ * missing scheme is filled in with https:// first.
+ */
+internal fun openLink(context: android.content.Context, url: String) {
+    val trimmed = url.trim()
+    if (trimmed.isBlank()) return
+    val normalized = if (trimmed.contains("://")) trimmed else "https://$trimmed"
+    try {
+        context.startActivity(
+            android.content.Intent(
+                android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse(normalized),
+            )
+        )
+    } catch (_: Exception) {
+        android.widget.Toast.makeText(
+            context,
+            "Couldn't open this link.",
+            android.widget.Toast.LENGTH_SHORT,
+        ).show()
     }
 }
 

@@ -26,6 +26,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.kinetixfsl.community.CommunityIcons
 import com.example.kinetixfsl.community.model.Community
+import com.google.firebase.auth.FirebaseAuth
 
 /**
  * A community summary card — avatar, name, member count, a two-line blurb, and
@@ -97,7 +98,12 @@ internal fun CommunityCard(
 
             Spacer(Modifier.width(12.dp))
 
-            JoinPill(isJoined = isJoined, onJoin = onJoin, onLeave = onLeave)
+            // You created this one — there's nothing to join.
+            if (community.creatorId == FirebaseAuth.getInstance().currentUser?.uid) {
+                YourCommunityPill()
+            } else {
+                JoinPill(isJoined = isJoined, onJoin = onJoin, onLeave = onLeave)
+            }
         }
 
         if (community.description.isNotBlank()) {
@@ -110,6 +116,25 @@ internal fun CommunityCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/** Stands in for Join/Joined on a community card you created yourself. */
+@Composable
+private fun YourCommunityPill() {
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = "Your community",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
