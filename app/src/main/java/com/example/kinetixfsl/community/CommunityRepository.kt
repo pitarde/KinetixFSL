@@ -11,6 +11,7 @@ import com.example.kinetixfsl.community.upload.R2MediaUploader
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.CollectionReference
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -125,6 +126,87 @@ class CommunityRepository(
                 .set(mapOf("lastActiveAt" to Timestamp.now()), SetOptions.merge())
                 .await()
         } catch (_: Exception) { /* best-effort */ }
+    }
+
+    /**
+     * Saves the signed-in user's profile picture and/or cover banner to
+     * `users/{uid}`. Only the fields passed are written, merged so counters and
+     * other details are never clobbered. Mirrors [updateCommunityImages] for the
+     * community; the profile Edit sheet uses it.
+     */
+    suspend fun updateUserImages(
+        avatarUrl: String? = null,
+        bannerUrl: String? = null,
+    ): Result<Unit> {
+        val uid = auth.currentUser?.uid
+            ?: return Result.failure(Exception("You're not signed in."))
+        val fields = mutableMapOf<String, Any?>()
+        avatarUrl?.let { fields["avatarUrl"] = it }
+        bannerUrl?.let { fields["bannerUrl"] = it }
+        if (fields.isEmpty()) return Result.success(Unit)
+        return try {
+            firestore.collection(USERS).document(uid)
+                .set(fields, SetOptions.merge())
+                .await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Renames the signed-in user, in both Auth and `users/{uid}` — Auth is what
+     * new posts and comments stamp their author name from, so both have to move
+     * together or old and new content would show two different names.
+     */
+    suspend fun updateDisplayName(name: String): Result<Unit> {
+        val user = auth.currentUser ?: return Result.failure(Exception("You're not signed in."))
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return Result.failure(Exception("Name can't be empty."))
+        return try {
+            user.updateProfile(
+                com.google.firebase.auth.UserProfileChangeRequest.Builder()
+                    .setDisplayName(trimmed)
+                    .build(),
+            ).await()
+            firestore.collection(USERS).document(user.uid)
+                .set(mapOf("displayName" to trimmed), SetOptions.merge())
+                .await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Rewrites the `authorName` denormalized onto every post and comment [uid]
+     * has ever made, so a rename doesn't leave old content showing the old name.
+     * Best-effort and unbounded — for the account sizes this app deals with, a
+     * rename is rare enough that this is worth doing eagerly rather than only
+     * lazily resolving names from the live profile everywhere they're shown.
+     */
+    suspend fun propagateAuthorName(uid: String, newName: String) {
+        try {
+            val posts = firestore.collection(POSTS).whereEqualTo("authorId", uid).get().await()
+            writeFieldInBatches(posts.documents.map { it.reference }, "authorName", newName)
+        } catch (_: Exception) { /* best-effort */ }
+
+        try {
+            val comments = firestore.collectionGroup(COMMENTS).whereEqualTo("authorId", uid).get().await()
+            writeFieldInBatches(comments.documents.map { it.reference }, "authorName", newName)
+        } catch (_: Exception) { /* best-effort */ }
+    }
+
+    /**
+     * Merges a single field across many documents, chunked well under
+     * Firestore's 500-write batch limit.
+     */
+    private suspend fun writeFieldInBatches(refs: List<DocumentReference>, field: String, value: Any?) {
+        refs.chunked(400).forEach { chunk ->
+            val batch = firestore.batch()
+            chunk.forEach { ref -> batch.set(ref, mapOf(field to value), SetOptions.merge()) }
+            batch.commit().await()
+        }
     }
 
     /** Ids the signed-in user follows. Drives every Follow button's state. */
@@ -338,15 +420,34 @@ class CommunityRepository(
         return result
     }
 
-    /** Rewrites a comment's text. */
+    /**
+     * Rewrites a comment's text and, optionally, its attached photo.
+     *
+     * [newImageUrl] replaces the existing photo (already uploaded by the
+     * caller); [removeImage] drops it entirely. Passing neither leaves whatever
+     * photo the comment already had untouched — there's no way to express "set
+     * to null" and "don't touch" with a single nullable parameter, hence the
+     * separate flag.
+     */
     suspend fun updateComment(
         postId: String,
         commentId: String,
         body: String,
+        newImageUrl: String? = null,
+        removeImage: Boolean = false,
     ): Result<Unit> = try {
+        val fields = mutableMapOf<String, Any>(
+            "body" to body.trim(),
+            "editedAt" to Timestamp.now(),
+        )
+        if (removeImage) {
+            fields["imageUrl"] = FieldValue.delete()
+        } else if (newImageUrl != null) {
+            fields["imageUrl"] = newImageUrl
+        }
         firestore.collection(POSTS).document(postId)
             .collection(COMMENTS).document(commentId)
-            .update(mapOf("body" to body.trim(), "editedAt" to Timestamp.now()))
+            .update(fields)
             .await()
         Result.success(Unit)
     } catch (e: Exception) {
@@ -703,6 +804,33 @@ class CommunityRepository(
                 .set(hashMapOf("hiddenAt" to Timestamp.now()))
                 .await()
         } catch (_: Exception) { /* best-effort */ }
+    }
+
+    /**
+     * Undoes [hidePost] — removes the marker so the post reappears in the
+     * signed-in user's feeds. Reachable from the profile's Comments tab, where a
+     * hidden post a user commented on is still visible.
+     */
+    suspend fun unhidePost(postId: String) {
+        val uid = auth.currentUser?.uid ?: return
+        try {
+            firestore.collection(USERS).document(uid)
+                .collection(HIDDEN_POSTS).document(postId)
+                .delete()
+                .await()
+        } catch (_: Exception) { /* best-effort */ }
+    }
+
+    /** Whether the signed-in user has hidden [postId]. One-shot — no listener. */
+    suspend fun isPostHidden(postId: String): Boolean {
+        val uid = auth.currentUser?.uid ?: return false
+        return try {
+            firestore.collection(USERS).document(uid)
+                .collection(HIDDEN_POSTS).document(postId)
+                .get().await().exists()
+        } catch (_: Exception) {
+            false
+        }
     }
 
     /** Live set of post ids the signed-in user has hidden. */

@@ -278,6 +278,43 @@ class CommunityDirectoryRepository(
         Result.failure(e)
     }
 
+    /**
+     * Renames the community. Admin-only, enforced by rules (only the creator may
+     * edit the document). The old name lingers on other users' `joinedCommunities`
+     * mirror and past posts' `communityName` — cosmetic staleness only, not worth
+     * a fan-out write across every member and post to fix.
+     */
+    suspend fun updateCommunityName(communityId: String, name: String): Result<Unit> {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return Result.failure(Exception("Name can't be empty."))
+        return try {
+            firestore.collection(COMMUNITIES).document(communityId)
+                .set(mapOf("name" to trimmed), SetOptions.merge())
+                .await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Rewrites `creatorName` on every community [uid] created, so a rename
+     * doesn't leave "Created by {old name}" showing on their communities' home
+     * screens. Best-effort and unbounded — see [CommunityRepository.propagateAuthorName],
+     * the same pattern for posts and comments.
+     */
+    suspend fun renameCreator(uid: String, newName: String) {
+        try {
+            val docs = firestore.collection(COMMUNITIES).whereEqualTo("creatorId", uid).get().await()
+            if (docs.isEmpty) return
+            val batch = firestore.batch()
+            docs.documents.forEach { doc ->
+                batch.set(doc.reference, mapOf("creatorName" to newName), SetOptions.merge())
+            }
+            batch.commit().await()
+        } catch (_: Exception) { /* best-effort */ }
+    }
+
     /** Removes [category] from the community's list. */
     suspend fun removeCategory(communityId: String, category: String): Result<Unit> = try {
         firestore.collection(COMMUNITIES).document(communityId)

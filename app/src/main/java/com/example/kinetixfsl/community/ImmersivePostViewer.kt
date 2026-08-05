@@ -380,6 +380,7 @@ fun ImmersivePostViewer(
                                     isComposerOpen = true
                                 },
                                 onImageClick = { url -> fullScreenImageUrl = url },
+                                onAuthorClick = onAuthorClick,
                             )
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }

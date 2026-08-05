@@ -260,6 +260,8 @@ fun CommunityScreen(
                             postId = overlay.postId,
                             onClose = close,
                             onAuthorClick = openProfile,
+                            onEditPost = { post -> overlays.add(CommunityOverlay.Edit(post)) },
+                            onCommunityClick = openCommunity,
                         )
 
                         is CommunityOverlay.Edit -> EditPostScreen(
@@ -464,16 +466,23 @@ private fun CommunityScaffold(
             }
         }
 
-        CommunityBottomNav(
-            selectedTab = selectedTab,
-            onTabSelected = { tab ->
-                if (tab == CommunityTab.HOME && selectedTab == CommunityTab.HOME) {
-                    onScrollToTopAndRefresh()
-                } else {
-                    onTabSelected(tab)
-                }
-            },
-        )
+        // Hidden while composing a post: Create's own toolbar handles the
+        // keyboard itself (see CreatePostScreen's imePadding), and floating
+        // Home/Profile/Create/Notifications up above the keyboard alongside it
+        // was more chrome than the moment needs — only the link/image/video
+        // icons should react to the keyboard here.
+        if (selectedTab != CommunityTab.CREATE) {
+            CommunityBottomNav(
+                selectedTab = selectedTab,
+                onTabSelected = { tab ->
+                    if (tab == CommunityTab.HOME && selectedTab == CommunityTab.HOME) {
+                        onScrollToTopAndRefresh()
+                    } else {
+                        onTabSelected(tab)
+                    }
+                },
+            )
+        }
     }
 }
 

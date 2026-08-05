@@ -330,6 +330,7 @@ fun CommunityHomeScreen(
                         ),
                     )
                 },
+                onSaveName = viewModel::updateName,
                 onDismiss = { showEdit = false },
             )
         }
@@ -387,6 +388,8 @@ fun CommunityHomeScreen(
                                 postId = overlay.postId,
                                 onClose = close,
                                 onAuthorClick = openProfile,
+                                onEditPost = { post -> overlays.add(HomeOverlay.Edit(post)) },
+                                onCommunityClick = openCommunity,
                             )
                         }
 
@@ -975,11 +978,11 @@ private fun YourCommunityBadge() {
         modifier = Modifier
             .clip(shape)
             .border(1.dp, MaterialTheme.colorScheme.outline, shape)
-            .padding(horizontal = 18.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Text(
             text = "Your community",
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.SemiBold,
         )
@@ -1303,14 +1306,66 @@ private fun EditCommunitySheet(
     uploading: CommunityHomeViewModel.Uploading,
     onChangeBanner: () -> Unit,
     onChangeAvatar: () -> Unit,
+    onSaveName: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var nameInput by remember(community.id) { mutableStateOf(community.name) }
+    val nameChanged = nameInput.trim().isNotEmpty() && nameInput.trim() != community.name.trim()
+
     BottomSheet(
         title = "Edit community",
-        subtitle = "Banner and profile picture",
+        subtitle = "Name, banner and profile picture",
         onDismiss = onDismiss,
     ) {
         Column {
+            // ---- Name ----
+            Text(
+                text = "Community name",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                if (nameChanged) {
+                    Spacer(Modifier.width(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.primary)
+                            .clickable { onSaveName(nameInput.trim()) }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            text = "Save",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
             // ---- Banner ----
             Text(
                 text = "Banner image",

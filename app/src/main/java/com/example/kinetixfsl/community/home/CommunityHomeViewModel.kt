@@ -68,6 +68,14 @@ class CommunityHomeViewModel(
         viewModelScope.launch { repository.addCategory(communityId, category) }
     }
 
+    /** Renames the community, from the Edit sheet. Admin-only, enforced by rules. */
+    fun updateName(name: String) {
+        viewModelScope.launch {
+            repository.updateCommunityName(communityId, name)
+                .onFailure { _editError.value = it.localizedMessage ?: "Couldn't rename the community." }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Editing the community's banner and profile picture (admin only)
     // -------------------------------------------------------------------------

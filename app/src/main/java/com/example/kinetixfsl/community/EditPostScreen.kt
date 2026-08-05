@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -121,7 +122,10 @@ fun EditPostScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
+            .statusBarsPadding()
+            // See CreatePostScreen — edge-to-edge means nothing resizes for the
+            // keyboard without this, so a long body scrolls behind it.
+            .imePadding(),
     ) {
         // ---- Screen title: the one thing that differs from the create screen ----
         Box(

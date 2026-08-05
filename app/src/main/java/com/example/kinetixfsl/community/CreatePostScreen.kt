@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -134,7 +135,14 @@ fun CreatePostScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(MaterialTheme.colorScheme.background)
+            // CommunityScaffold hides its bottom nav while this tab is active
+            // (see CommunityScreen), so this screen owns the full remaining
+            // height with nothing else competing for it — imePadding() here
+            // shrinks exactly to the keyboard height with no leftover gap, and
+            // only this toolbar (not Home/Profile/Create/Notifications) reacts
+            // to the keyboard.
+            .imePadding(),
     ) {
         // ---- Top bar: X + Select Community + Post ----
         // ---- Top bar: X + Select Community + Post ----

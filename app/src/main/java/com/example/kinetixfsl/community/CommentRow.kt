@@ -17,11 +17,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.kinetixfsl.community.model.Comment
@@ -40,12 +45,15 @@ internal fun CommentThreadItem(
     onReply: (Comment) -> Unit,
     onImageClick: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Opens the commenter's profile — the signed-in user's own included. */
+    onAuthorClick: (String) -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         CommentRow(
             comment = thread.comment,
             onReply = { onReply(thread.comment) },
             onImageClick = onImageClick,
+            onAuthorClick = onAuthorClick,
         )
 
         if (thread.replies.isNotEmpty()) {
@@ -61,6 +69,7 @@ internal fun CommentThreadItem(
                         comment = reply,
                         onReply = { onReply(reply) },
                         onImageClick = onImageClick,
+                        onAuthorClick = onAuthorClick,
                         isReply = true,
                     )
                 }
@@ -128,6 +137,8 @@ internal fun CommentRow(
     onImageClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     isReply: Boolean = false,
+    /** Opens the commenter's profile — the signed-in user's own included. */
+    onAuthorClick: (String) -> Unit = {},
 ) {
     Row(
         modifier = modifier
@@ -144,6 +155,9 @@ internal fun CommentRow(
             avatarUrl = comment.authorAvatarUrl,
             name = comment.authorName,
             size = if (isReply) 24.dp else 30.dp,
+            modifier = Modifier.clickable(enabled = comment.authorId.isNotBlank()) {
+                onAuthorClick(comment.authorId)
+            },
         )
 
         Spacer(Modifier.width(10.dp))
@@ -155,6 +169,11 @@ internal fun CommentRow(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable(enabled = comment.authorId.isNotBlank()) {
+                            onAuthorClick(comment.authorId)
+                        },
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
@@ -166,11 +185,7 @@ internal fun CommentRow(
 
             if (comment.body.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    comment.body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+                ExpandableCommentText(comment.body)
             }
 
             val imageUrl = comment.imageUrl
@@ -213,3 +228,41 @@ internal fun CommentRow(
 
 /** Replies line up under the parent's text, not under its avatar. */
 private val REPLY_INDENT = 56.dp
+
+/**
+ * A comment's body, clamped to 3 lines with a "See more" toggle when it
+ * overflows — keeps a long paragraph from pushing the rest of the thread
+ * offscreen. Unlike a post card's passive "see more" hint, this is the deepest
+ * view a comment ever gets, so tapping actually expands it in place (and
+ * "See less" collapses it back), rather than pointing anywhere else.
+ */
+@Composable
+private fun ExpandableCommentText(text: String) {
+    var expanded by remember(text) { mutableStateOf(false) }
+    var isOverflowing by remember(text) { mutableStateOf(false) }
+
+    Column {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = if (expanded) Int.MAX_VALUE else 3,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { result ->
+                if (!expanded && result.hasVisualOverflow) isOverflowing = true
+            },
+        )
+        if (isOverflowing) {
+            Text(
+                text = if (expanded) "See less" else "See more",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .clip(RoundedCornerShape(50))
+                    .clickable { expanded = !expanded },
+            )
+        }
+    }
+}

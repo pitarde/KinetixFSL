@@ -13,6 +13,8 @@ data class UserProfile(
     val uid: String = "",
     val displayName: String = "",
     val avatarUrl: String? = null,
+    /** Wide cover image shown behind the profile card, set from the Edit sheet. */
+    val bannerUrl: String? = null,
     val followerCount: Long = 0,
     val followingCount: Long = 0,
     /**

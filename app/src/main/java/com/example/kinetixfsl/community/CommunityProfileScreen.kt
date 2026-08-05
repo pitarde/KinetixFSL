@@ -100,8 +100,21 @@ fun CommunityProfileScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
+    val uploading by viewModel.uploading.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // Own-profile editing: an Edit sheet to swap the profile picture and banner,
+    // each picked from the device then cropped before upload — the same flow the
+    // community's Edit uses.
+    var showEditProfile by remember { mutableStateOf(false) }
+    var cropRequest by remember { mutableStateOf<ProfileCropRequest?>(null) }
+    val bannerPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { uri: android.net.Uri? -> uri?.let { cropRequest = ProfileCropRequest(it, forBanner = true) } }
+    val avatarPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { uri: android.net.Uri? -> uri?.let { cropRequest = ProfileCropRequest(it, forBanner = false) } }
 
     // Whose profile this is — the visitor arg, or the signed-in user for the
     // own-profile tab. Backs the share link.
@@ -242,12 +255,14 @@ fun CommunityProfileScreen(
             ProfileCard(
                 displayName = state.displayName,
                 avatarUrl = state.avatarUrl,
+                bannerUrl = state.bannerUrl,
                 followerCount = state.followerCount,
                 isOwnProfile = state.isOwnProfile,
                 isFollowing = state.isFollowing,
                 onFollowersClick = { isFollowersOpen = true },
                 onFollowClick = { viewModel.toggleFollow() },
                 onMessageClick = onMessageClick,
+                onEditClick = { showEditProfile = true },
             )
         }
 
@@ -343,8 +358,9 @@ fun CommunityProfileScreen(
         if (commentToEdit != null) {
             EditCommentDialog(
                 initialText = commentToEdit.comment.body,
-                onConfirm = { text ->
-                    viewModel.editComment(commentToEdit, text)
+                initialImageUrl = commentToEdit.comment.imageUrl,
+                onConfirm = { text, newImageUri, removeImage ->
+                    viewModel.editComment(commentToEdit, text, context, newImageUri, removeImage)
                     editingComment = null
                 },
                 onDismiss = { editingComment = null },
@@ -363,6 +379,9 @@ fun CommunityProfileScreen(
             MyCommunitiesSheet(
                 communities = state.myCommunities,
                 joinedIds = state.viewerJoinedCommunityIds,
+                // Tags any community *this profile's* user created, so a
+                // visitor knows they can visit and join it too.
+                profileUid = state.profileUid,
                 onToggleJoin = { viewModel.toggleJoinCommunity(it) },
                 onOpenCommunity = { community ->
                     isCommunitiesOpen = false
@@ -393,6 +412,48 @@ fun CommunityProfileScreen(
                 onDismiss = { pendingCommentDelete = null },
             )
         }
+
+        // Own-profile Edit: pick + change the profile picture and cover banner.
+        if (showEditProfile && state.isOwnProfile) {
+            EditProfileSheet(
+                displayName = state.displayName,
+                avatarUrl = state.avatarUrl,
+                bannerUrl = state.bannerUrl,
+                uploading = uploading,
+                onChangeBanner = {
+                    bannerPicker.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                        ),
+                    )
+                },
+                onChangeAvatar = {
+                    avatarPicker.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                        ),
+                    )
+                },
+                onSaveName = viewModel::updateDisplayName,
+                onDismiss = { showEditProfile = false },
+            )
+        }
+
+        // The cropper sits over everything while it's open.
+        cropRequest?.let { req ->
+            com.example.kinetixfsl.community.home.ImageCropScreen(
+                imageUri = req.uri,
+                aspectRatio = if (req.forBanner) 3f else 1f,
+                title = if (req.forBanner) "Crop banner" else "Crop profile picture",
+                outputWidth = if (req.forBanner) 1440 else 640,
+                circle = !req.forBanner,
+                onCancel = { cropRequest = null },
+                onDone = { bitmap ->
+                    if (req.forBanner) viewModel.updateBanner(bitmap) else viewModel.updateAvatar(bitmap)
+                    cropRequest = null
+                },
+            )
+        }
     }
 
     // Surface load/delete failures rather than failing silently.
@@ -414,80 +475,128 @@ fun CommunityProfileScreen(
 private fun ProfileCard(
     displayName: String,
     avatarUrl: String?,
+    bannerUrl: String?,
     followerCount: Long,
     isOwnProfile: Boolean,
     isFollowing: Boolean,
     onFollowersClick: () -> Unit,
     onFollowClick: () -> Unit,
     onMessageClick: () -> Unit,
+    onEditClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val bannerHeight = 130.dp
+    val avatarSize = 72.dp
     Column(modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.background)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
-                .padding(20.dp),
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp)),
         ) {
-            Avatar(avatarUrl = avatarUrl, name = displayName, size = 72.dp)
-            Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = displayName,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    fontWeight = FontWeight.Bold,
-                )
-                Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // ---- Cover banner: the user's image, or a plain colored strip ----
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(bannerHeight)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    if (!bannerUrl.isNullOrBlank()) {
+                        coil.compose.AsyncImage(
+                            model = bannerUrl,
+                            contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
 
-                if (isOwnProfile) {
-                    Text(
-                        text = "Edit",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                } else {
-                    // Message is a placeholder button for now — deliberately
-                    // clickable so the layout is final, with nothing behind it.
-                    Icon(
-                        imageVector = CommunityIcons.Message,
-                        contentDescription = "Message",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clip(RoundedCornerShape(50))
-                            .clickable(onClick = onMessageClick),
-                    )
-                    Spacer(Modifier.width(14.dp))
-                    Text(
-                        text = if (isFollowing) "Following" else "Follow",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (isFollowing) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                // Content sits below the banner, leaving room for the avatar that
+                // straddles the banner's bottom edge.
+                Column(
+                    modifier = Modifier.padding(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = 44.dp,
+                        bottom = 16.dp,
+                    ),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = displayName,
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.width(14.dp))
+
+                        if (isOwnProfile) {
+                            Text(
+                                text = "Edit",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable(onClick = onEditClick)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
                         } else {
-                            MaterialTheme.colorScheme.primary
-                        },
-                        fontWeight = FontWeight.SemiBold,
+                            // Message is a placeholder button for now — deliberately
+                            // clickable so the layout is final, with nothing behind it.
+                            Icon(
+                                imageVector = CommunityIcons.Message,
+                                contentDescription = "Message",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable(onClick = onMessageClick),
+                            )
+                            Spacer(Modifier.width(14.dp))
+                            Text(
+                                text = if (isFollowing) "Following" else "Follow",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (isFollowing) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable(onClick = onFollowClick)
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "$followerCount followers  ›",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .clickable(onClick = onFollowClick)
-                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                            .clickable(onClick = onFollowersClick)
+                            .padding(vertical = 2.dp),
                     )
                 }
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "$followerCount followers  ›",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+            // Avatar straddling the banner's bottom edge, drawn last so it sits
+            // above both the banner and the content below it.
+            Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .clickable(onClick = onFollowersClick)
-                    .padding(vertical = 2.dp),
-            )
+                    .padding(start = 16.dp)
+                    .offset(y = bannerHeight - avatarSize / 2)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(3.dp),
+            ) {
+                Avatar(avatarUrl = avatarUrl, name = displayName, size = avatarSize)
+            }
         }
     }
 }
@@ -729,14 +838,51 @@ private fun CommentsTab(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = item.comment.body,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    if (item.comment.body.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        // Passive "see more" hint — tapping this row already opens
+                        // the full post-and-comment view, so this isn't an
+                        // interactive toggle the way the thread view's is.
+                        var isOverflowing by remember(item.comment.id) { mutableStateOf(false) }
+                        Text(
+                            text = item.comment.body,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { result -> isOverflowing = result.hasVisualOverflow },
+                        )
+                        if (isOverflowing) {
+                            Text(
+                                text = "see more",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
+                    }
+                    // A comment made of just a photo (or a photo alongside text)
+                    // otherwise leaves no hint here that it carries an image —
+                    // the thumbnail itself only shows in the full post view.
+                    if (!item.comment.imageUrl.isNullOrBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = CommunityIcons.Image,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "Photo",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
                   }
                   if (onMenuClick != null) {
                       Icon(
@@ -991,6 +1137,9 @@ private fun CountBlock(value: String, label: String, modifier: Modifier = Modifi
 private fun MyCommunitiesSheet(
     communities: List<Community>,
     joinedIds: Set<String>,
+    /** Whose sheet this is — a community whose creatorId matches gets tagged
+     *  "Your community", so a visitor knows they can visit and join it. */
+    profileUid: String?,
     onToggleJoin: (Community) -> Unit,
     onOpenCommunity: (Community) -> Unit,
     onDismiss: () -> Unit,
@@ -1061,6 +1210,7 @@ private fun MyCommunitiesSheet(
                         MyCommunityRow(
                             community = community,
                             isJoined = community.id in joinedIds,
+                            isOwnedByProfile = profileUid != null && community.creatorId == profileUid,
                             onToggleJoin = { onToggleJoin(community) },
                             onClick = { onOpenCommunity(community) },
                         )
@@ -1077,6 +1227,8 @@ private fun MyCommunitiesSheet(
 private fun MyCommunityRow(
     community: Community,
     isJoined: Boolean,
+    /** True when this profile's own user is the one who created it. */
+    isOwnedByProfile: Boolean,
     onToggleJoin: () -> Unit,
     onClick: () -> Unit,
 ) {
@@ -1123,29 +1275,267 @@ private fun MyCommunityRow(
         }
         Spacer(Modifier.width(12.dp))
         val shape = RoundedCornerShape(50)
-        Box(
-            modifier = Modifier
-                .clip(shape)
-                .then(
-                    if (isJoined) {
-                        Modifier.border(1.dp, MaterialTheme.colorScheme.outline, shape)
-                    } else {
-                        Modifier.background(MaterialTheme.colorScheme.primary)
-                    }
+        if (isOwnedByProfile) {
+            // No Join/Joined on your own community — a tag only, matching
+            // Discover's "Your community" pill on the same kind of card.
+            Box(
+                modifier = Modifier
+                    .clip(shape)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    text = "Your community",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
                 )
-                .clickable(onClick = onToggleJoin)
-                .padding(horizontal = 16.dp, vertical = 6.dp),
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .clip(shape)
+                    .then(
+                        if (isJoined) {
+                            Modifier.border(1.dp, MaterialTheme.colorScheme.outline, shape)
+                        } else {
+                            Modifier.background(MaterialTheme.colorScheme.primary)
+                        }
+                    )
+                    .clickable(onClick = onToggleJoin)
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                Text(
+                    text = if (isJoined) "Joined" else "Join",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isJoined) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onPrimary
+                    },
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+// ---- Edit profile (own profile only) ----
+
+/** A picked photo waiting to be cropped, and which slot it's for. */
+private data class ProfileCropRequest(val uri: android.net.Uri, val forBanner: Boolean)
+
+/**
+ * The profile's Edit sheet: change the wide cover banner and the round profile
+ * picture, both imported from the device. Each change uploads and saves right
+ * away, so the card updates live behind the sheet — mirrors the community editor.
+ */
+@Composable
+private fun EditProfileSheet(
+    displayName: String,
+    avatarUrl: String?,
+    bannerUrl: String?,
+    uploading: CommunityProfileViewModel.Uploading,
+    onChangeBanner: () -> Unit,
+    onChangeAvatar: () -> Unit,
+    onSaveName: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val idle = uploading == CommunityProfileViewModel.Uploading.NONE
+    var nameInput by remember(displayName) { mutableStateOf(displayName) }
+    val nameChanged = nameInput.trim().isNotEmpty() && nameInput.trim() != displayName.trim()
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
+            .clickable(onClick = onDismiss),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                // Swallow taps so they don't reach the dismiss backdrop.
+                .clickable(enabled = false) {}
+                .padding(20.dp),
         ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Edit profile",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Name, banner and profile picture",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = CommunityIcons.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ---- Name ----
             Text(
-                text = if (isJoined) "Joined" else "Join",
-                style = MaterialTheme.typography.labelMedium,
-                color = if (isJoined) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.onPrimary
-                },
+                text = "Your name",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.SemiBold,
             )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = nameInput,
+                        onValueChange = { nameInput = it },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                if (nameChanged) {
+                    Spacer(Modifier.width(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.primary)
+                            .clickable { onSaveName(nameInput.trim()) }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    ) {
+                        Text(
+                            text = "Save",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // ---- Banner ----
+            Text(
+                text = "Banner image",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(120.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable(enabled = idle, onClick = onChangeBanner),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (!bannerUrl.isNullOrBlank()) {
+                    coil.compose.AsyncImage(
+                        model = bannerUrl,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                if (uploading == CommunityProfileViewModel.Uploading.BANNER) {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                } else {
+                    EditBadge("Change banner")
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // ---- Profile picture ----
+            Text(
+                text = "Profile picture",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(contentAlignment = Alignment.Center) {
+                    Avatar(avatarUrl = avatarUrl, name = displayName, size = 64.dp)
+                    if (uploading == CommunityProfileViewModel.Uploading.AVATAR) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                }
+                Spacer(Modifier.width(16.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
+                        .clickable(enabled = idle, onClick = onChangeAvatar)
+                        .padding(horizontal = 18.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = "Change profile",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
         }
+    }
+}
+
+@Composable
+private fun EditBadge(label: String) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f))
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = CommunityIcons.EditPost,
+            contentDescription = null,
+            tint = androidx.compose.ui.graphics.Color.White,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = androidx.compose.ui.graphics.Color.White,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }

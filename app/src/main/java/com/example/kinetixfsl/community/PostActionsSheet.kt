@@ -1,6 +1,11 @@
 package com.example.kinetixfsl.community
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,9 +34,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
+import coil.compose.AsyncImage
 
 /**
  * The sheet behind a post's 3-dot button: copy the text, delete the post, or
@@ -93,6 +101,8 @@ internal fun OtherPostActionsSheet(
     onDismiss: () -> Unit,
     onShare: (() -> Unit)? = null,
     onHide: (() -> Unit)? = null,
+    /** True when the post is already hidden — swaps the label to "Unhide". */
+    isHidden: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     ActionsSheet(onDismiss = onDismiss, modifier = modifier) {
@@ -102,7 +112,7 @@ internal fun OtherPostActionsSheet(
             ActionRow(CommunityIcons.Share, "Share", onShare)
         }
         if (onHide != null) {
-            ActionRow(CommunityIcons.Hide, "Hide", onHide)
+            ActionRow(CommunityIcons.Hide, if (isHidden) "Unhide" else "Hide", onHide)
         }
     }
 }
@@ -241,16 +251,38 @@ internal fun ConfirmDeleteDialog(
 }
 
 /**
- * Editing a comment is a single text field, so it's a dialog rather than a
- * whole screen the way editing a post is.
+ * Editing a comment: its text, plus — when it carries a photo — a way to
+ * remove that photo (the X) or swap it for another (Change photo).
  */
 @Composable
 internal fun EditCommentDialog(
     initialText: String,
-    onConfirm: (String) -> Unit,
+    initialImageUrl: String?,
+    /** [newImageUri] is a freshly picked local file when the photo was swapped;
+     *  [removeImage] is true when the X was tapped. Both null/false leaves the
+     *  existing photo untouched. */
+    onConfirm: (text: String, newImageUri: Uri?, removeImage: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var text by remember(initialText) { mutableStateOf(initialText) }
+
+    // Local photo state: a freshly picked replacement, or a flag that the
+    // original was removed. Neither set means "keep whatever it already had".
+    var pickedUri by remember(initialImageUrl) { mutableStateOf<Uri?>(null) }
+    var imageRemoved by remember(initialImageUrl) { mutableStateOf(false) }
+
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri: Uri? ->
+        if (uri != null) {
+            pickedUri = uri
+            imageRemoved = false
+        }
+    }
+
+    val displayedImage: Any? = pickedUri ?: initialImageUrl.takeUnless { imageRemoved || it.isNullOrBlank() }
+    val imageChanged = pickedUri != null || imageRemoved
+    val canSave = (text.isNotBlank() || displayedImage != null) && (text != initialText || imageChanged)
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
@@ -262,28 +294,86 @@ internal fun EditCommentDialog(
             )
         },
         text = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-            ) {
-                androidx.compose.foundation.text.BasicTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(
-                        color = MaterialTheme.colorScheme.onSurface,
-                    ),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(
-                        MaterialTheme.colorScheme.primary
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(
+                            MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                if (displayedImage != null) {
+                    Spacer(Modifier.height(12.dp))
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        AsyncImage(
+                            model = displayedImage,
+                            contentDescription = "Attached image",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 200.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outlineVariant,
+                                    RoundedCornerShape(12.dp),
+                                ),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(8.dp)
+                                .size(26.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.6f))
+                                .clickable {
+                                    pickedUri = null
+                                    imageRemoved = true
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = CommunityIcons.Close,
+                                contentDescription = "Remove photo",
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Change photo",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable {
+                                imagePicker.launch(
+                                    PickVisualMediaRequest(
+                                        ActivityResultContracts.PickVisualMedia.ImageOnly,
+                                    ),
+                                )
+                            }
+                            .padding(vertical = 4.dp),
+                    )
+                }
             }
         },
         confirmButton = {
-            val canSave = text.isNotBlank() && text != initialText
             Text(
                 text = "Save",
                 style = MaterialTheme.typography.labelLarge,
@@ -295,7 +385,7 @@ internal fun EditCommentDialog(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
-                    .clickable(enabled = canSave) { onConfirm(text) }
+                    .clickable(enabled = canSave) { onConfirm(text, pickedUri, imageRemoved) }
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
         },

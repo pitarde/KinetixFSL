@@ -15,6 +15,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -42,6 +43,13 @@ data class SharedPostUiState(
     val userVote: String? = null,
     val isLoading: Boolean = true,
     val errorMessage: String? = null,
+    /** A failed edit/delete/hide action — surfaced as a toast, not a full-screen error. */
+    val actionError: String? = null,
+    /** The post's community's own profile picture, looked up separately since
+     *  it isn't denormalized onto the post the way the name is. */
+    val communityAvatarUrl: String? = null,
+    /** Whether the signed-in user has hidden this post — flips Hide to Unhide. */
+    val isHidden: Boolean = false,
 )
 
 /**
@@ -51,10 +59,15 @@ data class SharedPostUiState(
 class SharedPostViewModel(
     private val postId: String,
     private val repository: CommunityRepository = CommunityRepository(),
+    private val directory: CommunityDirectoryRepository = CommunityDirectoryRepository(),
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SharedPostUiState())
     val uiState: StateFlow<SharedPostUiState> = _uiState.asStateFlow()
+
+    /** The community id we're already observing, so a live post update doesn't
+     *  needlessly resubscribe on every snapshot. */
+    private var observedCommunityId: String? = null
 
     init {
         repository.observePost(postId)
@@ -70,6 +83,9 @@ class SharedPostViewModel(
                         },
                     )
                 }
+                if (post != null && post.communityId.isNotBlank()) {
+                    observeCommunityAvatar(post.communityId)
+                }
             }
             .catch { t ->
                 _uiState.update {
@@ -84,6 +100,21 @@ class SharedPostViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(userVote = repository.getUserVote(postId)) }
         }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isHidden = repository.isPostHidden(postId)) }
+        }
+    }
+
+    private fun observeCommunityAvatar(communityId: String) {
+        if (observedCommunityId == communityId) return
+        observedCommunityId = communityId
+        directory.observeCommunity(communityId)
+            .onEach { community ->
+                _uiState.update { it.copy(communityAvatarUrl = community?.avatarUrl) }
+            }
+            .catch { }
+            .launchIn(viewModelScope)
     }
 
     fun vote(direction: String) {
@@ -91,6 +122,42 @@ class SharedPostViewModel(
             val newDir = repository.vote(postId, direction)
             _uiState.update { it.copy(userVote = newDir) }
         }
+    }
+
+    /** Deletes this post. [onDone] runs after so the caller can close the screen. */
+    fun deletePost(post: Post, onDone: () -> Unit) {
+        viewModelScope.launch {
+            repository.deletePost(post)
+                .onSuccess { onDone() }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(actionError = error.localizedMessage ?: "Couldn't delete post.")
+                    }
+                }
+        }
+    }
+
+    /**
+     * Hides or unhides this post from the signed-in user's feeds, depending on
+     * the current state. [onHidden] runs only when the post *becomes* hidden —
+     * that's the moment it makes sense to close the screen; unhiding it should
+     * leave the user looking at it, now with "Hide" back on the menu.
+     */
+    fun toggleHide(onHidden: () -> Unit) {
+        viewModelScope.launch {
+            if (_uiState.value.isHidden) {
+                repository.unhidePost(postId)
+                _uiState.update { it.copy(isHidden = false) }
+            } else {
+                repository.hidePost(postId)
+                _uiState.update { it.copy(isHidden = true) }
+                onHidden()
+            }
+        }
+    }
+
+    fun dismissActionError() {
+        _uiState.update { it.copy(actionError = null) }
     }
 
     fun share(context: Context, post: Post) {
@@ -116,6 +183,14 @@ fun SharedPostScreen(
     onClose: () -> Unit,
     /** Opens the author's profile. No-op when there's nowhere to navigate. */
     onAuthorClick: (String) -> Unit = {},
+    /**
+     * Opens the editor for this post — the host owns that overlay, so it's
+     * handed the loaded post. Null (the default) hides Edit even on your own
+     * post, for callers that have nowhere to open an editor.
+     */
+    onEditPost: ((Post) -> Unit)? = null,
+    /** Opens the post's community. No-op when there's nowhere to navigate. */
+    onCommunityClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val viewModel = remember(postId) { SharedPostViewModel(postId) }
@@ -123,6 +198,12 @@ fun SharedPostScreen(
     val context = LocalContext.current
 
     val post = state.post
+
+    LaunchedEffect(state.actionError) {
+        val message = state.actionError ?: return@LaunchedEffect
+        android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
+        viewModel.dismissActionError()
+    }
 
     when {
         state.isLoading -> Box(
@@ -180,6 +261,12 @@ fun SharedPostScreen(
                 onDownvote = { viewModel.vote("down") },
                 onShare = { viewModel.share(context, post) },
                 onAuthorClick = onAuthorClick,
+                onCommunityClick = onCommunityClick,
+                communityAvatarUrl = state.communityAvatarUrl,
+                onEdit = onEditPost?.let { { it(post) } },
+                onDelete = { viewModel.deletePost(post, onDone = onClose) },
+                onHide = { viewModel.toggleHide(onHidden = onClose) },
+                isHidden = state.isHidden,
                 onClose = onClose,
                 modifier = modifier,
             )

@@ -161,17 +161,19 @@ private fun JoinPill(
             )
         }
     } else {
+        // Filled brand color, matching the feed's own Join pill — the previous
+        // secondaryContainer tint read as nearly colorless in light mode.
         Box(
             modifier = Modifier
                 .clip(shape)
-                .background(MaterialTheme.colorScheme.secondaryContainer)
+                .background(MaterialTheme.colorScheme.primary)
                 .clickable(onClick = onJoin)
                 .padding(horizontal = 18.dp, vertical = 6.dp),
         ) {
             Text(
                 text = "Join",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                color = MaterialTheme.colorScheme.onPrimary,
                 fontWeight = FontWeight.SemiBold,
             )
         }

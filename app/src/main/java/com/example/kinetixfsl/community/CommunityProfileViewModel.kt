@@ -15,11 +15,20 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.util.concurrent.TimeUnit
 
 data class CommunityProfileUiState(
     val displayName: String = "",
     val avatarUrl: String? = null,
+    /** Wide cover image behind the profile card; editable on your own profile. */
+    val bannerUrl: String? = null,
+    /**
+     * Whose profile this is — used by the My Communities sheet to tag any
+     * community *this* profile's user created as "Your community", so a
+     * visitor knows they can also join it.
+     */
+    val profileUid: String? = null,
     val posts: List<Post> = emptyList(),
     val comments: List<UserComment> = emptyList(),
     val isLoadingPosts: Boolean = true,
@@ -72,7 +81,7 @@ class CommunityProfileViewModel(
     private val isOwn: Boolean = userId == null || userId == auth.currentUser?.uid
 
     init {
-        _uiState.update { it.copy(isOwnProfile = isOwn) }
+        _uiState.update { it.copy(isOwnProfile = isOwn, profileUid = targetUid) }
 
         if (isOwn) {
             // Auth is the freshest source for our own details.
@@ -160,7 +169,14 @@ class CommunityProfileViewModel(
                             profile?.displayName?.takeIf { it.isNotBlank() }
                                 ?: state.displayName
                         },
-                        avatarUrl = if (isOwn) state.avatarUrl else profile?.avatarUrl,
+                        // Prefer the saved doc avatar (so an edit reflects here),
+                        // falling back to the Auth-derived one on our own profile.
+                        avatarUrl = if (isOwn) {
+                            profile?.avatarUrl ?: state.avatarUrl
+                        } else {
+                            profile?.avatarUrl
+                        },
+                        bannerUrl = profile?.bannerUrl,
                         accountAge = if (isOwn) {
                             state.accountAge
                         } else {
@@ -322,17 +338,48 @@ class CommunityProfileViewModel(
         }
     }
 
-    fun editComment(item: UserComment, newBody: String) {
+    /**
+     * Saves an edited comment. [newImageUri] is a freshly picked local file to
+     * upload and swap in; [removeImage] drops the existing photo entirely.
+     * Both false/null leaves whatever photo the comment already had alone.
+     */
+    fun editComment(
+        item: UserComment,
+        newBody: String,
+        context: android.content.Context,
+        newImageUri: android.net.Uri? = null,
+        removeImage: Boolean = false,
+    ) {
         viewModelScope.launch {
-            repository.updateComment(item.postId, item.comment.id, newBody)
-                .onFailure { error ->
-                    _uiState.update {
-                        it.copy(
-                            errorMessage = error.localizedMessage
-                                ?: "Couldn't save your comment.",
-                        )
+            var uploadedUrl: String? = null
+            if (newImageUri != null) {
+                when (
+                    val result = com.example.kinetixfsl.community.upload.R2MediaUploader
+                        .upload(context, newImageUri, "image")
+                ) {
+                    is com.example.kinetixfsl.community.upload.R2MediaUploader.UploadResult.Success ->
+                        uploadedUrl = result.secureUrl
+                    is com.example.kinetixfsl.community.upload.R2MediaUploader.UploadResult.Error -> {
+                        _uiState.update { it.copy(errorMessage = result.message) }
+                        return@launch
                     }
                 }
+            }
+
+            repository.updateComment(
+                postId = item.postId,
+                commentId = item.comment.id,
+                body = newBody,
+                newImageUrl = uploadedUrl,
+                removeImage = removeImage && uploadedUrl == null,
+            ).onFailure { error ->
+                _uiState.update {
+                    it.copy(
+                        errorMessage = error.localizedMessage
+                            ?: "Couldn't save your comment.",
+                    )
+                }
+            }
         }
     }
 
@@ -352,6 +399,106 @@ class CommunityProfileViewModel(
 
     fun dismissError() {
         _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    // -------------------------------------------------------------------------
+    // Editing your own profile picture and cover banner
+    // -------------------------------------------------------------------------
+
+    /** Which image is uploading, so the Edit sheet can show progress. */
+    enum class Uploading { NONE, AVATAR, BANNER }
+
+    private val _uploading = MutableStateFlow(Uploading.NONE)
+    val uploading: StateFlow<Uploading> = _uploading.asStateFlow()
+
+    /**
+     * Renames the signed-in user, from the Edit sheet.
+     *
+     * The new name lands on Auth and the profile doc immediately; every other
+     * denormalized copy — post and comment `authorName`, a created community's
+     * `creatorName` — is then rewritten best-effort in the background, so old
+     * content stops showing the old name without the user waiting on it.
+     */
+    fun updateDisplayName(name: String) {
+        if (!isOwn) return
+        val uid = targetUid ?: return
+        viewModelScope.launch {
+            repository.updateDisplayName(name)
+                .onSuccess {
+                    val trimmed = name.trim()
+                    _uiState.update { state -> state.copy(displayName = trimmed) }
+                    launch { repository.propagateAuthorName(uid, trimmed) }
+                    launch { directory.renameCreator(uid, trimmed) }
+                }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(errorMessage = error.localizedMessage ?: "Couldn't save your name.")
+                    }
+                }
+        }
+    }
+
+    /** Uploads the cropped [bitmap] and sets it as your profile picture. */
+    fun updateAvatar(bitmap: android.graphics.Bitmap) = uploadAndSave(bitmap, Uploading.AVATAR)
+
+    /** Uploads the cropped [bitmap] and sets it as your cover banner. */
+    fun updateBanner(bitmap: android.graphics.Bitmap) = uploadAndSave(bitmap, Uploading.BANNER)
+
+    private fun uploadAndSave(bitmap: android.graphics.Bitmap, which: Uploading) {
+        if (!isOwn || _uploading.value != Uploading.NONE) return
+        _uploading.value = which
+        viewModelScope.launch {
+            val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                java.io.ByteArrayOutputStream().use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 88, out)
+                    out.toByteArray()
+                }
+            }
+            when (
+                val result = com.example.kinetixfsl.community.upload.R2MediaUploader.uploadBytes(
+                    bytes = bytes,
+                    fileName = if (which == Uploading.AVATAR) "avatar.jpg" else "banner.jpg",
+                    mimeType = "image/jpeg",
+                    resourceType = "image",
+                )
+            ) {
+                is com.example.kinetixfsl.community.upload.R2MediaUploader.UploadResult.Success -> {
+                    val save = if (which == Uploading.AVATAR) {
+                        repository.updateUserImages(avatarUrl = result.secureUrl)
+                    } else {
+                        repository.updateUserImages(bannerUrl = result.secureUrl)
+                    }
+                    save.onSuccess {
+                        // Reflect immediately; the doc listener will also catch up.
+                        _uiState.update { state ->
+                            if (which == Uploading.AVATAR) {
+                                state.copy(avatarUrl = result.secureUrl)
+                            } else {
+                                state.copy(bannerUrl = result.secureUrl)
+                            }
+                        }
+                        // Keep Auth's photo in step so the avatar shows app-wide.
+                        if (which == Uploading.AVATAR) {
+                            runCatching {
+                                auth.currentUser?.updateProfile(
+                                    com.google.firebase.auth.UserProfileChangeRequest.Builder()
+                                        .setPhotoUri(android.net.Uri.parse(result.secureUrl))
+                                        .build(),
+                                )?.await()
+                            }
+                        }
+                    }.onFailure { error ->
+                        _uiState.update {
+                            it.copy(errorMessage = error.localizedMessage ?: "Couldn't save the image.")
+                        }
+                    }
+                }
+                is com.example.kinetixfsl.community.upload.R2MediaUploader.UploadResult.Error -> {
+                    _uiState.update { it.copy(errorMessage = result.message) }
+                }
+            }
+            _uploading.value = Uploading.NONE
+        }
     }
 }
 

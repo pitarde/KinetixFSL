@@ -76,6 +76,9 @@ fun PostDetailScreen(
     onEdit: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
     onHide: (() -> Unit)? = null,
+    /** Whether the signed-in user has already hidden this post — flips the
+     *  3-dot menu's "Hide" to "Unhide". */
+    isHidden: Boolean = false,
     /**
      * Open the app's own share links (a post, community, or profile pasted into
      * a post's links) in-app rather than the browser. See [PostLinks].
@@ -327,6 +330,7 @@ fun PostDetailScreen(
                             isComposerOpen = true
                         },
                         onImageClick = { url -> fullScreenImageUrl = url },
+                        onAuthorClick = onAuthorClick,
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
@@ -408,6 +412,7 @@ fun PostDetailScreen(
                 } else {
                     null
                 },
+                isHidden = isHidden,
                 onDismiss = { isMenuOpen = false },
             )
         }
