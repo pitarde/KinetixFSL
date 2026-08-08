@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -94,6 +95,10 @@ fun StartCommunityScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding()
+            // No bottom nav on this wizard, so inset the bottom — otherwise the
+            // Continue / Create button and the last chips sit behind the
+            // system navigation buttons.
+            .navigationBarsPadding()
             .padding(horizontal = 24.dp),
     ) {
         WizardTopBar(

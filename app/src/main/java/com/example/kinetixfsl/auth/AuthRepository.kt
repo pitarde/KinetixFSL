@@ -7,6 +7,8 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
+import com.example.kinetixfsl.community.inbox.PresenceRepository
+import com.example.kinetixfsl.community.inbox.push.FcmTokenStore
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
@@ -153,7 +155,24 @@ class AuthRepository(
 
     // ---------------------------------------------------------------------------------
 
-    fun signOut() {
+    /**
+     * Signs out, taking the account's presence and push token down with it.
+     *
+     * Order is load-bearing. Both cleanup steps identify the account by
+     * `currentUser.uid`, so they have to run *before* Firebase clears it —
+     * afterwards there is no uid to write against, and the signed-out account
+     * would sit at "Active now" forever while somebody else used the phone.
+     * That's exactly what made a logged-out Account A still look online to
+     * everyone once Account B signed in on the same device.
+     *
+     * Clearing the FCM token matters for the same reason: pushes meant for A
+     * must stop arriving on a handset A no longer occupies.
+     */
+    suspend fun signOut() {
+        // Await the offline write while still authed — see goOfflineAndAwait for
+        // why the fire-and-forget version left the dot stuck on.
+        runCatching { PresenceRepository.goOfflineAndAwait() }
+        runCatching { FcmTokenStore.clear() }
         firebaseAuth.signOut()
     }
 

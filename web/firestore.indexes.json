@@ -1,0 +1,28 @@
+{
+  "//": "Firestore indexes for KinetixFSL. Deploy with the Firebase CLI:",
+  "//deploy": "firebase deploy --only firestore:indexes",
+  "//note": "These are COLLECTION GROUP single-field indexes. Firestore auto-creates single-field indexes for normal (collection-scoped) queries, but a collectionGroup() query needs the field's index explicitly promoted to collection-group scope — which is what each fieldOverride below does.",
+
+  "indexes": [],
+
+  "fieldOverrides": [
+    {
+      "//": "Lets a user find every notification they've ever sent, across all recipients' inboxes, so changing their name/photo updates OLD notifications too (NotificationRepository.propagateSenderName). Without this the collection-group query fails and the sync silently no-ops.",
+      "collectionGroup": "items",
+      "fieldPath": "fromUserId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "//": "Backs the profile 'Comments' tab and the name/avatar propagation onto old comments (CommunityRepository.commentsByAuthor / propagateAuthorName / propagateAvatarUrl). You likely created this already the first time the Comments tab loaded; it's listed here so a fresh project gets it too.",
+      "collectionGroup": "comments",
+      "fieldPath": "authorId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    }
+  ]
+}

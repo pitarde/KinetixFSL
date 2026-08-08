@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -56,13 +57,26 @@ fun DiscoverCommunitiesScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val joinedIds by viewModel.joinedIds.collectAsStateWithLifecycle()
 
+    // Offline vs error wording, plus auto-retry when the connection returns.
+    val isOnline by com.example.kinetixfsl.ui.components.rememberIsOnline()
+    androidx.compose.runtime.LaunchedEffect(isOnline, state) {
+        if (isOnline && state is DiscoverState.Error) viewModel.retry()
+    }
+
     BackHandler(onBack = onClose)
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
+            .statusBarsPadding()
+            // Inset the list's bottom edge past the system navigation bar. Done
+            // as a modifier (the same way the other screens do it) rather than
+            // via contentPadding — the computed WindowInsets value was resolving
+            // to zero here, so the last card kept sitting under the nav buttons.
+            // The full-size background above still paints under the bar, so
+            // there's no color gap.
+            .navigationBarsPadding(),
         contentPadding = PaddingValues(bottom = 24.dp),
     ) {
         // ---- Header ----
@@ -112,18 +126,20 @@ fun DiscoverCommunitiesScreen(
         }
 
         when (val current = state) {
-            is DiscoverState.Loading -> item {
-                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+            is DiscoverState.Loading -> item(key = "discover-skeleton") {
+                com.example.kinetixfsl.ui.components.CommunityListSkeleton()
             }
-            is DiscoverState.Error -> item {
-                Text(
-                    text = current.message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
+            is DiscoverState.Error -> item(key = "discover-error") {
+                if (isOnline) {
+                    com.example.kinetixfsl.ui.components.ErrorState(
+                        onRetry = { viewModel.retry() },
+                        message = current.message,
+                    )
+                } else {
+                    com.example.kinetixfsl.ui.components.OfflineState(
+                        onRetry = { viewModel.retry() },
+                    )
+                }
             }
             is DiscoverState.Success -> {
                 if (current.communities.isEmpty()) {

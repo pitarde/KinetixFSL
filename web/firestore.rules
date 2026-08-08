@@ -145,19 +145,36 @@ service cloud.firestore {
 
       // Who follows this user. Readable so the followers list works; each
       // follower may only add or remove their own entry.
+      //
+      // The follower may also refresh the name/photo denormalised onto their
+      // own entry here — and nothing else — so changing your profile updates
+      // the copy of you in everyone-you-follow's followers list. Without this,
+      // the New Message picker, @mention list and follower lists kept showing a
+      // stale avatar forever.
       match /followers/{followerId} {
         allow read: if request.auth != null;
         allow create, delete: if request.auth != null
                               && request.auth.uid == followerId;
-        allow update: if false;
+        allow update: if request.auth != null
+                      && request.auth.uid == followerId
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['displayName', 'avatarUrl']);
       }
 
       // Who this user follows. Private to them — it drives their own feed
       // ordering and every Follow button's state.
+      //
+      // The followed person may refresh the name/photo denormalised onto this
+      // entry (profile sync), limited to those two fields. Reads stay
+      // owner-only; the subject writes blind through merge, which is fine —
+      // the rule can still evaluate the diff server-side.
       match /following/{targetId} {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow create, delete: if request.auth != null && request.auth.uid == userId;
-        allow update: if false;
+        allow update: if request.auth != null
+                      && request.auth.uid == targetId
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['displayName', 'avatarUrl']);
       }
 
       // The communities this user has joined. Private to them — it drives the
@@ -173,6 +190,34 @@ service cloud.firestore {
       match /hiddenPosts/{postId} {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow create, delete: if request.auth != null && request.auth.uid == userId;
+        allow update: if false;
+      }
+
+      // Communities this user has visited, joined or created — the drawer's
+      // Recently Visited list. Browsing history, so private to them.
+      match /recentCommunities/{communityId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Who this user has blocked. Private — only they read it, and only they
+      // add to it. It's what greys out their own composer.
+      match /blocked/{targetId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow create, delete: if request.auth != null && request.auth.uid == userId;
+        allow update: if false;
+      }
+
+      // Who has blocked this user. The mirror of `blocked`, and the reason
+      // blocking works at all: a security rule can only read documents, so the
+      // fact has to be written somewhere the *blocked* person's own send can be
+      // checked against.
+      //
+      // Readable by the owner (their client stops offering to send) and
+      // writable only by the blocker, naming themselves — nobody can forge a
+      // block from a third party.
+      match /blockedBy/{blockerId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow create, delete: if request.auth != null && request.auth.uid == blockerId;
         allow update: if false;
       }
 
@@ -250,12 +295,27 @@ service cloud.firestore {
         && conversationId.split('_').hasAny([request.auth.uid]);
     }
 
+    // The other person in a thread, derived from its id (uidA_uidB, sorted).
+    // Pulled into a function so it can be used inside an exists() path — a bare
+    // ternary written inline there does not parse reliably.
+    function otherInThread(conversationId) {
+      return conversationId.split('_')[0] == request.auth.uid
+        ? conversationId.split('_')[1]
+        : conversationId.split('_')[0];
+    }
+
     match /conversations/{conversationId} {
-      // Both the single-document read and the inbox's arrayContains query are
-      // satisfied by this: Firestore accepts the query because every document
-      // it can return provably passes the rule.
+      // `resource == null` — the document doesn't exist yet — must be allowed,
+      // or a transactional create can't get off the ground. Sending the first
+      // message reads this doc inside a transaction to see whether to create
+      // it; without the null branch that read dereferences a null `resource`,
+      // errors, and is denied, which silently kills every first message from a
+      // new account (existing chats were unaffected, since their doc already
+      // exists). Reading a non-existent doc leaks nothing — there's no data
+      // there — and once it exists the participant check applies as before.
       allow read: if request.auth != null
-                  && request.auth.uid in resource.data.participants;
+                  && (resource == null
+                      || request.auth.uid in resource.data.participants);
 
       // Exactly two people, one of whom is you. Creating a thread you aren't
       // in would let someone plant conversations in other people's inboxes.
@@ -276,9 +336,14 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if inThread(conversationId);
 
-        // You may only send as yourself.
+        // You may only send as yourself, and only if the recipient hasn't
+        // blocked you. `blockedBy` is checked rather than the blocker's own
+        // `blocked` list because this is the copy the *sender* is allowed to
+        // read — which is the whole reason blocking is mirrored into two
+        // places. Costs one document read per message sent.
         allow create: if inThread(conversationId)
-                      && request.resource.data.senderId == request.auth.uid;
+                      && request.resource.data.senderId == request.auth.uid
+                      && !exists(/databases/$(database)/documents/users/$(otherInThread(conversationId))/blockedBy/$(request.auth.uid));
 
         // The recipient flips `isRead` — so update is open to both sides, but
         // only for that field. Message text is not editable by anyone.
@@ -286,7 +351,13 @@ service cloud.firestore {
                       && request.resource.data.diff(resource.data)
                            .affectedKeys().hasOnly(['isRead']);
 
-        allow delete: if false;
+        // A message can only be deleted by whoever sent it — the single-message
+        // long-press. "Delete all chat history" no longer touches messages at
+        // all: it's a per-user hide (`hiddenFor` + `clearedAt` on the
+        // conversation doc), so one person clearing their view never removes the
+        // other person's copy. That makes this rule safe to keep strict.
+        allow delete: if inThread(conversationId)
+                      && resource.data.senderId == request.auth.uid;
       }
     }
 

@@ -234,6 +234,10 @@ fun CommunityHomeScreen(
                     modifier = Modifier.weight(1f),
                     viewModel = feedViewModel,
                     listState = feedListState,
+                    // No bottom nav on a community screen, so the feed runs to
+                    // the screen edge — inset the last post clear of the system
+                    // navigation buttons.
+                    insetForBottomNav = true,
                     onCommentClick = { post -> overlays.add(HomeOverlay.Detail(post)) },
                     onPostClick = { post -> overlays.add(HomeOverlay.Detail(post)) },
                     onMediaClick = { post -> overlays.add(HomeOverlay.Immersive(post)) },
@@ -376,7 +380,10 @@ fun CommunityHomeScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(MaterialTheme.colorScheme.background)
-                                    .statusBarsPadding(),
+                                    .statusBarsPadding()
+                                    // Overlay — no bottom nav beneath it, so keep
+                                    // its content clear of the nav buttons.
+                                    .navigationBarsPadding(),
                             )
                         }
 

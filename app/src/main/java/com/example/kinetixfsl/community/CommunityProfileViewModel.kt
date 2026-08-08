@@ -56,6 +56,15 @@ data class CommunityProfileUiState(
 ) {
     /** Posts plus comments — the "Contributions" stat. */
     val contributions: Int get() = posts.size + comments.size
+
+    /**
+     * Nothing has arrived yet — show the full-screen profile skeleton rather
+     * than an empty header. True only on a genuine cold open: a visitor profile
+     * whose document hasn't loaded, so its name is still blank while the first
+     * post query is in flight. Your own profile fills its name from Auth
+     * immediately, so it skips the skeleton and never flickers.
+     */
+    val isColdLoading: Boolean get() = displayName.isBlank() && isLoadingPosts
 }
 
 /**
@@ -477,14 +486,15 @@ class CommunityProfileViewModel(
                                 state.copy(bannerUrl = result.secureUrl)
                             }
                         }
-                        // Keep Auth's photo in step so the avatar shows app-wide.
+                        // Auth's own photo is updated inside updateUserImages,
+                        // which is what makes *future* posts carry the new
+                        // avatar. This second step fixes the ones already
+                        // written: every post, comment, chat thread,
+                        // notification and community keeps its own copy, and
+                        // none of them update themselves.
                         if (which == Uploading.AVATAR) {
-                            runCatching {
-                                auth.currentUser?.updateProfile(
-                                    com.google.firebase.auth.UserProfileChangeRequest.Builder()
-                                        .setPhotoUri(android.net.Uri.parse(result.secureUrl))
-                                        .build(),
-                                )?.await()
+                            auth.currentUser?.uid?.let { uid ->
+                                launch { repository.propagateAvatarUrl(uid, result.secureUrl) }
                             }
                         }
                     }.onFailure { error ->

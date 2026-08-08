@@ -130,9 +130,28 @@ data class Conversation(
     val unreadCount: Map<String, Long> = emptyMap(),
     /** Who is typing right now, keyed by uid. Cleared when they stop or send. */
     val typing: Map<String, Boolean> = emptyMap(),
+    /**
+     * Per-user "I deleted this thread" flag. True hides the conversation from
+     * that user's inbox without touching the other person's copy — the
+     * Messenger behaviour where deleting a chat removes it for you alone. A new
+     * message from either side flips both back to false.
+     */
+    val hiddenFor: Map<String, Boolean> = emptyMap(),
+    /**
+     * Per-user history cutoff. Messages at or before this instant aren't shown
+     * to that user, so deleting a conversation clears *your* view of its history
+     * while the other person keeps theirs. Set alongside [hiddenFor] on delete.
+     */
+    val clearedAt: Map<String, Timestamp> = emptyMap(),
 ) {
     /** The uid of the person on the other side of this thread. */
     fun otherId(me: String): String = participants.firstOrNull { it != me }.orEmpty()
+
+    /** True when [me] has deleted (hidden) this thread and no new message has arrived since. */
+    fun isHiddenFor(me: String): Boolean = hiddenFor[me] == true
+
+    /** Messages at or before this were cleared by [me] and must not be shown to them. */
+    fun clearedAtFor(me: String): Timestamp? = clearedAt[me]
 
     fun otherName(me: String): String =
         participantNames[otherId(me)]?.takeIf { it.isNotBlank() } ?: "Unknown"

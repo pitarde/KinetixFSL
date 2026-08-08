@@ -9,6 +9,8 @@ import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The green dot next to an avatar — who is online right now.
@@ -68,7 +70,7 @@ object PresenceRepository {
         }
     }
 
-    /** Explicit offline, for backgrounding the app or signing out. */
+    /** Explicit offline, fire-and-forget — for backgrounding the app. */
     fun goOffline() {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         val db = database ?: return
@@ -81,6 +83,39 @@ object PresenceRepository {
             )
         }
     }
+
+    /**
+     * Offline, and *waits* for the write to actually land — for signing out.
+     *
+     * The fire-and-forget [goOffline] is wrong at logout, and that was the bug
+     * behind "account A still shows a green dot after I log in as B". The RTDB
+     * rule for a presence node is `auth.uid == $uid`, so the offline write only
+     * passes while the account is still signed in. `signOut()` used to fire the
+     * write and revoke auth in the same breath, so the write reached the server
+     * *after* auth was gone and was rejected — leaving A online forever, since
+     * on a shared device the socket never drops for `onDisconnect` to fire
+     * either.
+     *
+     * Awaiting here, before auth is revoked, is what makes the dot go out. The
+     * timeout keeps a dead network from hanging the logout — a rare stuck dot
+     * is a smaller harm than a logout that won't complete.
+     */
+    suspend fun goOfflineAndAwait() {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val db = database ?: return
+        runCatching {
+            withTimeoutOrNull(OFFLINE_WRITE_TIMEOUT_MS) {
+                db.getReference("$PRESENCE/$uid").setValue(
+                    mapOf(
+                        "state" to "offline",
+                        "lastChanged" to ServerValue.TIMESTAMP,
+                    )
+                ).await()
+            }
+        }
+    }
+
+    private const val OFFLINE_WRITE_TIMEOUT_MS = 3_000L
 
     /**
      * Whether [uid] is online right now. Emits `false` and stays there when the

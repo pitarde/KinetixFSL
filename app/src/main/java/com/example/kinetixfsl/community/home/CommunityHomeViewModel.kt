@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.kinetixfsl.community.CommunityDirectoryRepository
 import com.example.kinetixfsl.community.CommunityRepository
+import com.example.kinetixfsl.community.RecentCommunitiesRepository
 import com.example.kinetixfsl.community.model.Community
 import com.example.kinetixfsl.community.upload.R2MediaUploader
 import com.google.firebase.auth.FirebaseAuth
@@ -13,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -43,6 +46,24 @@ class CommunityHomeViewModel(
         community
             .map { it != null && it.creatorId == currentUid }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    init {
+        // Stamp this community into the drawer's Recently Visited list.
+        //
+        // Waits for the document rather than writing on construction: the entry
+        // stores the name and avatar so the drawer renders without a read per
+        // row, and neither is known until the community has loaded. `first`
+        // takes the first non-null and stops, so this doesn't keep rewriting
+        // the timestamp for as long as the screen stays open.
+        viewModelScope.launch {
+            val loaded = community.filterNotNull().first()
+            RecentCommunitiesRepository().record(
+                communityId = communityId,
+                name = loaded.name,
+                avatarUrl = loaded.avatarUrl,
+            )
+        }
+    }
 
     private val joinedIds: StateFlow<Set<String>> =
         repository.observeJoinedCommunityIds()

@@ -150,20 +150,140 @@ class CommunityRepository(
         avatarUrl: String? = null,
         bannerUrl: String? = null,
     ): Result<Unit> {
-        val uid = auth.currentUser?.uid
+        val user = auth.currentUser
             ?: return Result.failure(Exception("You're not signed in."))
         val fields = mutableMapOf<String, Any?>()
         avatarUrl?.let { fields["avatarUrl"] = it }
         bannerUrl?.let { fields["bannerUrl"] = it }
         if (fields.isEmpty()) return Result.success(Unit)
         return try {
-            firestore.collection(USERS).document(uid)
+            firestore.collection(USERS).document(user.uid)
                 .set(fields, SetOptions.merge())
                 .await()
+
+            // Firebase Auth has to move too, exactly as a rename moves both.
+            // Every post, comment, community and follow edge stamps its author
+            // avatar from `auth.currentUser.photoUrl` at write time — so
+            // updating only the Firestore profile left even brand-new posts
+            // showing the *old* picture, which is the part that looked like the
+            // change hadn't saved at all.
+            if (avatarUrl != null) {
+                user.updateProfile(
+                    com.google.firebase.auth.UserProfileChangeRequest.Builder()
+                        .setPhotoUri(android.net.Uri.parse(avatarUrl))
+                        .build(),
+                ).await()
+            }
+
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * Rewrites the avatar denormalised onto everything [uid] has ever written.
+     *
+     * The avatar twin of [propagateAuthorName], and needed for the same reason:
+     * posts, comments, chat threads, notifications and communities each keep
+     * their own copy so a list renders in one query, and none of those copies
+     * update themselves.
+     *
+     * Best-effort and unbounded, per surface — a failure updating comments must
+     * not stop the chat threads being fixed, so each block is guarded on its own.
+     */
+    suspend fun propagateAvatarUrl(uid: String, avatarUrl: String) {
+        try {
+            val posts = firestore.collection(POSTS).whereEqualTo("authorId", uid).get().await()
+            writeFieldInBatches(posts.documents.map { it.reference }, "authorAvatarUrl", avatarUrl)
+        } catch (_: Exception) { /* best-effort */ }
+
+        try {
+            val comments = firestore.collectionGroup(COMMENTS)
+                .whereEqualTo("authorId", uid).get().await()
+            writeFieldInBatches(comments.documents.map { it.reference }, "authorAvatarUrl", avatarUrl)
+        } catch (_: Exception) { /* best-effort */ }
+
+        try {
+            val communities = firestore.collection(COMMUNITIES)
+                .whereEqualTo("creatorId", uid).get().await()
+            writeFieldInBatches(
+                communities.documents.map { it.reference },
+                "creatorAvatarUrl",
+                avatarUrl,
+            )
+        } catch (_: Exception) { /* best-effort */ }
+
+        val name = displayNameOf(uid)
+        MessagesRepository().propagateProfile(name, avatarUrl)
+        notifications.propagateSenderName(name, avatarUrl)
+        propagateFollowGraphProfile(name, avatarUrl)
+    }
+
+    /**
+     * Refreshes the copy of this user's name and avatar that the follow graph
+     * denormalises onto each edge.
+     *
+     * The New Message picker, the @mention list and the followers/following
+     * lists all read a person's name and photo straight off the edge document —
+     * `users/{X}/following/{me}` and `users/{X}/followers/{me}` — copied at
+     * follow time. Nothing updated those copies, so changing your avatar left
+     * every one of them still showing the old picture, which is the stale avatar
+     * seen in New Message.
+     *
+     * Done by walking this user's OWN two lists — which they're allowed to read —
+     * and writing the reciprocal edge on the other side, where they are the
+     * *subject*: the follow rules let the subject of an edge fix their own name
+     * and photo on it, and nothing else.
+     */
+    suspend fun propagateFollowGraphProfile(displayName: String, avatarUrl: String?) {
+        val uid = auth.currentUser?.uid ?: return
+        val fields = mapOf("displayName" to displayName, "avatarUrl" to avatarUrl)
+
+        // Everyone who follows me keeps me in *their* following list.
+        try {
+            val followers = firestore.collection(USERS).document(uid)
+                .collection(FOLLOWERS).get().await().documents
+            followers.chunked(400).forEach { chunk ->
+                val batch = firestore.batch()
+                chunk.forEach { follower ->
+                    batch.set(
+                        firestore.collection(USERS).document(follower.id)
+                            .collection(FOLLOWING).document(uid),
+                        fields,
+                        SetOptions.merge(),
+                    )
+                }
+                batch.commit().await()
+            }
+        } catch (_: Exception) { /* best-effort */ }
+
+        // Everyone I follow keeps me in *their* followers list.
+        try {
+            val following = firestore.collection(USERS).document(uid)
+                .collection(FOLLOWING).get().await().documents
+            following.chunked(400).forEach { chunk ->
+                val batch = firestore.batch()
+                chunk.forEach { followed ->
+                    batch.set(
+                        firestore.collection(USERS).document(followed.id)
+                            .collection(FOLLOWERS).document(uid),
+                        fields,
+                        SetOptions.merge(),
+                    )
+                }
+                batch.commit().await()
+            }
+        } catch (_: Exception) { /* best-effort */ }
+    }
+
+    /** The stored display name, for propagations that must write both fields. */
+    private suspend fun displayNameOf(uid: String): String = try {
+        firestore.collection(USERS).document(uid).get().await()
+            .getString("displayName").orEmpty()
+            .ifBlank { auth.currentUser?.displayName.orEmpty() }
+    } catch (_: Exception) {
+        auth.currentUser?.displayName.orEmpty()
     }
 
     /**
@@ -221,6 +341,7 @@ class CommunityRepository(
 
         MessagesRepository().propagateProfile(newName, avatarUrl)
         notifications.propagateSenderName(newName, avatarUrl)
+        propagateFollowGraphProfile(newName, avatarUrl)
     }
 
     /**
@@ -1122,6 +1243,7 @@ class CommunityRepository(
         const val COMMENTS = "comments"
         const val SHARES = "shares"
         const val USERS = "users"
+        const val COMMUNITIES = "communities"
         const val HIDDEN_POSTS = "hiddenPosts"
         const val FOLLOWERS = "followers"
         const val FOLLOWING = "following"

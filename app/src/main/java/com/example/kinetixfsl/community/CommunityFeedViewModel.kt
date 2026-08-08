@@ -359,6 +359,19 @@ class CommunityFeedViewModel(
         }
     }
 
+    /**
+     * Retry from the error/offline state: drop back to Loading so the skeleton
+     * reappears, then re-observe. Distinct from [refresh], which keeps whatever
+     * is on screen while it re-fetches (pull-to-refresh over existing posts).
+     */
+    fun retry() {
+        feedJob?.cancel()
+        feedJob = null
+        shouldReorder = true
+        _feedState.value = FeedState.Loading
+        observeFeed()
+    }
+
     fun vote(postId: String, direction: String) {
         viewModelScope.launch {
             val newDir = repository.vote(postId, direction)

@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -92,6 +93,9 @@ private fun LoginContent(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            // Reserve the system navigation-bar area before the scroll, so the
+            // bottom "Sign up" link never sits behind the on-screen nav buttons.
+            .navigationBarsPadding()
             .verticalScroll(rememberScrollState())
             .imePadding()
             .padding(horizontal = 24.dp),

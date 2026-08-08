@@ -142,6 +142,11 @@ class InboxViewModel(
         viewModelScope.launch { notifications.markRead(listOf(id)) }
     }
 
+    /** Clears a whole thread from the inbox list's long-press action. */
+    fun deleteConversationHistory(conversationId: String) {
+        viewModelScope.launch { messages.deleteHistory(conversationId) }
+    }
+
     fun deleteNotification(id: String) {
         viewModelScope.launch { notifications.delete(id) }
     }
@@ -151,9 +156,14 @@ class InboxViewModel(
     }
 
     /**
-     * Opens (or creates) the thread with [uid] and hands its id back through
-     * [onReady] — the Message button on a profile and the new-message picker
-     * both come through here.
+     * Hands back the id of the thread with [uid] so the caller can open it —
+     * the new-message picker's path.
+     *
+     * No longer creates the conversation document: opening a chat writes
+     * nothing, so a thread the user opens but never sends to doesn't turn up as
+     * an empty inbox row. The first message creates the document. [name] and
+     * [photo] are ignored here now — the chat screen resolves the header
+     * itself — but kept in the signature so the call sites don't churn.
      */
     fun openConversationWith(
         uid: String,
@@ -161,23 +171,14 @@ class InboxViewModel(
         photo: String?,
         onReady: (String) -> Unit,
     ) {
-        viewModelScope.launch {
-            messages.openConversationWith(uid, name, photo)
-                .onSuccess(onReady)
-        }
+        messages.conversationIdWith(uid).onSuccess(onReady)
     }
 
-    /**
-     * The Message button on somebody's profile, which knows their uid and
-     * nothing else. Resolves their name and photo on the way in so the thread
-     * document is complete from the first message.
-     */
+    /** The Message button on a profile, which knows only the uid. */
     fun openConversationWithUid(uid: String, onReady: (String) -> Unit) {
-        viewModelScope.launch {
-            messages.openConversationWithUid(uid).onSuccess(onReady)
-        }
+        messages.conversationIdWith(uid).onSuccess(onReady)
     }
 
-    /** People the user may start a new thread with — everyone either side follows. */
+    /** People the user may start a new thread with — everyone they follow. */
     suspend fun loadCandidates(): List<ChatCandidate> = messages.messageableUsers()
 }

@@ -48,6 +48,8 @@ fun HomeScreen(
     onNavigateToSignList: (categoryId: String) -> Unit,
     onStartCommunity: () -> Unit = {},
     onDiscoverCommunities: () -> Unit = {},
+    /** Opens a specific community — the drawer's Recently Visited rows. */
+    onOpenCommunity: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -92,6 +94,12 @@ fun HomeScreen(
                     },
                     onAboutClick = {
                         scope.launch { drawerState.close() }
+                    },
+                    onRecentCommunityClick = { communityId ->
+                        scope.launch {
+                            drawerState.close()
+                            onOpenCommunity(communityId)
+                        }
                     },
                 )
             }

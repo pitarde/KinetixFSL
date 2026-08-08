@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -121,6 +122,17 @@ fun CommunityFeedContent(
      * home feed, which has no per-community header.
      */
     headerContent: (@Composable () -> Unit)? = null,
+    /**
+     * Whether to inset the feed's bottom past the system navigation bar. The
+     * main feed leaves this false because its bottom nav already covers that
+     * area; a community's own feed has no bottom nav, so its host passes true to
+     * keep the last post clear of the on-screen back/home/recents buttons.
+     *
+     * Applied as a `navigationBarsPadding()` modifier on the list rather than a
+     * computed contentPadding value — the latter was resolving to zero in some
+     * hosts and letting the last card slip under the buttons.
+     */
+    insetForBottomNav: Boolean = false,
 ) {
     val state by viewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
@@ -136,6 +148,14 @@ fun CommunityFeedContent(
         val message = actionError ?: return@LaunchedEffect
         android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
         viewModel.clearActionError()
+    }
+
+    // Drives offline vs error wording, and auto-recovery: when the connection
+    // returns while the feed is sitting on an error, retry without the user
+    // having to tap anything.
+    val isOnline by com.example.kinetixfsl.ui.components.rememberIsOnline()
+    LaunchedEffect(isOnline, state) {
+        if (isOnline && state is FeedState.Error) viewModel.retry()
     }
 
     val pullState = rememberPullToRefreshState()
@@ -192,7 +212,11 @@ fun CommunityFeedContent(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background),
+                    .background(MaterialTheme.colorScheme.background)
+                    // Full-size background above paints under the nav bar; this
+                    // then insets the list content past it. Only on a screen
+                    // without a bottom nav of its own.
+                    .then(if (insetForBottomNav) Modifier.navigationBarsPadding() else Modifier),
                 contentPadding = PaddingValues(
                     // A collapsing header is full-bleed and sits flush at the top;
                     // the plain feed keeps its usual breathing room.
@@ -217,8 +241,24 @@ fun CommunityFeedContent(
                 }
 
                 when (val current = state) {
-                    is FeedState.Loading -> item { LoadingRow() }
-                    is FeedState.Error -> item { ErrorRow(message = current.message) }
+                    is FeedState.Loading -> item(key = "feed-skeleton") {
+                        com.example.kinetixfsl.ui.components.FeedSkeleton()
+                    }
+                    is FeedState.Error -> item(key = "feed-error") {
+                        // No connection reads as offline; anything else is a
+                        // generic error. Both offer Retry, and the feed auto-
+                        // retries the moment the connection returns (below).
+                        if (isOnline) {
+                            com.example.kinetixfsl.ui.components.ErrorState(
+                                onRetry = { viewModel.retry() },
+                                message = current.message,
+                            )
+                        } else {
+                            com.example.kinetixfsl.ui.components.OfflineState(
+                                onRetry = { viewModel.retry() },
+                            )
+                        }
+                    }
                     is FeedState.Success -> {
                         if (current.posts.isEmpty()) {
                             item { EmptyRow() }
@@ -431,30 +471,12 @@ private val ClearIcon: ImageVector by lazy {
 }
 
 @Composable
-private fun LoadingRow() {
-    Box(Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-    }
-}
-
-@Composable
 private fun EmptyRow() {
     Box(Modifier.fillMaxWidth().padding(vertical = 48.dp, horizontal = 32.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("No posts yet.", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text("Be the first to share something with the community.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun ErrorRow(message: String) {
-    Box(Modifier.fillMaxWidth().padding(vertical = 48.dp, horizontal = 32.dp), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Couldn't load posts.", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

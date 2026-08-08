@@ -8,6 +8,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -128,6 +132,14 @@ fun ChatScreen(
     /** The media a tapped bubble opened full screen, or null. */
     var viewing by remember { mutableStateOf<ChatMessage?>(null) }
 
+    /** The message a long-press is asking to delete, or null. */
+    var deleting by remember { mutableStateOf<ChatMessage?>(null) }
+
+    var showOptions by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
+    var confirmBlock by remember { mutableStateOf(false) }
+    var showMedia by remember { mutableStateOf(false) }
+
     // Follow the conversation down as it grows. Keyed on the counts rather than
     // the lists so an edit to read receipts (which rewrites message objects
     // without adding any) doesn't yank the user away from where they scrolled.
@@ -149,16 +161,13 @@ fun ChatScreen(
             isTyping = state.isOtherTyping,
             onBack = onClose,
             onOpenProfile = { onOpenProfile(recipientId) },
+            onMenu = { showOptions = true },
         )
 
         Box(Modifier.weight(1f)) {
             when {
-                state.isLoading -> Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                }
+                state.isLoading ->
+                    com.example.kinetixfsl.ui.components.ChatSkeleton()
 
                 state.messages.isEmpty() && state.outbox.isEmpty() -> Box(
                     Modifier
@@ -206,6 +215,14 @@ fun ChatScreen(
                                 ?.senderId != message.senderId,
                             showSeen = message.id == state.lastSeenOutgoingId,
                             onMediaClick = { viewing = message },
+                            // Long-press offers to delete, but only on our own
+                            // messages — offering it on someone else's would
+                            // promise something the repository refuses.
+                            onLongPress = if (message.senderId == state.currentUid) {
+                                { deleting = message }
+                            } else {
+                                null
+                            },
                         )
                     }
 
@@ -235,14 +252,99 @@ fun ChatScreen(
         )
     }
 
-    // Drawn outside the Column so it covers the header and composer too — a
-    // full-screen viewer that stopped short of the status bar would read as a
-    // panel rather than as the photo taking over.
+    // Everything below is drawn outside the Column so it covers the header and
+    // composer too — a viewer or sheet that stopped short of the status bar
+    // would read as a panel rather than as something taking over the screen.
+
+    if (showMedia) {
+        ChatMediaScreen(
+            messages = state.messages,
+            onOpenMedia = { viewing = it },
+            onClose = { showMedia = false },
+        )
+    }
+
     viewing?.let { message ->
         FullScreenMediaViewer(
             imageUrl = message.mediaUrl?.takeIf { !message.isVideo },
             videoUrl = message.mediaUrl?.takeIf { message.isVideo },
             onClose = { viewing = null },
+        )
+    }
+
+    if (showOptions) {
+        ChatOptionsSheet(
+            isBlocked = state.block.iBlockedThem,
+            onViewProfile = {
+                showOptions = false
+                onOpenProfile(recipientId)
+            },
+            onViewMedia = {
+                showOptions = false
+                showMedia = true
+            },
+            onReport = {
+                showOptions = false
+                // Deliberately inert: reports belong to a moderation queue on
+                // the admin web app, which doesn't exist yet. Saying so beats a
+                // button that silently does nothing.
+                Toast.makeText(
+                    context,
+                    "Report sent for review. (Coming soon)",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
+            onToggleBlock = {
+                showOptions = false
+                // Unblocking is harmless and immediate; blocking gets a
+                // confirmation, because it silently cuts someone off.
+                if (state.block.iBlockedThem) viewModel.toggleBlock() else confirmBlock = true
+            },
+            onDeleteConversation = {
+                showOptions = false
+                confirmClear = true
+            },
+            onDismiss = { showOptions = false },
+        )
+    }
+
+    if (confirmClear) {
+        ConfirmDialog(
+            title = "Delete all chat history?",
+            body = "This clears every message in this conversation for both of you. " +
+                "It can't be undone.",
+            onConfirm = {
+                confirmClear = false
+                // Close on success — the thread is now hidden from this user's
+                // inbox, so staying on it would show an empty screen for a
+                // conversation that's no longer in their list.
+                viewModel.deleteHistory(onDone = onClose)
+            },
+            onDismiss = { confirmClear = false },
+        )
+    }
+
+    if (confirmBlock) {
+        ConfirmDialog(
+            title = "Block ${state.otherName}?",
+            body = "They won't be able to send you messages. You can unblock them later.",
+            confirmLabel = "Block",
+            onConfirm = {
+                confirmBlock = false
+                viewModel.toggleBlock()
+            },
+            onDismiss = { confirmBlock = false },
+        )
+    }
+
+    deleting?.let { message ->
+        ConfirmDialog(
+            title = deletePromptFor(message),
+            onConfirm = {
+                viewModel.deleteMessage(message.id)
+                deleting = null
+            },
+            onDismiss = { deleting = null },
         )
     }
 }
@@ -259,9 +361,8 @@ private fun ChatHeader(
     isTyping: Boolean,
     onBack: () -> Unit,
     onOpenProfile: () -> Unit,
+    onMenu: () -> Unit,
 ) {
-    val context = LocalContext.current
-
     Column {
         Row(
             modifier = Modifier
@@ -330,9 +431,6 @@ private fun ChatHeader(
                 }
             }
 
-            // Block and report both belong to a moderation queue that lives on
-            // the admin web app, not in the phone — until that exists, saying so
-            // is more honest than a button that quietly does nothing.
             Icon(
                 imageVector = CommunityIcons.MoreVertical,
                 contentDescription = "More",
@@ -340,13 +438,7 @@ private fun ChatHeader(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .clickable {
-                        Toast.makeText(
-                            context,
-                            "Block and report — coming soon.",
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }
+                    .clickable(onClick = onMenu)
                     .padding(10.dp),
             )
         }
@@ -384,6 +476,7 @@ private fun DaySeparator(label: String) {
  * surface colour — both drawn from the theme, so the whole thread inverts
  * correctly in dark mode without a second palette.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
     message: ChatMessage,
@@ -391,6 +484,8 @@ private fun MessageBubble(
     showTime: Boolean,
     showSeen: Boolean,
     onMediaClick: () -> Unit,
+    /** Long-press to delete. Null on messages we didn't send. */
+    onLongPress: (() -> Unit)? = null,
 ) {
     val bubbleColor = if (isMine) {
         MaterialTheme.colorScheme.primary
@@ -420,6 +515,23 @@ private fun MessageBubble(
                 .widthIn(max = 280.dp)
                 .clip(shape)
                 .background(bubbleColor)
+                // The long-press lives on the whole bubble, not just the text,
+                // so a photo or a clip is held the same way a sentence is.
+                .then(
+                    if (onLongPress != null) {
+                        Modifier.combinedClickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onLongClick = onLongPress,
+                            // A plain tap on media still opens it full screen;
+                            // elsewhere in the bubble it does nothing, which is
+                            // what a message should do.
+                            onClick = { if (message.hasMedia) onMediaClick() },
+                        )
+                    } else {
+                        Modifier
+                    }
+                )
                 .padding(if (message.hasMedia) 4.dp else 0.dp),
             horizontalAlignment = if (isMine) Alignment.End else Alignment.Start,
         ) {
@@ -767,6 +879,23 @@ private fun Composer(
             .imePadding(),
     ) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+        // Blocked in either direction: the composer is replaced entirely rather
+        // than disabled in place. A greyed-out field still invites typing, and
+        // discovering afterwards that nothing can be sent is worse than being
+        // told up front.
+        state.composerNotice?.let { notice ->
+            Text(
+                text = notice,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 18.dp),
+            )
+            return@Column
+        }
 
         // The attachment sits above the input rather than inside it, so a photo
         // never squeezes the text field down to a sliver.

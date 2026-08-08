@@ -1,5 +1,6 @@
 package com.example.kinetixfsl.ui.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,17 +13,35 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.kinetixfsl.community.Avatar
+import com.example.kinetixfsl.community.CommunityIcons
+import com.example.kinetixfsl.community.RecentCommunitiesRepository
+import com.example.kinetixfsl.community.RecentCommunity
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+import kotlinx.coroutines.launch
 
 /**
  * The side drawer content. All items are visual only — they take an [on Click]
@@ -45,12 +64,33 @@ fun KinetixDrawerContent(
     onDiscoverCommunitiesClick: () -> Unit,
     onAboutClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Opens a community from Recently Visited. Null hides the whole section —
+     * which is what the Home drawer does, since it has no community overlay
+     * stack to open one onto.
+     */
+    onRecentCommunityClick: ((String) -> Unit)? = null,
 ) {
+    // "See all" swaps the whole drawer for a dedicated Recently Visited view
+    // (back arrow, per-row remove, Clear all), matching the design — then back
+    // returns to the normal menu. State lives here so both views share it.
+    var showAllRecents by rememberSaveable { mutableStateOf(false) }
+
+    if (showAllRecents && onRecentCommunityClick != null) {
+        RecentlyVisitedFullView(
+            modifier = modifier,
+            onBack = { showAllRecents = false },
+            onCommunityClick = onRecentCommunityClick,
+        )
+        return
+    }
+
     Column(
         modifier = modifier
             .fillMaxHeight()
             .width(280.dp)
             .background(MaterialTheme.colorScheme.surface)
+            .verticalScroll(rememberScrollState())
             .padding(vertical = 16.dp),
     ) {
 
@@ -71,6 +111,13 @@ fun KinetixDrawerContent(
         DrawerItem(HomeIcons.Plus, "Start a community", onStartCommunityClick)
         DrawerItem(HomeIcons.Search, "Discover communities", onDiscoverCommunitiesClick)
 
+        if (onRecentCommunityClick != null) {
+            RecentlyVisitedSection(
+                onCommunityClick = onRecentCommunityClick,
+                onSeeAll = { showAllRecents = true },
+            )
+        }
+
         Spacer(Modifier.height(12.dp))
         HorizontalDivider(
             color = MaterialTheme.colorScheme.outlineVariant,
@@ -81,6 +128,212 @@ fun KinetixDrawerContent(
         DrawerItem(icon = null, label = "About", onClick = onAboutClick)
     }
 }
+
+/**
+ * Communities the user has visited, joined or created, newest first — the
+ * drawer's history section, in the spirit of Reddit's "Recent".
+ *
+ * Renders nothing at all until there's something to show, so a new account
+ * doesn't get an empty heading below the menu.
+ *
+ * Shows the [COLLAPSED_ROWS] most recent inline; "See all" hands off to the
+ * full view via [onSeeAll]. Collapsed rows carry no remove button — a ✕ on
+ * every row would make the drawer's main navigation read as a list of things
+ * to dismiss rather than places to go. Removing and clearing live in the full
+ * view.
+ */
+@Composable
+private fun RecentlyVisitedSection(
+    onCommunityClick: (String) -> Unit,
+    onSeeAll: () -> Unit,
+) {
+    val repository = remember { RecentCommunitiesRepository() }
+    val recents by repository.observe().collectAsStateWithLifecycle(initialValue = emptyList())
+
+    if (recents.isEmpty()) return
+
+    Spacer(Modifier.height(12.dp))
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.outlineVariant,
+        modifier = Modifier.padding(horizontal = 20.dp),
+    )
+    Spacer(Modifier.height(12.dp))
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "Recently Visited",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
+        )
+        // Always offered whenever there's history: the full view is the only
+        // place to remove a single community or Clear all, so it has to be
+        // reachable even with just one or two here — not only once the list
+        // spills past what's shown inline.
+        Text(
+            text = "See all",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .clickable(onClick = onSeeAll)
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
+
+    recents.take(COLLAPSED_ROWS).forEach { community ->
+        RecentRow(
+            community = community,
+            onClick = { onCommunityClick(community.id) },
+            onRemove = null,
+        )
+    }
+}
+
+/**
+ * The dedicated Recently Visited view the drawer swaps to on "See all".
+ *
+ * Same 280dp drawer surface, so it reads as the drawer changing pages rather
+ * than a new screen sliding in. Every row gets a remove ✕, and "Clear all"
+ * empties the lot — the management actions that would clutter the collapsed
+ * section in the main menu.
+ */
+@Composable
+private fun RecentlyVisitedFullView(
+    onBack: () -> Unit,
+    onCommunityClick: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val repository = remember { RecentCommunitiesRepository() }
+    val scope = rememberCoroutineScope()
+    val recents by repository.observe().collectAsStateWithLifecycle(initialValue = emptyList())
+
+    // Phone back returns to the menu rather than closing the drawer, matching
+    // the on-screen back arrow.
+    BackHandler(onBack = onBack)
+
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(280.dp)
+            .background(MaterialTheme.colorScheme.surface)
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 16.dp),
+    ) {
+        Spacer(Modifier.height(24.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = CommunityIcons.ArrowBack,
+                contentDescription = "Back",
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(50))
+                    .clickable(onClick = onBack)
+                    .padding(6.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "Recently Visited",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            if (recents.isNotEmpty()) {
+                Text(
+                    text = "Clear all",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable { scope.launch { repository.clearAll() } }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        if (recents.isEmpty()) {
+            // Clearing the last one empties the view; say so rather than leaving
+            // a blank page under the header.
+            Text(
+                text = "Nothing here yet. Communities you visit show up here.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+            )
+        } else {
+            recents.forEach { community ->
+                RecentRow(
+                    community = community,
+                    onClick = { onCommunityClick(community.id) },
+                    onRemove = { scope.launch { repository.remove(community.id) } },
+                )
+            }
+        }
+    }
+}
+
+/** One community row, shared by the collapsed section and the full view. */
+@Composable
+private fun RecentRow(
+    community: RecentCommunity,
+    onClick: () -> Unit,
+    /** Null hides the remove ✕ — the collapsed section passes null. */
+    onRemove: (() -> Unit)?,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Avatar(
+            avatarUrl = community.avatarUrl,
+            name = community.name,
+            size = 24.dp,
+        )
+        Spacer(Modifier.width(14.dp))
+        Text(
+            text = community.name.ifBlank { "Community" },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (onRemove != null) {
+            Icon(
+                imageVector = HomeIcons.Close,
+                contentDescription = "Remove from recent",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(50))
+                    .clickable(onClick = onRemove)
+                    .padding(6.dp),
+            )
+        }
+    }
+}
+
+/** Rows shown before "See all" is tapped. */
+private const val COLLAPSED_ROWS = 3
 
 /** A single tappable row. Passing null [icon] indents the label — used for About. */
 @Composable

@@ -61,19 +61,45 @@ publish. If it does but the app shows nothing, you're signed in as the wrong uid
 
 ---
 
-## Part 2 — Firestore indexes  *(required, but automatic)*
+## Part 2 — Firestore indexes
 
-The app deliberately avoids composite indexes almost everywhere — conversation
-lists and profile posts are sorted in Kotlin for exactly this reason. Two
-single-field ordered queries remain, and Firestore builds single-field indexes
-by itself:
+Most of the app's ordered queries use single fields, which Firestore indexes by
+itself — nothing to do for those.
 
-- `notifications/{uid}/items` ordered by `createdAt`
-- `conversations/{id}/messages` ordered by `createdAt`
+**Two collection-group queries are the exception, and they do NOT get an
+automatic index.** These power profile sync — updating your name and photo on
+content you created *in the past*:
 
-**Nothing to do**, unless Logcat shows a `FAILED_PRECONDITION` with an index
-link. If it does, tap the link in the error — it opens the console with the
-index pre-filled. Press **Create** and wait for "Enabled" (a minute or two).
+- `items` collection group, filtered by `fromUserId` — finds every notification
+  you've sent, in every recipient's inbox, so a profile change updates **old
+  notifications** too.
+- `comments` collection group, filtered by `authorId` — the profile "Comments"
+  tab, and updating old comments on a profile change.
+
+Without these, the queries fail and the sync **silently does nothing** (the code
+swallows the error so it can never break the action that triggered it) — which
+is exactly why old notifications kept showing a stale name/avatar.
+
+### Create them (either way works)
+
+**Option A — Firebase CLI (one command, both indexes):**
+
+```bash
+firebase deploy --only firestore:indexes
+```
+
+from the repo root, using [`web/firestore.indexes.json`](firestore.indexes.json).
+
+**Option B — Console, per index:**
+Firebase Console → **Firestore Database → Indexes → Single field** →
+**Add exemption** → collection group id `items`, field `fromUserId`, and enable
+**Collection group** scope (Ascending). Repeat for collection group `comments`,
+field `authorId`.
+
+You may find the `comments` one already exists — it's created the first time the
+profile Comments tab loads and Firestore prompts for it. The `items` one is new
+with the notification feature and almost certainly missing, which is the fix for
+"old notifications don't sync."
 
 ---
 

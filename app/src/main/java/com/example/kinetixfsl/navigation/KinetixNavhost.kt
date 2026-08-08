@@ -15,6 +15,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -42,9 +43,11 @@ import com.example.kinetixfsl.ui.login.LoginScreen
 import com.example.kinetixfsl.ui.onboarding.OnboardingScreen
 import com.example.kinetixfsl.ui.register.RegisterScreen
 import com.example.kinetixfsl.ui.splash.SplashScreen
+import androidx.compose.foundation.layout.navigationBarsPadding
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.launch
 
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -169,6 +172,7 @@ fun KinetixNavHost(
     deepLinkUserId: String? = null,
 ) {
     val authRepository = remember { AuthRepository() }
+    val signOutScope = rememberCoroutineScope()
 
     /**
      * A link that arrived before the user was signed in. Held here and opened
@@ -432,9 +436,15 @@ fun KinetixNavHost(
         ) {
             HomeScreen(
                 onSignOut = {
-                    authRepository.signOut()
-                    navController.navigate(Route.LOGIN) {
-                        popUpTo(Route.HOME) { inclusive = true }
+                    // Sign-out now suspends so presence can be written offline
+                    // before auth is revoked; navigate only once it's done, so
+                    // the login screen never appears with the old account still
+                    // marked online behind it.
+                    signOutScope.launch {
+                        authRepository.signOut()
+                        navController.navigate(Route.LOGIN) {
+                            popUpTo(Route.HOME) { inclusive = true }
+                        }
                     }
                 },
                 onNavigateToCommunity = {
@@ -448,6 +458,9 @@ fun KinetixNavHost(
                 },
                 onDiscoverCommunities = {
                     navController.navigate(Route.DISCOVER_COMMUNITIES)
+                },
+                onOpenCommunity = { communityId ->
+                    navController.navigate(Route.communityHome(communityId))
                 },
             )
         }
@@ -574,7 +587,10 @@ fun KinetixNavHost(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
-                    .statusBarsPadding(),
+                    .statusBarsPadding()
+                    // Full-screen destination with no bottom nav — inset the
+                    // bottom so content clears the system navigation buttons.
+                    .navigationBarsPadding(),
             )
         }
 

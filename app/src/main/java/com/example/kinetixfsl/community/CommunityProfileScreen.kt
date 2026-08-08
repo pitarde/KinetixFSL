@@ -184,6 +184,19 @@ fun CommunityProfileScreen(
         }
     }
 
+    // Cold open of someone else's profile: show the whole-screen skeleton until
+    // the profile document lands, so the header isn't a blank card first.
+    if (state.isColdLoading) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+        ) {
+            com.example.kinetixfsl.ui.components.ProfileSkeleton()
+        }
+        return
+    }
+
     Box(modifier = modifier.fillMaxSize().clipToBounds()) {
         Column(
             modifier = Modifier
@@ -747,7 +760,9 @@ private fun PostsTab(
     onOpenProfileLink: ((String) -> Unit)? = null,
 ) {
     when {
-        isLoading -> CenteredSpinner()
+        // Skeleton posts rather than a spinner, so the tab already looks like a
+        // feed before the real posts land.
+        isLoading -> com.example.kinetixfsl.ui.components.FeedSkeleton(count = 3)
         posts.isEmpty() -> EmptyMessage("You haven't posted anything yet.")
         else -> {
             val listState = rememberLazyListState()
@@ -801,7 +816,7 @@ private fun CommentsTab(
     onMenuClick: ((UserComment) -> Unit)?,
 ) {
     when {
-        isLoading -> CenteredSpinner()
+        isLoading -> com.example.kinetixfsl.ui.components.InboxListSkeleton(count = 6)
         errorMessage != null -> CommentsErrorMessage(errorMessage)
         comments.isEmpty() -> EmptyMessage("You haven't commented on anything yet.")
         else -> LazyColumn(

@@ -5,6 +5,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -74,6 +76,9 @@ fun InboxScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var isPickerOpen by remember { mutableStateOf(false) }
 
+    /** The thread a long-press is asking to clear, or null. */
+    var pendingClear by remember { mutableStateOf<Conversation?>(null) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -92,6 +97,7 @@ fun InboxScreen(
                 onQueryChange = viewModel::onSearchQueryChange,
                 onOpenConversation = onOpenConversation,
                 onNewMessage = { isPickerOpen = true },
+                onLongPressConversation = { pendingClear = it },
             )
 
             InboxTab.NOTIFICATION -> NotificationListContent(
@@ -104,6 +110,19 @@ fun InboxScreen(
                 onOpenProfile = onOpenProfile,
             )
         }
+    }
+
+    pendingClear?.let { conversation ->
+        ConfirmDialog(
+            title = "Delete all chat history?",
+            body = "This clears every message with ${conversation.otherName(state.currentUid)} " +
+                "for both of you. It can't be undone.",
+            onConfirm = {
+                viewModel.deleteConversationHistory(conversation.id)
+                pendingClear = null
+            },
+            onDismiss = { pendingClear = null },
+        )
     }
 
     if (isPickerOpen) {
@@ -227,6 +246,7 @@ private fun ChatListContent(
     onQueryChange: (String) -> Unit,
     onOpenConversation: (String, String) -> Unit,
     onNewMessage: () -> Unit,
+    onLongPressConversation: (Conversation) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -255,7 +275,8 @@ private fun ChatListContent(
         }
 
         when {
-            state.isLoadingChats -> LoadingBlock()
+            state.isLoadingChats ->
+                com.example.kinetixfsl.ui.components.InboxListSkeleton()
 
             state.visibleConversations.isEmpty() -> EmptyBlock(
                 title = if (state.searchQuery.isBlank()) "No messages yet" else "No matches",
@@ -274,6 +295,7 @@ private fun ChatListContent(
                         onClick = {
                             onOpenConversation(conversation.id, conversation.otherId(state.currentUid))
                         },
+                        onLongClick = { onLongPressConversation(conversation) },
                     )
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant,
@@ -293,11 +315,13 @@ private fun ChatListContent(
  * background tint — a list where half the rows are highlighted stops reading as
  * a list, and the badge on the right already says which ones are new.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ConversationRow(
     conversation: Conversation,
     me: String,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
 ) {
     val unread = conversation.unreadFor(me)
     val isUnread = unread > 0
@@ -310,7 +334,7 @@ private fun ConversationRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -423,7 +447,8 @@ private fun NotificationListContent(
         }
 
         when {
-            state.isLoadingNotifications -> LoadingBlock()
+            state.isLoadingNotifications ->
+                com.example.kinetixfsl.ui.components.InboxListSkeleton()
 
             state.notifications.isEmpty() -> EmptyBlock(
                 title = "You're all caught up",
@@ -635,12 +660,6 @@ internal fun SearchField(
     }
 }
 
-@Composable
-private fun LoadingBlock() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-    }
-}
 
 @Composable
 private fun EmptyBlock(title: String, subtitle: String) {

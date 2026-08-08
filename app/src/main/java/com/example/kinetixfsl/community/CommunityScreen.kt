@@ -173,6 +173,12 @@ fun CommunityScreen(
                         }
                     },
                     onAboutClick = { scope.launch { drawerState.close() } },
+                    onRecentCommunityClick = { communityId ->
+                        scope.launch {
+                            drawerState.close()
+                            openCommunity(communityId)
+                        }
+                    },
                 )
             }
         },
@@ -282,7 +288,11 @@ fun CommunityScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(MaterialTheme.colorScheme.background)
-                                    .statusBarsPadding(),
+                                    .statusBarsPadding()
+                                    // An overlay has no bottom nav under it, so
+                                    // inset the bottom too or the last row sits
+                                    // behind the system navigation buttons.
+                                    .navigationBarsPadding(),
                             )
                         }
 
