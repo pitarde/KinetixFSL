@@ -60,6 +60,11 @@ firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.r
 firebase-auth = { group = "com.google.firebase", name = "firebase-auth" }
 firebase-firestore = { group = "com.google.firebase", name = "firebase-firestore" }
 firebase-storage = { group = "com.google.firebase", name = "firebase-storage" }
+# Push notifications for messages, replies, follows and mentions.
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
+# Presence only (the green "online" dot). Firestore has no disconnect hook;
+# the Realtime Database's onDisconnect() is the reason this is here.
+firebase-database = { group = "com.google.firebase", name = "firebase-database" }
 kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutinesPlayServices" }
 
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }

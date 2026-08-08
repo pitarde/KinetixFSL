@@ -1,8 +1,10 @@
 // ============================================================
 // kinetix-upload — Cloudflare Worker
 //
-// Two jobs:
+// Jobs:
 //   POST /                      multipart upload from the Android app → R2
+//   POST /delete-media          removes a deleted post's files from R2
+//   POST /send-push             sends one FCM push (see below)
 //   GET  /p/{postId}            public web page for a shared post
 //   GET  /c/{communityId}       public web page for a shared community
 //   GET  /u/{userId}           public web page for a shared profile
@@ -13,10 +15,22 @@
 // Environment variables (Worker → Settings → Variables and Secrets):
 //   KINETIX_BUCKET        R2 bucket binding          (already set up)
 //   PUBLIC_BUCKET_URL     public base URL for R2     (already set up)
-//   FIREBASE_PROJECT_ID   kinetixfsl-73d88           (new)
-//   FIREBASE_API_KEY      Firebase Web API key       (new)
+//   FIREBASE_PROJECT_ID   kinetixfsl-73d88           (already set up)
+//   FIREBASE_API_KEY      Firebase Web API key       (already set up)
 //   ANDROID_CERT_SHA256   signing fingerprint(s),
-//                         comma-separated            (new)
+//                         comma-separated            (already set up)
+//   DELETE_SECRET         shared secret for /delete-media
+//   PUSH_SECRET           shared secret for /send-push          (new)
+//   FCM_CLIENT_EMAIL      service account's client_email        (new)
+//   FCM_PRIVATE_KEY       service account's private_key         (new,
+//                         paste including the BEGIN/END lines)
+//
+// Why /send-push lives here instead of a Firebase Cloud Function: Cloud
+// Functions require Firebase's paid Blaze plan (a card on file, even though
+// the free quota covers this app's scale). Routing the push through the
+// Worker this app already runs keeps Firebase on the free Spark plan
+// entirely — see web/MESSAGING_SETUP.md Part 4 for the full reasoning and
+// the setup steps for FCM_CLIENT_EMAIL / FCM_PRIVATE_KEY.
 // ============================================================
 
 export default {
@@ -43,6 +57,11 @@ export default {
     // --- Deleting a post's media ---------------------------------------
     if (new URL(request.url).pathname === "/delete-media") {
       return handleDeleteMedia(request, env);
+    }
+
+    // --- Sending a push notification ------------------------------------
+    if (new URL(request.url).pathname === "/send-push") {
+      return handleSendPush(request, env);
     }
 
     try {
@@ -222,6 +241,222 @@ function keyFromUrl(url) {
   } catch (_) {
     return null;
   }
+}
+
+// --- Sending a push notification -----------------------------------------
+
+/**
+ * POST /send-push
+ *   headers: x-kinetix-key: <PUSH_SECRET>
+ *   body:    { "token": "<fcm token>", "title": "...", "body": "...",
+ *              "data": { "type": "message", "targetId": "..." } }
+ *
+ * The Android client resolves [token] itself before calling this — it reads
+ * the recipient's `users/{uid}.fcmToken`, which Firestore rules already make
+ * publicly readable (post cards need the same field's neighbours to render
+ * anyone's name and photo). That division of labour is what keeps this Worker
+ * from needing write access to Firestore at all: its only job is holding the
+ * Google service-account credentials FCM's HTTP v1 API requires, which must
+ * never ship inside the APK.
+ *
+ * SECURITY NOTE: same shape as /delete-media — the shared secret ships in the
+ * APK and is extractable. The blast radius here is spamming a push to a token
+ * the caller must already possess (itself only obtainable by reading
+ * Firestore, which anyone signed into the app can already do), not an
+ * unbounded broadcast. Swapping in the caller's Firebase ID token, verified
+ * here, is the harder-but-cleaner fix if this endpoint ever needs to be
+ * public-internet-hostile-proof.
+ */
+async function handleSendPush(request, env) {
+  const secret = env.PUSH_SECRET;
+  if (!secret || request.headers.get("x-kinetix-key") !== secret) {
+    return jsonResponse(401, { error: "Unauthorized" });
+  }
+
+  let payload;
+  try {
+    payload = await request.json();
+  } catch (_) {
+    return jsonResponse(400, { error: "Invalid JSON" });
+  }
+
+  const token = payload && payload.token;
+  const body = payload && payload.body;
+  const title = (payload && payload.title) || "Kinetix";
+  const data = (payload && payload.data) || {};
+
+  if (!token || !body) {
+    return jsonResponse(400, { error: "token and body are required" });
+  }
+
+  try {
+    const accessToken = await getFcmAccessToken(env);
+    const result = await sendFcmMessage(env, accessToken, token, title, body, data);
+    return jsonResponse(result.ok ? 200 : result.status, result.body);
+  } catch (err) {
+    return jsonResponse(500, { error: err.message || "Push failed" });
+  }
+}
+
+/** The actual FCM HTTP v1 call, once an OAuth access token is in hand. */
+async function sendFcmMessage(env, accessToken, token, title, body, data) {
+  const projectId = env.FIREBASE_PROJECT_ID;
+  const endpoint = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
+
+  // FCM's data payload is string-only — any other type in the message is
+  // rejected outright, so every value is coerced on the way in rather than
+  // trusting the caller to have already done it.
+  const stringData = {};
+  for (const key of Object.keys(data)) {
+    stringData[key] = String(data[key]);
+  }
+
+  const message = {
+    message: {
+      token,
+      notification: { title, body },
+      data: stringData,
+      android: {
+        priority: "high",
+        // Must match KinetixMessagingService.CHANNEL_ID on the Android side —
+        // a mismatched channel id is silently dropped by the OS rather than
+        // erroring, so this is worth keeping in sync deliberately.
+        notification: { channel_id: "kinetix_social" },
+      },
+    },
+  };
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(message),
+  });
+
+  const responseBody = await response.json().catch(() => ({}));
+  return { ok: response.ok, status: response.status, body: responseBody };
+}
+
+// --- Google OAuth for FCM's HTTP v1 API ----------------------------------
+//
+// FCM v1 takes a Google OAuth access token, not a static server key (that
+// legacy API is retired). Getting one means signing a JWT with the service
+// account's private key and exchanging it at Google's token endpoint — the
+// same dance any Google API client library does for you, done by hand here
+// because Workers can't pull in the Node-only `google-auth-library`.
+
+/**
+ * Cached across requests handled by the same Worker isolate, so most calls
+ * skip the token exchange entirely — an access token is valid for an hour,
+ * and re-minting one on every push would be a wasted round trip nearly every
+ * time. A fresh isolate (a cold start, or Cloudflare recycling this one)
+ * simply starts with an empty cache and pays for one extra fetch.
+ */
+let cachedFcmToken = null;
+let cachedFcmTokenExpiry = 0;
+
+async function getFcmAccessToken(env) {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  // 60s of slack so a token already in flight never expires mid-request.
+  if (cachedFcmToken && nowSeconds < cachedFcmTokenExpiry - 60) {
+    return cachedFcmToken;
+  }
+
+  const email = env.FCM_CLIENT_EMAIL;
+  const privateKey = env.FCM_PRIVATE_KEY;
+  if (!email || !privateKey) {
+    throw new Error("FCM service account is not configured");
+  }
+
+  const assertion = await signServiceAccountJwt(email, privateKey, nowSeconds);
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body:
+      "grant_type=" +
+      encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer") +
+      "&assertion=" +
+      encodeURIComponent(assertion),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Google token exchange failed (${response.status}): ${detail}`);
+  }
+
+  const json = await response.json();
+  cachedFcmToken = json.access_token;
+  cachedFcmTokenExpiry = nowSeconds + (Number(json.expires_in) || 3600);
+  return cachedFcmToken;
+}
+
+/**
+ * Builds and signs the JWT a service account presents to Google's token
+ * endpoint — RFC 7523's "JWT Bearer" grant. `firebase.messaging` is the
+ * narrowest scope that can send FCM messages; a broader one would let a
+ * leaked token do more than this Worker ever needs to.
+ */
+async function signServiceAccountJwt(email, privateKeyPem, nowSeconds) {
+  const header = { alg: "RS256", typ: "JWT" };
+  const claims = {
+    iss: email,
+    scope: "https://www.googleapis.com/auth/firebase.messaging",
+    aud: "https://oauth2.googleapis.com/token",
+    iat: nowSeconds,
+    exp: nowSeconds + 3600,
+  };
+
+  const signingInput = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}`;
+  const key = await importServiceAccountKey(privateKeyPem);
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    new TextEncoder().encode(signingInput),
+  );
+
+  return `${signingInput}.${base64urlFromBytes(new Uint8Array(signature))}`;
+}
+
+/**
+ * Parses the PEM-encoded PKCS#8 private key exactly as it appears in a
+ * Firebase service-account JSON file into a CryptoKey Web Crypto can sign
+ * with.
+ *
+ * Handles both a literally pasted multi-line PEM and one with escaped `\n`
+ * sequences, because which shape survives depends on how the value was typed
+ * into the Cloudflare dashboard's secret field.
+ */
+async function importServiceAccountKey(pem) {
+  const normalized = pem.replace(/\\n/g, "\n");
+  const base64 = normalized
+    .replace(/-----BEGIN PRIVATE KEY-----/, "")
+    .replace(/-----END PRIVATE KEY-----/, "")
+    .replace(/\s+/g, "");
+
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+  return crypto.subtle.importKey(
+    "pkcs8",
+    bytes.buffer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+}
+
+function base64url(text) {
+  return base64urlFromBytes(new TextEncoder().encode(text));
+}
+
+function base64urlFromBytes(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 // --- Upload helpers ----------------------------------------------------

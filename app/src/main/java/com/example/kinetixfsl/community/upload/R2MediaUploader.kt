@@ -57,6 +57,16 @@ object R2MediaUploader {
         context: Context,
         uri: Uri,
         resourceType: String = "image",
+        /**
+         * Bucket prefix to store under, e.g. "messages". Null keeps the
+         * Worker's default of `images/` or `videos/`.
+         *
+         * Sent as an extra form field, which a Worker that doesn't know about
+         * it simply ignores — so an app update can start separating message
+         * media from post media before the Worker is redeployed, rather than
+         * the two having to ship together.
+         */
+        folder: String? = null,
     ): UploadResult = withContext(Dispatchers.IO) {
         try {
             val bytes: ByteArray
@@ -76,7 +86,7 @@ object R2MediaUploader {
                 fileName = uri.lastPathSegment ?: "video.mp4"
             }
 
-            performUpload(bytes, fileName, mimeType, resourceType)
+            performUpload(bytes, fileName, mimeType, resourceType, folder)
         } catch (e: Exception) {
             UploadResult.Error(e.localizedMessage ?: "Upload failed.")
         }
@@ -130,9 +140,11 @@ object R2MediaUploader {
         fileName: String,
         mimeType: String,
         resourceType: String = "image",
+        /** Bucket prefix, as in [upload]. */
+        folder: String? = null,
     ): UploadResult = withContext(Dispatchers.IO) {
         try {
-            performUpload(bytes, fileName, mimeType, resourceType)
+            performUpload(bytes, fileName, mimeType, resourceType, folder)
         } catch (e: Exception) {
             UploadResult.Error(e.localizedMessage ?: "Upload failed.")
         }
@@ -232,6 +244,7 @@ object R2MediaUploader {
         fileName: String,
         mimeType: String,
         resourceType: String,
+        folder: String? = null,
     ): UploadResult {
         val url = URL(WORKER_URL)
         val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -248,6 +261,13 @@ object R2MediaUploader {
             out.write("--$BOUNDARY\r\n".toByteArray())
             out.write("Content-Disposition: form-data; name=\"resource_type\"\r\n\r\n".toByteArray())
             out.write("$resourceType\r\n".toByteArray())
+
+            // --- optional folder field ---
+            if (!folder.isNullOrBlank()) {
+                out.write("--$BOUNDARY\r\n".toByteArray())
+                out.write("Content-Disposition: form-data; name=\"folder\"\r\n\r\n".toByteArray())
+                out.write("$folder\r\n".toByteArray())
+            }
 
             // --- file field ---
             out.write("--$BOUNDARY\r\n".toByteArray())

@@ -7,6 +7,9 @@ import com.example.kinetixfsl.community.model.FollowUser
 import com.example.kinetixfsl.community.model.UserComment
 import com.example.kinetixfsl.community.model.UserProfile
 import com.example.kinetixfsl.community.model.storageKeyOf
+import com.example.kinetixfsl.community.inbox.MessagesRepository
+import com.example.kinetixfsl.community.inbox.NotificationRepository
+import com.example.kinetixfsl.community.inbox.model.NotificationType
 import com.example.kinetixfsl.community.upload.R2MediaUploader
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
@@ -32,6 +35,15 @@ import kotlinx.coroutines.tasks.await
 class CommunityRepository(
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
+    /**
+     * Writes the Inbox rows that community actions produce — a follow, an
+     * upvote, a comment, a mention, a community post.
+     *
+     * Injected rather than reached for statically so a test can pass a
+     * no-op, and so it stays obvious from the constructor that writing to
+     * this repository also writes into other people's notification trees.
+     */
+    private val notifications: NotificationRepository = NotificationRepository(),
 ) {
     // -------------------------------------------------------------------------
     // Feed
@@ -195,6 +207,20 @@ class CommunityRepository(
             val comments = firestore.collectionGroup(COMMENTS).whereEqualTo("authorId", uid).get().await()
             writeFieldInBatches(comments.documents.map { it.reference }, "authorName", newName)
         } catch (_: Exception) { /* best-effort */ }
+
+        // The Inbox denormalises names too, in two more places: every chat
+        // thread carries both participants' details so the list renders in one
+        // query, and every notification carries its sender's. Neither updates
+        // itself, so a rename that stopped at posts and comments left the other
+        // person's inbox showing the old name indefinitely.
+        val avatarUrl = try {
+            firestore.collection(USERS).document(uid).get().await().getString("avatarUrl")
+        } catch (_: Exception) {
+            null
+        }
+
+        MessagesRepository().propagateProfile(newName, avatarUrl)
+        notifications.propagateSenderName(newName, avatarUrl)
     }
 
     /**
@@ -225,6 +251,41 @@ class CommunityRepository(
                 trySend(snap?.documents?.map { it.id }?.toSet() ?: emptySet())
             }
         awaitClose { reg.remove() }
+    }
+
+    /**
+     * People the signed-in user can @mention: the accounts they follow, and
+     * only those.
+     *
+     * Deliberately narrower than the direct-message picker, which also offers
+     * people who follow *you*. Replying to someone who messaged you first is
+     * reasonable; being able to @mention anyone who followed you is not, because
+     * following is one-sided — anyone can follow anyone, so that list is
+     * effectively open to strangers, and an autocomplete built on it becomes a
+     * way to pull uninvolved people into a thread. Following someone back is the
+     * deliberate act that puts them here.
+     */
+    suspend fun mentionCandidates(): List<FollowUser> {
+        val uid = auth.currentUser?.uid ?: return emptyList()
+
+        return try {
+            firestore.collection(USERS).document(uid).collection(FOLLOWING)
+                .limit(MENTION_CANDIDATE_LIMIT)
+                .get().await()
+                .documents
+                .filter { it.id != uid }
+                .map { doc ->
+                    FollowUser(
+                        uid = doc.id,
+                        displayName = doc.getString("displayName").orEmpty()
+                            .ifBlank { "Unknown" },
+                        avatarUrl = doc.getString("avatarUrl"),
+                    )
+                }
+                .sortedBy { it.displayName.lowercase() }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     /** Everyone following [uid], newest first. */
@@ -282,9 +343,11 @@ class CommunityRepository(
             ?: me.email?.substringBefore('@') ?: "Anonymous"
 
         return try {
-            firestore.runTransaction { tx ->
+            // Reports whether this was a new follow, so an idempotent repeat
+            // doesn't send a second "started following you".
+            val isNewFollow = firestore.runTransaction { tx ->
                 val edge = myRef.collection(FOLLOWING).document(target.uid)
-                if (tx.get(edge).exists()) return@runTransaction
+                if (tx.get(edge).exists()) return@runTransaction false
 
                 tx.set(
                     edge,
@@ -313,7 +376,21 @@ class CommunityRepository(
                     mapOf("followerCount" to FieldValue.increment(1)),
                     SetOptions.merge(),
                 )
+                true
             }.await()
+
+            // After the transaction, never inside it: a Firestore transaction
+            // can be retried, and a notification written from inside one would
+            // be duplicated every time it was.
+            if (isNewFollow == true) {
+                notifications.notify(
+                    recipientId = target.uid,
+                    type = NotificationType.FOLLOW,
+                    targetId = me.uid,
+                    message = "started following you",
+                )
+            }
+
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -639,6 +716,20 @@ class CommunityRepository(
         )
         return try {
             val ref = firestore.collection(POSTS).add(data).await()
+
+            // A post inside a community is an announcement to its members —
+            // that's the one case where a new post notifies people who didn't
+            // interact with it. Home-feed posts notify nobody: the feed is
+            // where you go to find them.
+            if (communityId.isNotBlank()) {
+                notifications.notifyCommunityMembers(
+                    communityId = communityId,
+                    communityName = communityName,
+                    postId = ref.id,
+                    message = "posted: ${title.trim().ifBlank { "a new post" }}",
+                )
+            }
+
             Result.success(ref.id)
         } catch (e: Exception) {
             Result.failure(e)
@@ -663,7 +754,7 @@ class CommunityRepository(
         val postRef = firestore.collection(POSTS).document(postId)
         val voteRef = postRef.collection(VOTES).document(uid)
 
-        return try {
+        val result = try {
             firestore.runTransaction { tx ->
                 val voteDoc = tx.get(voteRef)
                 val existing = voteDoc.getString("direction")
@@ -698,6 +789,39 @@ class CommunityRepository(
                 }
             }.await()
         } catch (_: Exception) { null }
+
+        // Only an upvote is worth telling someone about. A downvote arriving as
+        // a notification would be a feature for making people feel bad, and
+        // no community app ships one.
+        if (result == "up") {
+            notifyPostAuthor(postId, NotificationType.LIKE, "upvoted your post")
+        }
+        return result
+    }
+
+    /**
+     * Sends [message] to whoever wrote [postId].
+     *
+     * Costs one document read, which is why it runs only after the write it
+     * describes has already succeeded — the user's action never waits on it,
+     * and a failure here costs a notification rather than the upvote or the
+     * comment that produced it.
+     */
+    private suspend fun notifyPostAuthor(
+        postId: String,
+        type: NotificationType,
+        message: String,
+    ) {
+        try {
+            val authorId = firestore.collection(POSTS).document(postId)
+                .get().await().getString("authorId") ?: return
+            notifications.notify(
+                recipientId = authorId,
+                type = type,
+                targetId = postId,
+                message = message,
+            )
+        } catch (_: Exception) { /* best-effort */ }
     }
 
     // -------------------------------------------------------------------------
@@ -738,6 +862,15 @@ class CommunityRepository(
         body: String,
         imageUrl: String? = null,
         parentId: String? = null,
+        /**
+         * Uids the author picked out of the @mention autocomplete.
+         *
+         * Carried explicitly rather than re-derived from the text, because the
+         * text alone can't be parsed reliably: "@Juan Dela Cruz" is
+         * indistinguishable from "@Juan" followed by two ordinary words. The
+         * picker already knew exactly who was meant, so it says so.
+         */
+        mentionedUserIds: List<String> = emptyList(),
     ): Result<Unit> {
         val user = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
         val data = hashMapOf(
@@ -748,6 +881,7 @@ class CommunityRepository(
             "body" to body.trim(),
             "imageUrl" to imageUrl,
             "parentId" to parentId,
+            "mentionedUserIds" to mentionedUserIds,
             "createdAt" to Timestamp.now(),
         )
         return try {
@@ -756,10 +890,98 @@ class CommunityRepository(
                 tx.update(postRef, "commentCount", FieldValue.increment(1))
                 tx.set(postRef.collection(COMMENTS).document(), data)
             }.await()
+
+            notifyAboutComment(postId, body, parentId, mentionedUserIds)
+
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * The Inbox rows one comment can produce: one for whoever it answers, and
+     * one for each person named in it.
+     *
+     * A reply notifies the comment's author instead of the post's — being told
+     * "someone commented on your post" when they actually answered a stranger's
+     * comment three levels down is noise, and it's the reply's target who
+     * actually wants to know.
+     */
+    private suspend fun notifyAboutComment(
+        postId: String,
+        body: String,
+        parentId: String?,
+        mentionedUserIds: List<String>,
+    ) {
+        if (parentId.isNullOrBlank()) {
+            notifyPostAuthor(postId, NotificationType.COMMENT, "commented on your post")
+        } else {
+            try {
+                val parentAuthor = firestore.collection(POSTS).document(postId)
+                    .collection(COMMENTS).document(parentId)
+                    .get().await().getString("authorId")
+                if (parentAuthor != null) {
+                    notifications.notify(
+                        recipientId = parentAuthor,
+                        type = NotificationType.COMMENT,
+                        targetId = postId,
+                        message = "replied to your comment",
+                    )
+                }
+            } catch (_: Exception) { /* best-effort */ }
+        }
+
+        // Picked-from-the-list mentions first, then anything typed by hand that
+        // the text scan can still resolve. Unioned so a comment that used both
+        // routes notifies each person exactly once.
+        val recipients = (mentionedUserIds + resolveMentions(body)).distinct()
+        recipients.forEach { mentionedUid ->
+            notifications.notify(
+                recipientId = mentionedUid,
+                type = NotificationType.MENTION,
+                targetId = postId,
+                message = "mentioned you in a comment",
+            )
+        }
+    }
+
+    /**
+     * Turns the `@names` in [body] into uids.
+     *
+     * Matches a single unbroken run of name characters after the `@`, so
+     * "@juan" resolves and "@Juan Dela Cruz" resolves as far as "@Juan". That
+     * limitation is deliberate: without a separate unique-handle field there's
+     * no way to tell where a multi-word display name ends and the rest of the
+     * sentence begins, and guessing would mean querying every prefix of every
+     * mention. Adding a `handle` field to `users` is the real fix when
+     * mentions matter enough to warrant it.
+     *
+     * Capped at [MAX_MENTIONS_PER_COMMENT] lookups so a comment full of `@`
+     * can't turn into an unbounded burst of queries.
+     */
+    private suspend fun resolveMentions(body: String): List<String> {
+        if (!body.contains('@')) return emptyList()
+
+        val names = MENTION_PATTERN.findAll(body)
+            .map { it.groupValues[1] }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(MAX_MENTIONS_PER_COMMENT)
+            .toList()
+
+        val uids = mutableListOf<String>()
+        names.forEach { name ->
+            try {
+                firestore.collection(USERS)
+                    .whereEqualTo("displayName", name)
+                    .limit(1)
+                    .get().await()
+                    .documents.firstOrNull()
+                    ?.let { uids.add(it.id) }
+            } catch (_: Exception) { /* best-effort */ }
+        }
+        return uids.distinct()
     }
 
     // -------------------------------------------------------------------------
@@ -910,5 +1132,17 @@ class CommunityRepository(
 
         /** Firestore write batches cap at 500 operations. */
         const val BATCH_LIMIT = 400L
+
+        /**
+         * `@` followed by one run of name characters. See [resolveMentions] for
+         * why this stops at the first space.
+         */
+        val MENTION_PATTERN = Regex("@([A-Za-z0-9_.\\-]{2,30})")
+
+        /** Lookup ceiling per comment, so `@@@@@` can't fan out into queries. */
+        const val MAX_MENTIONS_PER_COMMENT = 5
+
+        /** How many people the @mention autocomplete pulls from each list. */
+        const val MENTION_CANDIDATE_LIMIT = 200L
     }
 }

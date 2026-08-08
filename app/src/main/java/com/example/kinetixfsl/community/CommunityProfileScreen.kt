@@ -87,7 +87,11 @@ fun CommunityProfileScreen(
      * menu drops the actions only an author should have.
      */
     userId: String? = null,
-    /** Tapping Message. Not implemented yet, so this is a no-op by default. */
+    /**
+     * Tapping Message — opens (or starts) a direct-message thread with this
+     * user. Defaults to a no-op for the own-profile case, where the button
+     * isn't drawn at all.
+     */
     onMessageClick: () -> Unit = {},
     /** Tapping a user row (e.g. in the followers list) to visit their profile. */
     onUserClick: ((String) -> Unit)? = null,
@@ -544,8 +548,6 @@ private fun ProfileCard(
                                     .padding(horizontal = 6.dp, vertical = 2.dp),
                             )
                         } else {
-                            // Message is a placeholder button for now — deliberately
-                            // clickable so the layout is final, with nothing behind it.
                             Icon(
                                 imageVector = CommunityIcons.Message,
                                 contentDescription = "Message",

@@ -8,7 +8,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,6 +27,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.example.kinetixfsl.community.model.FollowUser
 import com.example.kinetixfsl.community.model.Post
 
 /**
@@ -248,7 +253,7 @@ fun AddCommentScreen(
             Spacer(Modifier.height(14.dp))
 
             BasicTextField(
-                value = state.commentText,
+                value = state.commentField,
                 onValueChange = viewModel::onCommentTextChange,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                     color = MaterialTheme.colorScheme.onSurface,
@@ -326,6 +331,15 @@ fun AddCommentScreen(
             Spacer(Modifier.height(16.dp))
         }
 
+        // ---- @mention suggestions ----
+        // Sits directly above the toolbar so it's the nearest thing to the
+        // keyboard: the user types "@", and the answer appears right where
+        // their thumb already is rather than up in the body of the composer.
+        MentionSuggestions(
+            suggestions = state.mentionSuggestions,
+            onPick = viewModel::applyMention,
+        )
+
         // ---- Toolbar: attach a single image ----
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Row(
@@ -368,6 +382,61 @@ fun AddCommentScreen(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * The people offered while the caret sits inside an `@…` fragment.
+ *
+ * A horizontal strip rather than a dropdown: a popup anchored to the caret has
+ * to fight the keyboard for space and lands somewhere different depending on
+ * which line the caret is on, whereas a strip pinned above the toolbar is
+ * always in the same place and never covers what's being typed.
+ *
+ * Renders nothing at all when there's nothing to offer, so the composer doesn't
+ * reserve a gap for a strip that isn't there.
+ */
+@Composable
+private fun MentionSuggestions(
+    suggestions: List<FollowUser>,
+    onPick: (FollowUser) -> Unit,
+) {
+    if (suggestions.isEmpty()) return
+
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(vertical = 8.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(suggestions, key = { it.uid }) { user ->
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { onPick(user) }
+                    .padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Avatar(
+                    avatarUrl = user.avatarUrl,
+                    name = user.displayName,
+                    size = 26.dp,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = user.displayName,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

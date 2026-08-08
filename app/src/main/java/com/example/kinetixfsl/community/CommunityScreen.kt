@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -48,9 +49,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kinetixfsl.community.home.CommunityHomeScreen
+import com.example.kinetixfsl.community.inbox.ChatScreen
+import com.example.kinetixfsl.community.inbox.CountBadge
+import com.example.kinetixfsl.community.inbox.InboxScreen
+import com.example.kinetixfsl.community.inbox.InboxViewModel
 import com.example.kinetixfsl.community.model.Post
-import com.example.kinetixfsl.community.tabs.CommunityProfilePlaceholder
-import com.example.kinetixfsl.community.tabs.NotificationsPlaceholder
 import com.example.kinetixfsl.ui.home.KinetixDrawerContent
 import kotlinx.coroutines.launch
 
@@ -98,6 +101,16 @@ fun CommunityScreen(
         overlays.add(CommunityOverlay.PostById(postId))
     }
 
+    /**
+     * Opens a chat thread on the same overlay stack. Reached three ways — the
+     * inbox list, a message notification, and the Message button on somebody's
+     * profile — and all three want the same thing on back: whatever they were
+     * looking at, not a reset to the feed.
+     */
+    val openChat: (String, String) -> Unit = { conversationId, otherUid ->
+        overlays.add(CommunityOverlay.Chat(conversationId, otherUid))
+    }
+
     // The home-feed post whose 3-dot sheet is open, and one pending delete.
     var actionsPost: Post? by remember { mutableStateOf(null) }
     var pendingDeletePost: Post? by remember { mutableStateOf(null) }
@@ -107,6 +120,15 @@ fun CommunityScreen(
 
     // Shared list state so the bottom nav can scroll it to top.
     val feedListState = rememberLazyListState()
+
+    /**
+     * Hoisted to this level, not owned by the Inbox tab, because the bottom-nav
+     * bell has to carry an unread badge whichever tab is showing — a ViewModel
+     * created inside the Inbox screen would only exist while the user was
+     * already looking at it, which is precisely when the badge is pointless.
+     */
+    val inboxViewModel = remember { InboxViewModel() }
+    val inboxState by inboxViewModel.uiState.collectAsStateWithLifecycle()
 
     // The ViewModel — kept here so the bottom nav can call refresh().
     val feedViewModel = remember { CommunityFeedViewModel() }
@@ -181,6 +203,9 @@ fun CommunityScreen(
                 onOpenPostById = openPostById,
                 feedListState = feedListState,
                 feedViewModel = feedViewModel,
+                inboxViewModel = inboxViewModel,
+                inboxUnread = inboxState.totalUnread,
+                onOpenChat = openChat,
                 onScrollToTopAndRefresh = {
                     scope.launch {
                         feedListState.animateScrollToItem(0)
@@ -238,6 +263,11 @@ fun CommunityScreen(
                             BackHandler(onBack = close)
                             CommunityProfileScreen(
                                 userId = overlay.userId,
+                                onMessageClick = {
+                                    inboxViewModel.openConversationWithUid(overlay.userId) { id ->
+                                        openChat(id, overlay.userId)
+                                    }
+                                },
                                 onPostClick = { post ->
                                     overlays.add(CommunityOverlay.Detail(post))
                                 },
@@ -333,6 +363,13 @@ fun CommunityScreen(
                             }
                         }
 
+                        is CommunityOverlay.Chat -> ChatScreen(
+                            conversationId = overlay.conversationId,
+                            recipientId = overlay.otherUid,
+                            onClose = close,
+                            onOpenProfile = openProfile,
+                        )
+
                         is CommunityOverlay.Community -> {
                             // CommunityHomeScreen registers its own BackHandler
                             // wired to onClose, so it needs nothing extra here.
@@ -426,6 +463,10 @@ private fun CommunityScaffold(
     onOpenPostById: (String) -> Unit,
     feedListState: LazyListState,
     feedViewModel: CommunityFeedViewModel,
+    inboxViewModel: InboxViewModel,
+    /** Unread messages plus unread notifications — the badge on the bell. */
+    inboxUnread: Int,
+    onOpenChat: (conversationId: String, otherUid: String) -> Unit,
     onScrollToTopAndRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -462,7 +503,12 @@ private fun CommunityScaffold(
                 CommunityTab.CREATE -> CreatePostScreen(
                     onClose = { onTabSelected(CommunityTab.HOME) },
                 )
-                CommunityTab.NOTIFICATIONS -> NotificationsPlaceholder()
+                CommunityTab.INBOX -> InboxScreen(
+                    viewModel = inboxViewModel,
+                    onOpenConversation = onOpenChat,
+                    onOpenPost = onOpenPostById,
+                    onOpenProfile = onAuthorClick,
+                )
             }
         }
 
@@ -474,6 +520,7 @@ private fun CommunityScaffold(
         if (selectedTab != CommunityTab.CREATE) {
             CommunityBottomNav(
                 selectedTab = selectedTab,
+                inboxUnread = inboxUnread,
                 onTabSelected = { tab ->
                     if (tab == CommunityTab.HOME && selectedTab == CommunityTab.HOME) {
                         onScrollToTopAndRefresh()
@@ -521,6 +568,7 @@ private fun CommunityTopBar(
 @Composable
 private fun CommunityBottomNav(
     selectedTab: CommunityTab,
+    inboxUnread: Int,
     onTabSelected: (CommunityTab) -> Unit,
 ) {
     Column(
@@ -542,6 +590,7 @@ private fun CommunityBottomNav(
                     icon = tab.icon,
                     label = tab.label,
                     selected = tab == selectedTab,
+                    badgeCount = if (tab == CommunityTab.INBOX) inboxUnread else 0,
                     onClick = { onTabSelected(tab) },
                 )
             }
@@ -556,6 +605,8 @@ private fun NavItem(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
+    /** Unread count drawn over the icon's top-right. Zero draws nothing. */
+    badgeCount: Int = 0,
 ) {
     val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Column(
@@ -564,12 +615,22 @@ private fun NavItem(
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = tint,
-            modifier = Modifier.size(28.dp),
-        )
+        Box {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = tint,
+                modifier = Modifier.size(28.dp),
+            )
+            // Offset up and out so the badge clears the bell's outline rather
+            // than sitting on top of it.
+            CountBadge(
+                count = badgeCount,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = 8.dp, y = (-4).dp),
+            )
+        }
     }
 }
 
@@ -598,4 +659,11 @@ private sealed interface CommunityOverlay {
 
     /** A community, opened from a post's badge or a profile's My Communities. */
     data class Community(val communityId: String) : CommunityOverlay
+
+    /**
+     * One direct-message thread. Carries the other person's uid alongside the
+     * thread id so the chat can watch their presence and mark messages read
+     * without first waiting on the conversation document to load.
+     */
+    data class Chat(val conversationId: String, val otherUid: String) : CommunityOverlay
 }

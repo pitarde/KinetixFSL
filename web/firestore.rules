@@ -4,7 +4,9 @@
 // then press Publish. Replace everything that's there; this is complete.
 //
 // Collections: `posts` (with votes/shares/comments), `users` (with the follow
-// graph and joined-communities), and `communities` (with their members).
+// graph, joined-communities and known devices), `communities` (with their
+// members), `notifications` (per-user inbox rows) and `conversations` (direct
+// messages).
 
 rules_version = '2';
 
@@ -172,6 +174,119 @@ service cloud.firestore {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow create, delete: if request.auth != null && request.auth.uid == userId;
         allow update: if false;
+      }
+
+      // Devices this account has signed in on. Private: it exists only so the
+      // app can tell "a device I've used before" from "somewhere new" and warn
+      // about the second — publishing it would be handing an attacker the list
+      // of a user's phones.
+      match /devices/{deviceId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Notifications — notifications/{userId}/items/{itemId}
+    //
+    // Asymmetric on purpose: other people *write* your notifications (that's
+    // what "Maria started following you" is), but only you can read them, mark
+    // them read, or delete them.
+    // -----------------------------------------------------------------------
+    match /notifications/{userId}/items/{itemId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      // A notification must be attributed to whoever is writing it, and must
+      // arrive unread. Without the first clause anyone could forge a message
+      // from anyone; without the second, a sender could post something into
+      // your list pre-marked read so you never saw it.
+      //
+      // The blank-sender branch is the app's own system notices (welcome, new
+      // device). Those are only ever written by the account they're about,
+      // which is what stops anyone dressing a message up as coming from us.
+      allow create: if request.auth != null
+                    && request.resource.data.isRead == false
+                    && (request.resource.data.fromUserId == request.auth.uid
+                        || (request.resource.data.fromUserId == ''
+                            && request.auth.uid == userId));
+
+      // Marking read and clearing the list are the owner's alone — except that
+      // the sender may fix their own name and photo on rows they wrote, which
+      // is how a rename reaches notifications already sitting in other people's
+      // inboxes. Restricted to those two fields, so it can't be used to rewrite
+      // what a notification says or flip it back to unread.
+      allow update: if request.auth != null
+                    && (request.auth.uid == userId
+                        || (request.auth.uid == resource.data.fromUserId
+                            && request.resource.data.diff(resource.data).affectedKeys()
+                                 .hasOnly(['fromUserName', 'fromUserPhoto'])));
+
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Collection-group reads over every user's notification items.
+    //
+    // The nested rule above does NOT cover this — a collection-group query is
+    // matched separately. Renaming yourself needs to find your own past
+    // notifications wherever they live, and the `fromUserId` condition is what
+    // makes that safe: Firestore only accepts a query it can prove satisfies
+    // the rule, so a query without `where fromUserId == <me>` is rejected
+    // rather than returning other people's inboxes.
+    match /{path=**}/items/{itemId} {
+      allow read: if request.auth != null
+                  && resource.data.fromUserId == request.auth.uid;
+    }
+
+    // -----------------------------------------------------------------------
+    // Direct messages
+    //
+    // A thread's id is the two uids sorted and joined with an underscore, so
+    // membership can be read straight off the id. That's deliberate: the
+    // alternative is a get() on the conversation document inside every rule
+    // evaluation, which bills a document read for each message in a thread.
+    // Firebase uids are alphanumeric, so the underscore is unambiguous.
+    // -----------------------------------------------------------------------
+    function inThread(conversationId) {
+      return request.auth != null
+        && conversationId.split('_').hasAny([request.auth.uid]);
+    }
+
+    match /conversations/{conversationId} {
+      // Both the single-document read and the inbox's arrayContains query are
+      // satisfied by this: Firestore accepts the query because every document
+      // it can return provably passes the rule.
+      allow read: if request.auth != null
+                  && request.auth.uid in resource.data.participants;
+
+      // Exactly two people, one of whom is you. Creating a thread you aren't
+      // in would let someone plant conversations in other people's inboxes.
+      allow create: if request.auth != null
+                    && request.resource.data.participants.size() == 2
+                    && request.auth.uid in request.resource.data.participants
+                    && inThread(conversationId);
+
+      // Either participant may move the last-message preview, the unread
+      // counts and the typing flags — all three are written by the other side.
+      allow update: if request.auth != null
+                    && request.auth.uid in resource.data.participants;
+
+      // Deleting a thread would delete the other person's copy too. Not
+      // something one participant gets to decide.
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if inThread(conversationId);
+
+        // You may only send as yourself.
+        allow create: if inThread(conversationId)
+                      && request.resource.data.senderId == request.auth.uid;
+
+        // The recipient flips `isRead` — so update is open to both sides, but
+        // only for that field. Message text is not editable by anyone.
+        allow update: if inThread(conversationId)
+                      && request.resource.data.diff(resource.data)
+                           .affectedKeys().hasOnly(['isRead']);
+
+        allow delete: if false;
       }
     }
 

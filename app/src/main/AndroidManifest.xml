@@ -94,6 +94,25 @@
             android:name=".community.upload.PostUploadService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
+
+        <!--
+            Push notifications for messages, replies, follows and mentions.
+            Fired by a Cloud Function off each notifications/{uid}/items write —
+            see web/MESSAGING_SETUP.md. Not exported: the messaging library
+            binds to it from inside this app's own process.
+        -->
+        <service
+            android:name=".community.inbox.push.KinetixMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Which channel a push lands on when the payload doesn't name one. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="kinetix_social" />
     </application>
 
 </manifest>

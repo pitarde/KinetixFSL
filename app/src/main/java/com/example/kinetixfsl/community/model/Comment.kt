@@ -25,5 +25,14 @@ data class Comment(
      * original top-level comment's id here, never the reply's own id.
      */
     val parentId: String? = null,
+    /**
+     * Uids the author picked from the @mention autocomplete.
+     *
+     * Stored alongside the text rather than parsed back out of it: a display
+     * name with a space in it can't be recovered from "@Juan Dela Cruz said so"
+     * without guessing where the name ends. Recording who was meant at the
+     * moment the author chose them removes the guess entirely.
+     */
+    val mentionedUserIds: List<String> = emptyList(),
     val createdAt: Timestamp? = null,
 )

@@ -13,6 +13,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import com.example.kinetixfsl.community.inbox.push.KinetixMessagingService
 import com.example.kinetixfsl.community.upload.PostUploadService
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
@@ -44,6 +45,11 @@ class KinetixApplication : Application(), ImageLoaderFactory {
 
         // Create the notification channel for post uploads.
         createUploadNotificationChannel()
+
+        // …and the one FCM pushes land on. Registered up front because a push
+        // can arrive before any screen has been opened, and Android silently
+        // drops a notification posted to a channel that doesn't exist yet.
+        createSocialNotificationChannel()
     }
 
     /**
@@ -107,6 +113,25 @@ class KinetixApplication : Application(), ImageLoaderFactory {
             NotificationManager.IMPORTANCE_LOW,       // no sound, just the bar
         ).apply {
             description = "Shows progress when uploading a community post."
+        }
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannel(channel)
+    }
+
+    /**
+     * Messages, replies, follows and mentions. Separate from the upload
+     * channel and at a higher importance on purpose: an upload progress bar
+     * should never make a sound, and a message from another person should be
+     * allowed to — and the user can turn each off independently in Android's
+     * own settings, which is only possible because they're two channels.
+     */
+    private fun createSocialNotificationChannel() {
+        val channel = NotificationChannel(
+            KinetixMessagingService.CHANNEL_ID,
+            KinetixMessagingService.CHANNEL_NAME,
+            KinetixMessagingService.CHANNEL_IMPORTANCE,
+        ).apply {
+            description = "New messages, replies, follows and mentions."
         }
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.createNotificationChannel(channel)
