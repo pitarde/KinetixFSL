@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -137,15 +138,31 @@ fun CreatePostScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            // CommunityScaffold hides its bottom nav while this tab is active
-            // (see CommunityScreen), so this screen owns the full remaining
-            // height with nothing else competing for it — imePadding() here
-            // shrinks exactly to the keyboard height with no leftover gap, and
-            // only this toolbar (not Home/Profile/Create/Notifications) reacts
-            // to the keyboard.
+            // This screen is now reached as an overlay (the top bar's pencil
+            // icon), not a scaffold tab — a scaffold used to apply
+            // statusBarsPadding() once for whichever tab was showing, so this
+            // screen never needed its own. As a standalone overlay it does, or
+            // the close button and top bar sit under the status bar — exactly
+            // matching EditPostScreen's ordering (status bar, then IME) so the
+            // two composers look and behave identically.
+            .statusBarsPadding()
             .imePadding(),
     ) {
-        // ---- Top bar: X + Select Community + Post ----
+        // ---- Screen title, matching EditPostScreen's ----
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "Create post",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+
         // ---- Top bar: X + Select Community + Post ----
         Row(
             modifier = Modifier

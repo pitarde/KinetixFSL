@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -33,6 +34,7 @@ import com.example.kinetixfsl.community.create.StartCommunityScreen
 import com.example.kinetixfsl.community.discover.CommunityCategoryScreen
 import com.example.kinetixfsl.community.discover.DiscoverCommunitiesScreen
 import com.example.kinetixfsl.community.home.CommunityHomeScreen
+import com.example.kinetixfsl.community.inbox.InboxScreen
 import com.example.kinetixfsl.modules.LearningRoomScreen
 import com.example.kinetixfsl.modules.SignListScreen
 import com.example.kinetixfsl.modules.model.FslSignData
@@ -97,6 +99,20 @@ object Route {
     const val POST_ARG = "postId"
     const val POST_PATTERN = "$POST_BASE/{$POST_ARG}"
     fun post(postId: String): String = "$POST_BASE/$postId"
+
+    // ── Inbox: chat + notifications, reached from the drawer ─
+    const val INBOX = "inbox"
+
+    // ── One open conversation, reached from the Inbox or a Message button ─
+    private const val CHAT_BASE = "chat"
+    const val CHAT_CONVERSATION_ARG = "conversationId"
+    const val CHAT_OTHER_UID_ARG = "otherUid"
+    const val CHAT_PATTERN = "$CHAT_BASE/{$CHAT_CONVERSATION_ARG}/{$CHAT_OTHER_UID_ARG}"
+    fun chat(conversationId: String, otherUid: String): String {
+        val encodedConvo = URLEncoder.encode(conversationId, StandardCharsets.UTF_8.name())
+        val encodedUid = URLEncoder.encode(otherUid, StandardCharsets.UTF_8.name())
+        return "$CHAT_BASE/$encodedConvo/$encodedUid"
+    }
 
     // ── Modules routes ──────────────────────────────────────
     private const val SIGN_LIST_BASE = "sign_list"
@@ -462,6 +478,124 @@ fun KinetixNavHost(
                 onOpenCommunity = { communityId ->
                     navController.navigate(Route.communityHome(communityId))
                 },
+                onOpenInbox = {
+                    navController.navigate(Route.INBOX)
+                },
+            )
+        }
+
+        // ---- Inbox: chat + notifications, reached from either drawer ----
+        //
+        // Reached from Home's own drawer — which is a dead end for the swipe
+        // gesture and the hamburger both, since this destination previously had
+        // no drawer of its own to open. Community's path into the Inbox is an
+        // overlay *inside* CommunityScreen's existing drawer, so it never had
+        // this problem; this destination needs its own copy of the same thing.
+        composable(
+            route = Route.INBOX,
+            enterTransition = { pushEnter() },
+            exitTransition = { recedeExit() },
+            popEnterTransition = { recedePopEnter() },
+            popExitTransition = { pushPopExit() },
+        ) {
+            val inboxDrawerState = androidx.compose.material3.rememberDrawerState(
+                initialValue = androidx.compose.material3.DrawerValue.Closed,
+            )
+            val inboxDrawerScope = rememberCoroutineScope()
+            val inboxViewModel = remember {
+                com.example.kinetixfsl.community.inbox.InboxViewModel()
+            }
+            val inboxState by inboxViewModel.uiState.collectAsStateWithLifecycle()
+
+            androidx.compose.material3.ModalNavigationDrawer(
+                drawerState = inboxDrawerState,
+                drawerContent = {
+                    androidx.compose.material3.ModalDrawerSheet(
+                        drawerContainerColor = MaterialTheme.colorScheme.surface,
+                    ) {
+                        com.example.kinetixfsl.ui.home.KinetixDrawerContent(
+                            onDashboardClick = {
+                                inboxDrawerScope.launch {
+                                    inboxDrawerState.close()
+                                    navController.navigate(Route.HOME) {
+                                        launchSingleTop = true
+                                        popUpTo(Route.HOME)
+                                    }
+                                }
+                            },
+                            onGestureToTextClick = { inboxDrawerScope.launch { inboxDrawerState.close() } },
+                            onTextToGestureClick = { inboxDrawerScope.launch { inboxDrawerState.close() } },
+                            onCommunityClick = {
+                                inboxDrawerScope.launch {
+                                    inboxDrawerState.close()
+                                    navController.navigate(Route.COMMUNITY)
+                                }
+                            },
+                            onStartCommunityClick = {
+                                inboxDrawerScope.launch {
+                                    inboxDrawerState.close()
+                                    navController.navigate(Route.START_COMMUNITY)
+                                }
+                            },
+                            onDiscoverCommunitiesClick = {
+                                inboxDrawerScope.launch {
+                                    inboxDrawerState.close()
+                                    navController.navigate(Route.DISCOVER_COMMUNITIES)
+                                }
+                            },
+                            onAboutClick = { inboxDrawerScope.launch { inboxDrawerState.close() } },
+                            onRecentCommunityClick = { communityId ->
+                                inboxDrawerScope.launch {
+                                    inboxDrawerState.close()
+                                    navController.navigate(Route.communityHome(communityId))
+                                }
+                            },
+                            // Already here — just close the drawer rather than
+                            // pushing a second copy of this same destination.
+                            onInboxClick = { inboxDrawerScope.launch { inboxDrawerState.close() } },
+                            inboxUnreadCount = inboxState.totalUnread,
+                        )
+                    }
+                },
+            ) {
+                InboxScreen(
+                    viewModel = inboxViewModel,
+                    onOpenConversation = { conversationId, otherUid ->
+                        navController.navigate(Route.chat(conversationId, otherUid))
+                    },
+                    onOpenPost = { postId -> navController.navigate(Route.post(postId)) },
+                    onOpenProfile = { userId -> navController.navigate(Route.profile(userId)) },
+                    onMenuClick = { inboxDrawerScope.launch { inboxDrawerState.open() } },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                        .statusBarsPadding()
+                        .navigationBarsPadding(),
+                )
+            }
+        }
+
+        // ---- One open conversation, reached from the Inbox ----
+        composable(
+            route = Route.CHAT_PATTERN,
+            arguments = listOf(
+                navArgument(Route.CHAT_CONVERSATION_ARG) { type = NavType.StringType },
+                navArgument(Route.CHAT_OTHER_UID_ARG) { type = NavType.StringType },
+            ),
+            enterTransition = { pushEnter() },
+            exitTransition = { recedeExit() },
+            popEnterTransition = { recedePopEnter() },
+            popExitTransition = { pushPopExit() },
+        ) { backStackEntry ->
+            val conversationId = backStackEntry.arguments
+                ?.getString(Route.CHAT_CONVERSATION_ARG).orEmpty()
+            val otherUid = backStackEntry.arguments
+                ?.getString(Route.CHAT_OTHER_UID_ARG).orEmpty()
+            com.example.kinetixfsl.community.inbox.ChatScreen(
+                conversationId = conversationId,
+                recipientId = otherUid,
+                onClose = { navController.popBackStack() },
+                onOpenProfile = { userId -> navController.navigate(Route.profile(userId)) },
             )
         }
 

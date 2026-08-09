@@ -3,6 +3,8 @@ package com.example.kinetixfsl.community.inbox
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -72,6 +75,13 @@ fun InboxScreen(
     /** Tapping a notification that points at a person. */
     onOpenProfile: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Opens the drawer this screen is showing under. Null hides the hamburger
+     * — not needed everywhere this screen appears, only where it's the
+     * top-level content of a drawer (as opposed to, say, sitting inside
+     * another screen's own overlay stack with no drawer of its own to open).
+     */
+    onMenuClick: (() -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var isPickerOpen by remember { mutableStateOf(false) }
@@ -84,6 +94,37 @@ fun InboxScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
+        // A screen title, matching the pattern EditPostScreen and
+        // CreatePostScreen use — the same bit of air above the tab row also
+        // keeps it from sitting flush against the status bar. The hamburger,
+        // when there's a drawer to open, sits at the start rather than
+        // replacing the title, so the screen still reads as "Inbox" the same
+        // way wherever it's shown.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp)
+                .padding(horizontal = 12.dp),
+        ) {
+            if (onMenuClick != null) {
+                Icon(
+                    imageVector = CommunityIcons.Menu,
+                    contentDescription = "Open menu",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .size(28.dp)
+                        .clickable(onClick = onMenuClick),
+                )
+            }
+            Text(
+                text = "Inbox",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
         InboxTabRow(
             selected = state.selectedTab,
             unreadChats = state.unreadChats,
@@ -735,7 +776,13 @@ private fun NewMessageSheet(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                 ) { }
+                // Same fix as the Edit Profile sheet: without imePadding the
+                // keyboard just covered the search field, so typing a name
+                // showed nothing. The scroll is what lets the pushed-up sheet
+                // still reach that field instead of clipping it.
+                .imePadding()
                 .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 20.dp),
         ) {
             Text(

@@ -10,7 +10,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -1062,7 +1065,16 @@ private fun BottomSheet(
                 .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .clickable(enabled = false) {}
+                // Without imePadding the keyboard simply covered sheets that hold
+                // a text field — EditCommunitySheet's name field, in particular —
+                // with no way to see what was typed. The scroll is what actually
+                // lets the pushed-up content reach the field at the top instead
+                // of clipping it against the shrunk viewport. Harmless on the
+                // menu-only sheets that share this composable: no field, no
+                // keyboard, no-op.
+                .imePadding()
                 .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
                 .padding(20.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {

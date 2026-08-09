@@ -70,6 +70,14 @@ fun KinetixDrawerContent(
      * stack to open one onto.
      */
     onRecentCommunityClick: ((String) -> Unit)? = null,
+    /**
+     * Opens the Inbox (chat + notifications). Null hides the row — the Inbox
+     * lives behind an overlay stack only the Community screen owns, so a host
+     * without one (today, the Home dashboard) simply doesn't offer it here.
+     */
+    onInboxClick: (() -> Unit)? = null,
+    /** Badge on the Inbox row — unread messages plus unread notifications. */
+    inboxUnreadCount: Int = 0,
 ) {
     // "See all" swaps the whole drawer for a dedicated Recently Visited view
     // (back arrow, per-row remove, Clear all), matching the design — then back
@@ -110,6 +118,17 @@ fun KinetixDrawerContent(
         DrawerItem(HomeIcons.Community, "Community", onCommunityClick)
         DrawerItem(HomeIcons.Plus, "Start a community", onStartCommunityClick)
         DrawerItem(HomeIcons.Search, "Discover communities", onDiscoverCommunitiesClick)
+        // Inbox lives here now rather than as its own bottom-nav tab or top-bar
+        // icon — one destination for both direct messages and notifications,
+        // reached the same way Discover and Start a community are.
+        if (onInboxClick != null) {
+            DrawerItem(
+                icon = CommunityIcons.Bell,
+                label = "Chat/Notification",
+                onClick = onInboxClick,
+                badgeCount = inboxUnreadCount,
+            )
+        }
 
         if (onRecentCommunityClick != null) {
             RecentlyVisitedSection(
@@ -342,6 +361,8 @@ private fun DrawerItem(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Unread count next to the label. Zero draws nothing — used by Inbox. */
+    badgeCount: Int = 0,
 ) {
     Row(
         modifier = modifier
@@ -365,6 +386,10 @@ private fun DrawerItem(
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
+        if (badgeCount > 0) {
+            Spacer(Modifier.weight(1f))
+            com.example.kinetixfsl.community.inbox.CountBadge(count = badgeCount)
+        }
     }
 }
 

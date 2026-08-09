@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -1375,6 +1376,14 @@ private fun EditProfileSheet(
                 .background(MaterialTheme.colorScheme.surface)
                 // Swallow taps so they don't reach the dismiss backdrop.
                 .clickable(enabled = false) {}
+                // Without this the keyboard simply overlapped the sheet — the
+                // name field (and its Save button) sat behind it with no way to
+                // see what was typed. imePadding pushes the sheet's bottom up by
+                // the keyboard's height; the scroll is what actually lets that
+                // pushed-up content reach the name field at the top instead of
+                // just clipping it against the shrunk viewport.
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(20.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {

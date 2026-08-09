@@ -25,6 +25,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -34,6 +35,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kinetixfsl.modules.ModulesScreen
 import com.example.kinetixfsl.ui.home.tabs.CameraTabPlaceholder
 import com.example.kinetixfsl.ui.home.tabs.GameTabPlaceholder
@@ -50,10 +52,18 @@ fun HomeScreen(
     onDiscoverCommunities: () -> Unit = {},
     /** Opens a specific community — the drawer's Recently Visited rows. */
     onOpenCommunity: (String) -> Unit = {},
+    /** Opens the Inbox (chat + notifications) — the drawer's own entry point. */
+    onOpenInbox: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+
+    // Hoisted purely for the drawer's unread badge — the Inbox screen itself
+    // gets its own instance when it's actually opened (a separate NavHost
+    // destination, not an overlay over this one the way Community's is).
+    val inboxViewModel = remember { com.example.kinetixfsl.community.inbox.InboxViewModel() }
+    val inboxState by inboxViewModel.uiState.collectAsStateWithLifecycle()
 
     // rememberSaveable keeps the selected tab alive across navigation
     // (navigate to SignList → press back → still on Modules tab, not Home).
@@ -101,6 +111,13 @@ fun HomeScreen(
                             onOpenCommunity(communityId)
                         }
                     },
+                    onInboxClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onOpenInbox()
+                        }
+                    },
+                    inboxUnreadCount = inboxState.totalUnread,
                 )
             }
         },

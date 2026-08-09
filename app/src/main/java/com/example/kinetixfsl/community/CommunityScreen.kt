@@ -14,18 +14,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
@@ -43,14 +43,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kinetixfsl.community.home.CommunityHomeScreen
 import com.example.kinetixfsl.community.inbox.ChatScreen
-import com.example.kinetixfsl.community.inbox.CountBadge
 import com.example.kinetixfsl.community.inbox.InboxScreen
 import com.example.kinetixfsl.community.inbox.InboxViewModel
 import com.example.kinetixfsl.community.model.Post
@@ -67,7 +65,6 @@ fun CommunityScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var selectedTab by remember { mutableStateOf(CommunityTab.HOME) }
 
     /**
      * Screens stacked over the community scaffold, bottom-first.
@@ -110,6 +107,9 @@ fun CommunityScreen(
     val openChat: (String, String) -> Unit = { conversationId, otherUid ->
         overlays.add(CommunityOverlay.Chat(conversationId, otherUid))
     }
+
+    /** Opens the Inbox (chat list + notifications) — reached from the drawer now. */
+    val openInbox: () -> Unit = { overlays.add(CommunityOverlay.Inbox) }
 
     // The home-feed post whose 3-dot sheet is open, and one pending delete.
     var actionsPost: Post? by remember { mutableStateOf(null) }
@@ -157,7 +157,9 @@ fun CommunityScreen(
                     onGestureToTextClick = { scope.launch { drawerState.close() } },
                     onTextToGestureClick = { scope.launch { drawerState.close() } },
                     onCommunityClick = {
-                        selectedTab = CommunityTab.HOME
+                        // Already here — treat it as "back to a clean feed":
+                        // drop every open overlay and close the drawer.
+                        closeFrom(0)
                         scope.launch { drawerState.close() }
                     },
                     onStartCommunityClick = {
@@ -179,15 +181,24 @@ fun CommunityScreen(
                             openCommunity(communityId)
                         }
                     },
+                    onInboxClick = {
+                        scope.launch {
+                            drawerState.close()
+                            openInbox()
+                        }
+                    },
+                    inboxUnreadCount = inboxState.totalUnread,
                 )
             }
         },
     ) {
         Box(modifier = modifier.fillMaxSize()) {
             CommunityScaffold(
-                selectedTab = selectedTab,
-                onTabSelected = { selectedTab = it },
                 onMenuClick = { scope.launch { drawerState.open() } },
+                onCreateClick = { overlays.add(CommunityOverlay.Create) },
+                onProfileClick = {
+                    currentUid?.let { overlays.add(CommunityOverlay.Profile(it)) }
+                },
                 // Tapping the card or the comment button both land on the
                 // detail screen — for a community post that's the same full
                 // post-and-comments view an individual post gets, just with the
@@ -195,36 +206,17 @@ fun CommunityScreen(
                 onCommentClick = { post -> overlays.add(CommunityOverlay.Detail(post)) },
                 onPostClick = { post -> overlays.add(CommunityOverlay.Detail(post)) },
                 onMediaClick = { post -> overlays.add(CommunityOverlay.Immersive(post)) },
-                onEditPost = { post -> overlays.add(CommunityOverlay.Edit(post)) },
                 onAuthorClick = { uid -> overlays.add(CommunityOverlay.Profile(uid)) },
                 // The community badge/header tap browses the community itself.
                 onOpenCommunity = openCommunity,
                 // Anything layered over the feed takes it out of the running
                 // for bandwidth: no autoplay, no prefetch behind the overlay.
                 isFeedActive = overlays.isEmpty(),
-                onProfileCommentClick = { item ->
-                    overlays.add(CommunityOverlay.PostById(item.postId))
-                },
                 onFeedMenuClick = { post -> actionsPost = post },
                 onOpenPostById = openPostById,
                 feedListState = feedListState,
                 feedViewModel = feedViewModel,
-                inboxViewModel = inboxViewModel,
-                inboxUnread = inboxState.totalUnread,
-                onOpenChat = openChat,
-                onScrollToTopAndRefresh = {
-                    scope.launch {
-                        feedListState.animateScrollToItem(0)
-                        feedViewModel.refresh()
-                    }
-                },
             )
-
-            // Back from any secondary tab returns to the feed rather than
-            // leaving the community section entirely.
-            BackHandler(enabled = selectedTab != CommunityTab.HOME) {
-                selectedTab = CommunityTab.HOME
-            }
 
             // Rendered bottom-first: each entry draws over the one below it,
             // and because Compose runs back handlers in reverse registration
@@ -388,6 +380,33 @@ fun CommunityScreen(
                                 onClose = close,
                             )
                         }
+
+                        // CreatePostScreen registers its own BackHandler wired
+                        // to onClose, same as Chat and Community above.
+                        is CommunityOverlay.Create -> CreatePostScreen(
+                            onClose = close,
+                        )
+
+                        is CommunityOverlay.Inbox -> {
+                            // Unlike the screens above, InboxScreen was built to
+                            // live inside a tab (no back handling of its own),
+                            // so this overlay supplies it.
+                            BackHandler(onBack = close)
+                            InboxScreen(
+                                viewModel = inboxViewModel,
+                                onOpenConversation = openChat,
+                                onOpenPost = openPostById,
+                                onOpenProfile = openProfile,
+                                // The community drawer is still there underneath
+                                // this overlay — this just reopens it.
+                                onMenuClick = { scope.launch { drawerState.open() } },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.background)
+                                    .statusBarsPadding()
+                                    .navigationBarsPadding(),
+                            )
+                        }
                     }
                     }
                     }
@@ -458,189 +477,104 @@ fun CommunityScreen(
 
 @Composable
 private fun CommunityScaffold(
-    selectedTab: CommunityTab,
-    onTabSelected: (CommunityTab) -> Unit,
     onMenuClick: () -> Unit,
+    onCreateClick: () -> Unit,
+    onProfileClick: () -> Unit,
     onCommentClick: (Post) -> Unit,
     onPostClick: (Post) -> Unit,
     onMediaClick: (Post) -> Unit,
-    onEditPost: (Post) -> Unit,
     onAuthorClick: (String) -> Unit,
     onOpenCommunity: (String) -> Unit,
     isFeedActive: Boolean,
-    onProfileCommentClick: (com.example.kinetixfsl.community.model.UserComment) -> Unit,
     onFeedMenuClick: (Post) -> Unit,
     onOpenPostById: (String) -> Unit,
     feedListState: LazyListState,
     feedViewModel: CommunityFeedViewModel,
-    inboxViewModel: InboxViewModel,
-    /** Unread messages plus unread notifications — the badge on the bell. */
-    inboxUnread: Int,
-    onOpenChat: (conversationId: String, otherUid: String) -> Unit,
-    onScrollToTopAndRefresh: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // No bottom nav any more — Profile, Create and Inbox each moved to their
+    // own entry point (top bar or drawer), so the community screen is just the
+    // feed and its own top bar, full height.
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding(),
     ) {
-        CommunityTopBar(tab = selectedTab, onMenuClick = onMenuClick)
+        CommunityTopBar(
+            onMenuClick = onMenuClick,
+            onCreateClick = onCreateClick,
+            onProfileClick = onProfileClick,
+        )
 
-        Box(modifier = Modifier.weight(1f)) {
-            when (selectedTab) {
-                CommunityTab.HOME -> CommunityFeedContent(
-                    viewModel = feedViewModel,
-                    listState = feedListState,
-                    onCommentClick = onCommentClick,
-                    onPostClick = onPostClick,
-                    onMediaClick = onMediaClick,
-                    onAuthorClick = onAuthorClick,
-                    showCommunityBadge = true,
-                    onOpenCommunity = onOpenCommunity,
-                    isFeedActive = isFeedActive,
-                    onMenuClick = onFeedMenuClick,
-                    onOpenPostById = onOpenPostById,
-                )
-                CommunityTab.PROFILE -> CommunityProfileScreen(
-                    onPostClick = onPostClick,
-                    onEditPost = onEditPost,
-                    onCommentClick = onProfileCommentClick,
-                    onUserClick = onAuthorClick,
-                    onOpenCommunity = onOpenCommunity,
-                )
-                CommunityTab.CREATE -> CreatePostScreen(
-                    onClose = { onTabSelected(CommunityTab.HOME) },
-                )
-                CommunityTab.INBOX -> InboxScreen(
-                    viewModel = inboxViewModel,
-                    onOpenConversation = onOpenChat,
-                    onOpenPost = onOpenPostById,
-                    onOpenProfile = onAuthorClick,
-                )
-            }
-        }
-
-        // Hidden while composing a post: Create's own toolbar handles the
-        // keyboard itself (see CreatePostScreen's imePadding), and floating
-        // Home/Profile/Create/Notifications up above the keyboard alongside it
-        // was more chrome than the moment needs — only the link/image/video
-        // icons should react to the keyboard here.
-        if (selectedTab != CommunityTab.CREATE) {
-            CommunityBottomNav(
-                selectedTab = selectedTab,
-                inboxUnread = inboxUnread,
-                onTabSelected = { tab ->
-                    if (tab == CommunityTab.HOME && selectedTab == CommunityTab.HOME) {
-                        onScrollToTopAndRefresh()
-                    } else {
-                        onTabSelected(tab)
-                    }
-                },
-            )
-        }
+        CommunityFeedContent(
+            modifier = Modifier.weight(1f),
+            viewModel = feedViewModel,
+            listState = feedListState,
+            onCommentClick = onCommentClick,
+            onPostClick = onPostClick,
+            onMediaClick = onMediaClick,
+            onAuthorClick = onAuthorClick,
+            showCommunityBadge = true,
+            onOpenCommunity = onOpenCommunity,
+            isFeedActive = isFeedActive,
+            onMenuClick = onFeedMenuClick,
+            onOpenPostById = onOpenPostById,
+            // No bottom nav to cover the last post any more — inset it past
+            // the system navigation bar, the same as a community's own feed.
+            insetForBottomNav = true,
+        )
     }
 }
 
+/**
+ * Hamburger on the left; on the right, the two actions that used to be
+ * separate bottom-nav tabs — compose a post, and open your own profile.
+ * Nothing switches here: both open as overlays over the feed, so there's no
+ * "which screen am I on" state for this bar to reflect.
+ */
 @Composable
 private fun CommunityTopBar(
-    tab: CommunityTab,
     onMenuClick: () -> Unit,
+    onCreateClick: () -> Unit,
+    onProfileClick: () -> Unit,
 ) {
-    Box(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
-            .padding(horizontal = 12.dp),
+            // A bit more room on the trailing edge than the leading one, so the
+            // create/profile pair sits a little clear of the screen edge rather
+            // than flush against it.
+            .padding(start = 12.dp, end = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (tab == CommunityTab.HOME) {
-            Icon(
-                imageVector = CommunityIcons.Menu,
-                contentDescription = "Open menu",
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .size(32.dp)
-                    .clickable(onClick = onMenuClick),
-            )
-        } else {
-            Text(
-                text = tab.label,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.Center),
-            )
-        }
-    }
-}
-@Composable
-private fun CommunityBottomNav(
-    selectedTab: CommunityTab,
-    inboxUnread: Int,
-    onTabSelected: (CommunityTab) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface),
-    ) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-        Row(
+        Icon(
+            imageVector = CommunityIcons.Menu,
+            contentDescription = "Open menu",
+            tint = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CommunityTab.entries.forEach { tab ->
-                NavItem(
-                    icon = tab.icon,
-                    label = tab.label,
-                    selected = tab == selectedTab,
-                    badgeCount = if (tab == CommunityTab.INBOX) inboxUnread else 0,
-                    onClick = { onTabSelected(tab) },
-                )
-            }
-        }
-    }
-}
-
-
-@Composable
-private fun NavItem(
-    icon: ImageVector,
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    /** Unread count drawn over the icon's top-right. Zero draws nothing. */
-    badgeCount: Int = 0,
-) {
-    val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    Column(
-        modifier = Modifier
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = tint,
-                modifier = Modifier.size(28.dp),
-            )
-            // Offset up and out so the badge clears the bell's outline rather
-            // than sitting on top of it.
-            CountBadge(
-                count = badgeCount,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 8.dp, y = (-4).dp),
-            )
-        }
+                .size(32.dp)
+                .clickable(onClick = onMenuClick),
+        )
+        Spacer(Modifier.weight(1f))
+        Icon(
+            imageVector = CommunityIcons.CreatePost,
+            contentDescription = "Create post",
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .size(26.dp)
+                .clickable(onClick = onCreateClick),
+        )
+        Spacer(Modifier.width(20.dp))
+        Icon(
+            imageVector = CommunityIcons.Profile,
+            contentDescription = "Your profile",
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .size(30.dp)
+                .clickable(onClick = onProfileClick),
+        )
     }
 }
 
@@ -676,4 +610,10 @@ private sealed interface CommunityOverlay {
      * without first waiting on the conversation document to load.
      */
     data class Chat(val conversationId: String, val otherUid: String) : CommunityOverlay
+
+    /** The composer, reached from the top bar's pencil icon. */
+    data object Create : CommunityOverlay
+
+    /** Direct messages and notifications, reached from the drawer. */
+    data object Inbox : CommunityOverlay
 }
