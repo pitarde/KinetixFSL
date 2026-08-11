@@ -810,13 +810,23 @@ fun KinetixNavHost(
                         null
                     } else {
                         {
-                            // Fade to next sign (replaces current)
+                            // Fade to next sign, keeping only ONE Learning Room
+                            // on the back stack no matter how fast Next is
+                            // tapped. Spamming used to stack duplicates: several
+                            // taps fire from this same screen before it
+                            // recomposes, so they all popUpTo the current
+                            // sign — which is already gone after the first tap,
+                            // leaving the rest to pile up. Popping EVERY Learning
+                            // Room entry (by route pattern) + launchSingleTop
+                            // makes each tap collapse to a single entry, so one
+                            // Back always returns to the sign list.
                             navController.navigate(
                                 Route.learningRoom(categoryId, signIndex + 1)
                             ) {
-                                popUpTo(
-                                    Route.learningRoom(categoryId, signIndex)
-                                ) { inclusive = true }
+                                popUpTo(Route.LEARNING_ROOM_PATTERN) {
+                                    inclusive = true
+                                }
+                                launchSingleTop = true
                             }
                         }
                     },
@@ -860,7 +870,25 @@ fun KinetixNavHost(
                         displayName = "$displayPrefix ${sign.name}".trim(),
                         isDynamic = sign.isDynamic,
                         categoryId = categoryId,
-                        onBack = { navController.popBackStack() },
+                        onBack = {
+                            // Back (arrow or device back) returns to this
+                            // sign's Learning Room.
+                            val popped = navController.popBackStack(
+                                Route.learningRoom(categoryId, signIndex),
+                                inclusive = false,
+                            )
+                            if (!popped) {
+                                navController.navigate(
+                                    Route.learningRoom(categoryId, signIndex)
+                                )
+                            }
+                        },
+                        onWatchDemo = {
+                            // The Learning Room for this sign is directly below
+                            // Practice on the back stack, so just pop to it
+                            // instead of pushing a duplicate.
+                            navController.popBackStack()
+                        },
                         onProceed = if (isLastSign) null else {
                             {
                                 // Go to the Learning Room for the next sign

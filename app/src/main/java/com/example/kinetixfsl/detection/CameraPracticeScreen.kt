@@ -1,9 +1,12 @@
 package com.example.kinetixfsl.detection
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.os.SystemClock
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +16,11 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +37,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -36,6 +45,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -49,9 +59,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -59,26 +74,78 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.kinetixfsl.modules.ModulesIcons
+import com.example.kinetixfsl.ui.theme.KinetixError
+import com.example.kinetixfsl.ui.theme.KinetixGreen
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 private const val TAG = "CameraPractice"
 
 private const val CONFIRM_THRESHOLD = 0.65f
 private const val CONFIRM_FRAMES = 4
-private const val FRAME_INTERVAL_MS = 200L
+
+// Anonymous, per-install id — lets admin analysis distinguish "one learner
+// retried 20 times" from "20 different learners each got it in one try"
+// without storing anything personally identifying.
+private const val ANALYTICS_PREFS = "kinetix_analytics"
+private const val KEY_DEVICE_ID = "device_id"
+
+/** Length of one detection session — early-exit on success, this as fallback. */
+private const val DETECTION_WINDOW_MS = 5_000L
+
+// The overlay and the classifier run at DIFFERENT rates on purpose:
+//
+//  - OVERLAY_INTERVAL_MS drives how often MediaPipe runs and the red-dot
+//    skeleton redraws. Fast (~12 fps) so the landmarks keep up with motion.
+//  - CLASSIFIER_FEED_MS is how often a frame is pushed into the sign
+//    classifier. It stays at 5 fps to match the training data
+//    (CAPTURE_FPS = 5.0, 30-frame window). Feeding it faster would fill the
+//    buffer in half the time and break the motion timing the model learned.
+private const val OVERLAY_INTERVAL_MS = 80L
+private const val CLASSIFIER_FEED_MS = 200L
+
+// Feedback accents come from the KinetixFSL brand palette (ui/theme/Color.kt):
+//   success  -> KinetixGreen   (the logo's "correct sign" green)
+//   not-quite -> KinetixError  (the app's feedback colour)
+// Everything else (progress, buttons, surfaces) reads from MaterialTheme so it
+// tracks light/dark automatically.
+
+/** Detection session state machine. */
+private enum class Phase { DETECTING, SUCCESS, TIMEOUT }
 
 /**
  * Camera Practice screen — supports both static and dynamic signs.
  *
- * Static signs: classified per frame (Dense model).
- * Dynamic signs: early classification — starts attempting after 15 frames,
- *   confirms as soon as the motion is recognized with high confidence.
+ * ## Detection model: early-exit on success, timeout as fallback
  *
- * @param isDynamic  If true, uses DynamicSignClassifier (1D-CNN) instead of
- *                   SignClassifier (Dense).
- * @param categoryId Module id from FslSignData ("alphabet", "numbers", ...).
- *                   Selects which static model to load; ignored when
- *                   [isDynamic] is true, since all dynamic signs share one model.
+ * Each attempt is a [DETECTION_WINDOW_MS] session. The landmark buffer runs
+ * continuously and predictions are evaluated in real time:
+ *
+ *  - **Instant success** — the moment the target sign is predicted at or
+ *    above [CONFIRM_THRESHOLD] (dynamic) / for [CONFIRM_FRAMES] frames
+ *    (static), the session ends immediately with a "Correct" result. It
+ *    does not wait for the rest of the window.
+ *  - **Forgiving** — before that, a wrong or low-confidence prediction never
+ *    fails the attempt. The session keeps evaluating so the learner can
+ *    adjust without restarting.
+ *  - **Best-prediction tracking** — the highest-confidence prediction seen
+ *    anywhere in the session is remembered, so a correct sign at second 2
+ *    still counts even if the hands relax afterwards, and a timeout can show
+ *    the closest thing the model saw instead of a blank failure.
+ *  - **Timeout fallback** — if nothing crosses the threshold within the
+ *    window, the session ends gracefully and shows that closest match.
+ *
+ * @param isDynamic   If true, uses DynamicSignClassifier (1D-CNN) instead of
+ *                    SignClassifier (Dense).
+ * @param categoryId  Module id from FslSignData ("alphabet", "numbers", ...).
+ * @param onWatchDemo Optional — re-show the reference demo for this sign.
+ *                    Null hides the "Watch demo" affordances.
  */
 @Composable
 fun CameraPracticeScreen(
@@ -89,8 +156,13 @@ fun CameraPracticeScreen(
     onBack: () -> Unit,
     onProceed: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    onWatchDemo: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+
+    // Device back mirrors the top-bar back: return to the Learning Room
+    // (onBack is wired to do exactly that), from detecting or result view.
+    BackHandler { onBack() }
 
     // ── Permission ──────────────────────────────────────────
     var hasCameraPermission by remember {
@@ -109,21 +181,58 @@ fun CameraPracticeScreen(
         }
     }
 
-    // ── Detection state ─────────────────────────────────────
-    var isConfirmed by remember { mutableStateOf(false) }
+    // ── Detection session state ─────────────────────────────
+    // Bumping sessionId restarts a fresh attempt (Replay / Try again).
+    var sessionId by remember { mutableIntStateOf(0) }
+    var phase by remember { mutableStateOf(Phase.DETECTING) }
+
+    // Live (current-frame) prediction.
     var confidence by remember { mutableFloatStateOf(0f) }
     var detectedLabel by remember { mutableStateOf("") }
+
+    // Best prediction seen anywhere in the session (any label).
+    var bestLabel by remember { mutableStateOf("") }
+    var bestConfidence by remember { mutableFloatStateOf(0f) }
+
     var attempts by remember { mutableIntStateOf(0) }
     var consecutiveHits by remember { mutableIntStateOf(0) }
-    var startTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var finishTime by remember { mutableLongStateOf(0L) }
+    var sessionStart by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var matchTimeMs by remember { mutableLongStateOf(0L) }
 
-    // Dynamic-specific state
-    var dynamicProgress by remember { mutableFloatStateOf(0f) }
-    var dynamicStatus by remember { mutableStateOf("Waiting for hand...") }
+    // Time-based progress across the 5 s window (0f..1f).
+    var timeProgress by remember { mutableFloatStateOf(0f) }
+    var handStatus by remember { mutableStateOf("Keep your hands in the frame") }
 
-    // Landmark overlay state — raw MediaPipe normalized coords (0..1),
-    // one inner list per detected hand.
+    // Last time (uptimeMillis) a frame was pushed into the classifier. The
+    // overlay runs faster than this; the classifier is gated to 5 fps to
+    // match the training window. Held in an AtomicLong because it is read
+    // and written from the camera analyzer thread, not the composition.
+    val lastClassifierFeed = remember { java.util.concurrent.atomic.AtomicLong(0L) }
+
+    // ── Admin-analysis fields (Detection log) ────────────────
+    // "Sign accuracy" is deliberately NOT the same as confidence: confidence
+    // is the model's certainty about a single frame, while sign accuracy is
+    // the fraction of the WHOLE attempt that actually looked like the target
+    // sign — a user who flickers into the right shape for one lucky frame
+    // reads very differently on this metric than one who held it cleanly.
+    var targetMatchFrames by remember { mutableIntStateOf(0) }
+    val seenLabels = remember { mutableSetOf<String>() }
+    var distinctLabelCount by remember { mutableIntStateOf(0) }
+    var retryCount by remember { mutableIntStateOf(0) }
+    var confidenceAtMatch by remember { mutableFloatStateOf(0f) }
+    var framesAtOutcome by remember { mutableIntStateOf(0) }
+    var resultTimestampMs by remember { mutableLongStateOf(0L) }
+
+    // Stable per-install id (not personally identifying) so repeated
+    // attempts by the same learner can be grouped in admin analysis.
+    val deviceSessionId = remember {
+        val prefs = context.getSharedPreferences(ANALYTICS_PREFS, Context.MODE_PRIVATE)
+        prefs.getString(KEY_DEVICE_ID, null) ?: UUID.randomUUID().toString().also { id ->
+            prefs.edit().putString(KEY_DEVICE_ID, id).apply()
+        }
+    }
+
+    // Landmark overlay state — raw MediaPipe normalized coords (0..1).
     var landmarkPoints by remember {
         mutableStateOf<List<List<Triple<Float, Float, Float>>>?>(null)
     }
@@ -153,11 +262,6 @@ fun CameraPracticeScreen(
                 Log.d(TAG, "Loaded STATIC classifier for: $targetLabel ($categoryId)")
             }
         } catch (e: Exception) {
-            // Two very different failures land here and they need different fixes:
-            //   - asset missing        -> the .tflite was never copied into assets/
-            //   - op version too new   -> model converted with a TF newer than the
-            //                             runtime in gradle/libs.versions.toml
-            // Showing the real reason saves a long guessing session.
             Log.e(TAG, "Failed to load ML models for category '$categoryId'", e)
             modelError = "Model failed to load for \"$categoryId\".\n" +
                     (e.message?.take(220) ?: e::class.java.simpleName)
@@ -172,7 +276,50 @@ fun CameraPracticeScreen(
         }
     }
 
+    // ── Session driver: resets trackers, ticks progress, times out ──
+    // Re-keyed on sessionId so Replay / Try again start a clean window.
+    LaunchedEffect(sessionId) {
+        // sessionId 0 is the first attempt; anything after is a retry.
+        if (sessionId > 0) retryCount++
+
+        // Reset for a fresh attempt.
+        dynamicClassifier?.reset()
+        confidence = 0f
+        detectedLabel = ""
+        bestLabel = ""
+        bestConfidence = 0f
+        attempts = 0
+        consecutiveHits = 0
+        targetMatchFrames = 0
+        seenLabels.clear()
+        distinctLabelCount = 0
+        confidenceAtMatch = 0f
+        framesAtOutcome = 0
+        timeProgress = 0f
+        handStatus = "Keep your hands in the frame"
+        sessionStart = System.currentTimeMillis()
+        phase = Phase.DETECTING
+
+        // Tick the time-based progress bar until success or timeout.
+        while (phase == Phase.DETECTING) {
+            val elapsed = System.currentTimeMillis() - sessionStart
+            timeProgress = (elapsed.toFloat() / DETECTION_WINDOW_MS).coerceIn(0f, 1f)
+            if (elapsed >= DETECTION_WINDOW_MS) {
+                framesAtOutcome = dynamicClassifier?.frameCount ?: attempts
+                resultTimestampMs = System.currentTimeMillis()
+                phase = Phase.TIMEOUT
+                break
+            }
+            delay(50)
+        }
+    }
+
+    val detecting = phase == Phase.DETECTING
+
     // ── UI ───────────────────────────────────────────────────
+    // Detecting: a top bar, a large rounded camera card, then the prompt,
+    // progress bar and Watch-demo button stacked below it. Result: the same
+    // top bar over a scrolling result layout.
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -180,329 +327,309 @@ fun CameraPracticeScreen(
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        PracticeTopBar(onBack = onBack)
+        PracticeTopBar(
+            title = "Practice: $displayName",
+            onBack = onBack,
+        )
 
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp),
-        ) {
-            // ── Camera area ─────────────────────────────────
-            Box(
+        if (detecting) {
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(300.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                    .weight(1f)
+                    .padding(horizontal = 20.dp),
             ) {
-                if (hasCameraPermission && !isConfirmed) {
-                    CameraPreview(
-                        onFrame = { bitmap, rotationDegrees ->
-                            if (isConfirmed) {
-                                bitmap.recycle()
-                                return@CameraPreview
-                            }
-
-                            val lh = landmarkHelper
-                            if (lh == null) {
-                                bitmap.recycle()
-                                return@CameraPreview
-                            }
-
-                            try {
-                                val rotated = rotateBitmap(bitmap, rotationDegrees)
-
-                                // Two-handed word signs need the 126-dim encoding;
-                                // everything else keeps the original 63-dim path.
-                                val features: FloatArray?
-                                val rawLandmarks: List<List<Triple<Float, Float, Float>>>?
-                                if (twoHanded) {
-                                    val r = lh.detectTwoHandsWithLandmarks(rotated)
-                                    features = r?.first
-                                    rawLandmarks = r?.second
-                                } else {
-                                    val r = lh.detectAndNormalizeWithLandmarks(rotated)
-                                    features = r?.first
-                                    rawLandmarks = r?.second?.let { listOf(it) }
-                                }
-
-                                if (rotated !== bitmap) rotated.recycle()
-                                bitmap.recycle()
-
-                                // Update landmark overlay (even if null — clears old dots)
-                                landmarkPoints = rawLandmarks
-
-                                if (features != null) {
-                                    if (isDynamic) {
-                                        // ── Dynamic: buffer + early classify ──
-                                        val dc = dynamicClassifier ?: return@CameraPreview
-                                        dc.addFrame(features)
-                                        dynamicProgress = dc.progress
-
-                                        if (dc.canClassify &&
-                                            (dc.frameCount % 3 == 0 || dc.isFull)
-                                        ) {
-                                            val classResult = dc.classify()
-                                            attempts++
-                                            detectedLabel = classResult.label
-                                            confidence = classResult.confidence
-
-                                            dynamicStatus =
-                                                "Analyzing... ${dc.frameCount}/${DynamicSignClassifier.SEQUENCE_LENGTH}"
-
-                                            Log.d(TAG, "DYNAMIC Target=$targetLabel | " +
-                                                    "Predicted=${classResult.label} | " +
-                                                    "Confidence=${(classResult.confidence * 100).toInt()}% | " +
-                                                    "Frames=${dc.frameCount}")
-
-                                            if (classResult.label == targetLabel &&
-                                                classResult.confidence >= CONFIRM_THRESHOLD
-                                            ) {
-                                                isConfirmed = true
-                                                finishTime = System.currentTimeMillis()
-                                            } else if (dc.isFull) {
-                                                dc.reset()
-                                                dynamicProgress = 0f
-                                                dynamicStatus = "Not matched — try again"
-                                            }
-                                        } else {
-                                            dynamicStatus =
-                                                "Recording motion... ${dc.frameCount}/${DynamicSignClassifier.MIN_FRAMES_FOR_EARLY}"
-                                        }
-                                    } else {
-                                        // ── Static: classify per frame ──
-                                        val sc = staticClassifier ?: return@CameraPreview
-                                        val classResult = sc.classify(features)
-                                        attempts++
-                                        detectedLabel = classResult.label
-                                        confidence = classResult.confidence
-
-                                        Log.d(TAG, "STATIC Target=$targetLabel | " +
-                                                "Predicted=${classResult.label} | " +
-                                                "Confidence=${(classResult.confidence * 100).toInt()}% | " +
-                                                "Hits=$consecutiveHits")
-
-                                        if (classResult.label == targetLabel &&
-                                            classResult.confidence >= CONFIRM_THRESHOLD
-                                        ) {
-                                            consecutiveHits++
-                                            if (consecutiveHits >= CONFIRM_FRAMES) {
-                                                isConfirmed = true
-                                                finishTime = System.currentTimeMillis()
-                                            }
-                                        } else {
-                                            consecutiveHits = 0
-                                        }
-                                    }
-                                } else {
-                                    // No hand detected
-                                    landmarkPoints = null
-                                    if (isDynamic) {
-                                        dynamicStatus = "No hand detected — show your hand"
-                                    }
-                                    confidence = 0f
-                                    detectedLabel = ""
-                                    consecutiveHits = 0
-                                }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Frame processing error", e)
-                                bitmap.recycle()
-                            }
-                        },
-                    )
-
-                    // ── Hand landmark overlay ───────────────
-                    // landmarks come from the already-flipped bitmap, so their
-                    // x coords already match the mirrored preview — no extra flip.
-                    HandLandmarkOverlay(
-                        hands = landmarkPoints,
-                        mirrorX = false,
-                    )
-                }
-
-                // Status badge
+                // ── Camera card ─────────────────────────────
                 Box(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp)
+                        .fillMaxWidth()
+                        .weight(1f)
                         .clip(RoundedCornerShape(20.dp))
-                        .background(
-                            if (isConfirmed) Color(0xFF4CAF50)
-                            else Color(0xFF2E7D32)
-                        )
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
                 ) {
-                    Text(
-                        text = if (isConfirmed) "Confirmed" else "Detecting...",
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
+                    if (hasCameraPermission) {
+                        CameraPreview(
+                            onFrame = { bitmap, rotationDegrees ->
+                                if (phase != Phase.DETECTING) {
+                                    bitmap.recycle()
+                                    return@CameraPreview
+                                }
 
-                // Debug overlay — what the model sees
-                if (!isConfirmed && detectedLabel.isNotEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(12.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.Black.copy(alpha = 0.6f))
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
-                    ) {
-                        Text(
-                            text = "Seeing: $detectedLabel (${(confidence * 100).toInt()}%)",
-                            color = Color.White,
-                            style = MaterialTheme.typography.labelSmall,
+                                val lh = landmarkHelper
+                                if (lh == null) {
+                                    bitmap.recycle()
+                                    return@CameraPreview
+                                }
+
+                                try {
+                                    // Monotonic timestamp for VIDEO-mode tracking.
+                                    val tsMs = SystemClock.uptimeMillis()
+                                    val rotated = rotateBitmap(bitmap, rotationDegrees)
+
+                                    val features: FloatArray?
+                                    val rawLandmarks: List<List<Triple<Float, Float, Float>>>?
+                                    if (twoHanded) {
+                                        val r = lh.detectTwoHandsWithLandmarks(rotated, tsMs)
+                                        features = r?.first
+                                        rawLandmarks = r?.second
+                                    } else {
+                                        // Dynamic letters (J, Z, NG, Ñ) need the
+                                        // wrist-preserving encoding to capture motion;
+                                        // static letters stay wrist-zeroed.
+                                        val r = if (isDynamic)
+                                            lh.detectDynamicHandWithLandmarks(rotated, tsMs)
+                                        else
+                                            lh.detectAndNormalizeWithLandmarks(rotated, tsMs)
+                                        features = r?.first
+                                        rawLandmarks = r?.second?.let { listOf(it) }
+                                    }
+
+                                    if (rotated !== bitmap) rotated.recycle()
+                                    bitmap.recycle()
+
+                                    // Overlay redraws every frame (fast path).
+                                    landmarkPoints = rawLandmarks
+
+                                    // Feed the classifier only at 5 fps (training cadence).
+                                    val feedClassifier =
+                                        tsMs - lastClassifierFeed.get() >= CLASSIFIER_FEED_MS
+                                    if (feedClassifier) lastClassifierFeed.set(tsMs)
+
+                                    if (features == null) {
+                                        // No hand: clear overlay + status every frame.
+                                        landmarkPoints = null
+                                        handStatus = "No hand detected — show your hand"
+                                        confidence = 0f
+                                        detectedLabel = ""
+                                        consecutiveHits = 0
+                                    } else if (feedClassifier) {
+                                        if (isDynamic) {
+                                            val dc = dynamicClassifier ?: return@CameraPreview
+                                            dc.addFrame(features)
+
+                                            if (dc.canClassify &&
+                                                (dc.frameCount % 3 == 0 || dc.isFull)
+                                            ) {
+                                                val r = dc.classify()
+                                                attempts++
+                                                detectedLabel = r.label
+                                                confidence = r.confidence
+                                                handStatus = "Detecting your sign..."
+
+                                                // Track best prediction of the session.
+                                                if (r.confidence > bestConfidence) {
+                                                    bestConfidence = r.confidence
+                                                    bestLabel = r.label
+                                                }
+
+                                                // Sign-accuracy bookkeeping: how much of the
+                                                // WHOLE attempt matched the target, and how
+                                                // many different labels the model flip-flopped
+                                                // between (a confusion signal).
+                                                if (r.label == targetLabel) targetMatchFrames++
+                                                seenLabels.add(r.label)
+                                                distinctLabelCount = seenLabels.size
+
+                                                if (r.label == targetLabel &&
+                                                    r.confidence >= CONFIRM_THRESHOLD
+                                                ) {
+                                                    matchTimeMs =
+                                                        System.currentTimeMillis() - sessionStart
+                                                    confidenceAtMatch = r.confidence
+                                                    framesAtOutcome = dc.frameCount
+                                                    resultTimestampMs = System.currentTimeMillis()
+                                                    phase = Phase.SUCCESS
+                                                }
+                                            } else {
+                                                handStatus = "Detecting your sign..."
+                                            }
+                                        } else {
+                                            val sc = staticClassifier ?: return@CameraPreview
+                                            val r = sc.classify(features)
+                                            attempts++
+                                            detectedLabel = r.label
+                                            confidence = r.confidence
+                                            handStatus = "Detecting your sign..."
+
+                                            if (r.confidence > bestConfidence) {
+                                                bestConfidence = r.confidence
+                                                bestLabel = r.label
+                                            }
+
+                                            if (r.label == targetLabel) targetMatchFrames++
+                                            seenLabels.add(r.label)
+                                            distinctLabelCount = seenLabels.size
+
+                                            if (r.label == targetLabel &&
+                                                r.confidence >= CONFIRM_THRESHOLD
+                                            ) {
+                                                consecutiveHits++
+                                                if (consecutiveHits >= CONFIRM_FRAMES) {
+                                                    matchTimeMs =
+                                                        System.currentTimeMillis() - sessionStart
+                                                    confidenceAtMatch = r.confidence
+                                                    framesAtOutcome = attempts
+                                                    resultTimestampMs = System.currentTimeMillis()
+                                                    phase = Phase.SUCCESS
+                                                }
+                                            } else {
+                                                consecutiveHits = 0
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Frame processing error", e)
+                                }
+                            },
                         )
+
+                        HandLandmarkOverlay(hands = landmarkPoints, mirrorX = false)
+
+                        // Centered dashed hand-position guide.
+                        DashedFrameGuide()
+
+                        // Recording pill (pulsing dot), top-left inside the card.
+                        RecordingPill(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(12.dp),
+                        )
+
+                        // Live "seeing" chip, top-right inside the card.
+                        if (detectedLabel.isNotEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(12.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.Black.copy(alpha = 0.55f))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    text = "Seeing: $detectedLabel (${(confidence * 100).toInt()}%)",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+                    }
+
+                    // Model failed to load (e.g. asset not bundled yet).
+                    modelError?.let { message ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.75f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 24.dp),
+                            )
+                        }
                     }
                 }
 
-                // Model failed to load (e.g. asset not bundled yet)
-                modelError?.let { message ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.75f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = message,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 24.dp),
-                        )
-                    }
-                }
+                Spacer(Modifier.height(16.dp))
 
-                // Confirmed overlay
-                if (isConfirmed) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "Sign Confirmed",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = Color(0xFF4CAF50),
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            // ── Confidence bar ──────────────────────────────
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF2E7D32))
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+                // ── Prompt ──────────────────────────────────
                 Text(
-                    text = "Confidence",
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = "${(confidence * 100).toInt()}%",
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-
-            // ── Dynamic: motion progress bar ────────────────
-            if (isDynamic && !isConfirmed) {
-                Spacer(Modifier.height(12.dp))
-
-                Text(
-                    text = dynamicStatus,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Spacer(Modifier.height(4.dp))
-                LinearProgressIndicator(
-                    progress = { dynamicProgress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(8.dp)
-                        .clip(RoundedCornerShape(4.dp)),
-                    color = Color(0xFF4CAF50),
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                )
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            if (!isConfirmed) {
-                // ── Sign prompt ─────────────────────────────
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.primary)
-                        .padding(20.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "Show the sign for",
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                        Text(
-                            text = displayName,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                // ── How to use ──────────────────────────────
-                Text(
-                    text = "How to use:",
+                    text = "Perform the sign for \"$displayName\"",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                     fontWeight = FontWeight.Bold,
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = handStatus,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                )
 
-                val tips = if (isDynamic) {
-                    listOf(
-                        "Ensure good lighting and clear view of your hands.",
-                        "Perform the sign movement slowly and clearly.",
-                        "Keep your hands within the camera frame throughout the motion.",
-                        "The sign will be confirmed as soon as it's recognized — no need to wait for the full bar.",
-                    )
-                } else {
-                    listOf(
-                        "Ensure good lighting and clear view of your hands.",
-                        "Perform sign slow and clear.",
-                        "Keep your hands within the camera frame.",
-                    )
+                Spacer(Modifier.height(14.dp))
+
+                // ── Time-based detection progress bar (5 s) ──
+                LinearProgressIndicator(
+                    progress = { timeProgress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Detecting, up to ${DETECTION_WINDOW_MS / 1000}s",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                // ── Watch demo again (filled brand pill) ────
+                if (onWatchDemo != null) {
+                    Button(
+                        onClick = onWatchDemo,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
+                        shape = RoundedCornerShape(28.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                        ),
+                    ) {
+                        Text(
+                            text = "Watch demo again",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
-                tips.forEachIndexed { index, tip ->
-                    Text(
-                        text = "${index + 1}. $tip",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.padding(bottom = 4.dp),
-                    )
+
+                Spacer(Modifier.height(16.dp))
+            }
+        } else {
+            // ── Result view (SUCCESS or TIMEOUT) ────────────
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp),
+            ) {
+                ResultCard(
+                    success = phase == Phase.SUCCESS,
+                    displayName = displayName,
+                    matchTimeMs = matchTimeMs,
+                    confidence = if (phase == Phase.SUCCESS) confidence else bestConfidence,
+                    closestMatch = bestLabel,
+                    categoryId = categoryId,
+                    onProceed = onProceed,
+                    onRetry = { sessionId++ },
+                    onWatchDemo = onWatchDemo,
+                )
+
+                Spacer(Modifier.height(20.dp))
+
+                // ── Detection log — built for admin analysis, not just  ──
+                // ── on-screen debugging. Every field here is meant to  ──
+                // ── survive being pulled into a spreadsheet/dashboard   ──
+                // ── later: which sign, on which device, how well.       ──
+                val signAccuracy = if (attempts > 0)
+                    targetMatchFrames.toFloat() / attempts else 0f
+                val modelVersion = if (isDynamic)
+                    dynamicClassifier?.modelAssetName
+                else
+                    staticClassifier?.modelAssetName
+                val timestampLabel = remember(resultTimestampMs) {
+                    if (resultTimestampMs == 0L) "—"
+                    else SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                        .format(Date(resultTimestampMs))
                 }
-            } else {
-                // ── Detection log ───────────────────────────
-                val elapsed = ((finishTime - startTime) / 1000).toInt()
+
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -518,78 +645,289 @@ fun CameraPracticeScreen(
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(Modifier.height(8.dp))
-                        LogLine("Attempts", "$attempts")
-                        LogLine("Time finished", "${elapsed}sec")
-                        LogLine("Accurate percentage", "${(confidence * 100).toInt()}%")
-                        LogLine("Confidence", "${(confidence * 100).toInt()}%")
-                        LogLine("Type", if (isDynamic) "Dynamic (1D-CNN)" else "Static (Dense)")
+
+                        LogLine("Target sign", targetLabel)
+                        LogLine("Category", categoryId)
+                        LogLine("Timestamp", timestampLabel)
+                        LogLine("Outcome",
+                            if (phase == Phase.SUCCESS) "Correct" else "Timed out")
+                        if (phase == Phase.SUCCESS) {
+                            LogLine("Matched in",
+                                String.format("%.1fs", matchTimeMs / 1000f))
+                            LogLine("Confidence at match",
+                                "${(confidenceAtMatch * 100).toInt()}%")
+                        }
+                        LogLine("Best prediction",
+                            if (bestLabel.isEmpty()) "—"
+                            else "$bestLabel (${(bestConfidence * 100).toInt()}%)")
+
+                        // Sign accuracy: fraction of the WHOLE attempt (not just the
+                        // matching instant) that read as the target sign — see the
+                        // KDoc on CameraPracticeScreen for why this differs from
+                        // "Confidence at match".
+                        LogLine("Sign accuracy",
+                            "${(signAccuracy * 100).toInt()}% " +
+                                    "($targetMatchFrames/$attempts frames)")
+                        LogLine("Frames classified", "$attempts")
+                        LogLine("Distinct predictions seen", "$distinctLabelCount")
+                        LogLine("Retry count", "$retryCount")
+                        if (isDynamic) {
+                            LogLine("Frames at outcome",
+                                "$framesAtOutcome/${DynamicSignClassifier.SEQUENCE_LENGTH}")
+                        }
+                        LogLine("Model version", modelVersion ?: "—")
+                        LogLine("Session ID", deviceSessionId.take(8))
                     }
                 }
-            }
 
-            Spacer(Modifier.height(24.dp))
-        }
-
-        // ── Proceed button ──────────────────────────────────
-        if (isConfirmed && onProceed != null) {
-            Button(
-                onClick = onProceed,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-                    .height(52.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            ) {
-                Text(
-                    text = when (categoryId) {
-                        "alphabet" -> "Proceed to the next letter"
-                        "numbers" -> "Proceed to the next number"
-                        else -> "Proceed to the next sign"
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Spacer(Modifier.height(24.dp))
             }
         }
     }
 }
 
-// ── Hand Landmark Overlay ──────────────────────────────────────
+// ── Result card ────────────────────────────────────────────────
+
+@Composable
+private fun ResultCard(
+    success: Boolean,
+    displayName: String,
+    matchTimeMs: Long,
+    confidence: Float,
+    closestMatch: String,
+    categoryId: String,
+    onProceed: (() -> Unit)?,
+    onRetry: () -> Unit,
+    onWatchDemo: (() -> Unit)?,
+) {
+    val accent = if (success) KinetixGreen else KinetixError
+
+    Spacer(Modifier.height(20.dp))
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(20.dp),
+    ) {
+        Column {
+            // Status row
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = ModulesIcons.CheckCircle,
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    text = if (success) "Correct" else "Not quite",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = accent,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = displayName,
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = if (success)
+                    "Matched in ${String.format("%.1f", matchTimeMs / 1000f)}s"
+                else if (closestMatch.isNotEmpty())
+                    "Closest match: $closestMatch"
+                else
+                    "No confident match this time",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            // Confidence bar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = "Confidence",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = "${(confidence * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            LinearProgressIndicator(
+                progress = { confidence.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                color = accent,
+                trackColor = MaterialTheme.colorScheme.surface,
+            )
+
+            if (!success) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "Tip: keep your hands inside the frame and hold the " +
+                            "full motion until it's recognized.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                )
+            }
+
+            Spacer(Modifier.height(18.dp))
+
+            // Actions
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (success && onProceed != null) {
+                    Button(
+                        onClick = onProceed,
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                        ),
+                    ) {
+                        Text(
+                            text = when (categoryId) {
+                                "alphabet" -> "Next letter"
+                                "numbers" -> "Next number"
+                                else -> "Next word"
+                            },
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = onRetry,
+                    modifier = Modifier.weight(1f).height(50.dp),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Text(
+                        text = if (success) "Replay" else "Try again",
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+
+                if (!success && onWatchDemo != null) {
+                    OutlinedButton(
+                        onClick = onWatchDemo,
+                        modifier = Modifier.weight(1f).height(50.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    ) {
+                        Text("Watch demo", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Dashed frame guide ─────────────────────────────────────────
 
 /**
- * MediaPipe hand connections — pairs of landmark indices that should
- * be connected by lines, matching the skeleton drawn in Python's
- * mp_draw.draw_landmarks().
+ * A large dashed rounded rectangle in the upper-centre of the camera area,
+ * showing learners where to place their hands before the sign is detected.
  */
+@Composable
+private fun DashedFrameGuide() {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        // A softly portrait rounded box, centred in the camera card.
+        val boxW = size.width * 0.5f
+        val boxH = boxW * 1.25f
+        val left = (size.width - boxW) / 2f
+        val top = (size.height - boxH) / 2f
+
+        drawRoundRect(
+            color = Color.White.copy(alpha = 0.7f),
+            topLeft = Offset(left, top),
+            size = Size(boxW, boxH),
+            cornerRadius = CornerRadius(28f, 28f),
+            style = Stroke(
+                width = 3f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(20f, 16f), 0f),
+            ),
+        )
+    }
+}
+
+// ── Recording pill ─────────────────────────────────────────────
+
+/**
+ * Small translucent pill with a pulsing red dot, indicating the camera is
+ * actively monitoring. Subtle and non-distracting.
+ */
+@Composable
+private fun RecordingPill(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "recording")
+    val dotAlpha by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(700),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "dotAlpha",
+    )
+
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.Black.copy(alpha = 0.5f))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .alpha(dotAlpha)
+                .clip(CircleShape)
+                .background(KinetixError),
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(
+            text = "Recording",
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+// ── Hand Landmark Overlay ──────────────────────────────────────
+
 private val HAND_CONNECTIONS = listOf(
-    // Thumb
     0 to 1, 1 to 2, 2 to 3, 3 to 4,
-    // Index finger
     0 to 5, 5 to 6, 6 to 7, 7 to 8,
-    // Middle finger
     0 to 9, 9 to 10, 10 to 11, 11 to 12,
-    // Ring finger
     0 to 13, 13 to 14, 14 to 15, 15 to 16,
-    // Pinky
     0 to 17, 17 to 18, 18 to 19, 19 to 20,
-    // Palm
     5 to 9, 9 to 13, 13 to 17,
 )
 
 /**
  * Draws the 21-point hand skeleton on top of the camera preview.
  *
- * @param landmarks  List of 21 (x, y, z) triples in MediaPipe's 0..1
- *                   normalized coordinate space. Null = no hand detected.
- * @param isFrontCamera  If true, x is mirrored (1 - x) so the overlay
- *                       matches the mirrored preview the user sees.
+ * @param hands    One inner list of 21 (x, y, z) triples per detected hand,
+ *                 in MediaPipe's 0..1 normalized space. Null = no hand.
+ * @param mirrorX  If true, x is mirrored (1 - x) to match a mirrored preview.
  */
 @Composable
-private fun HandLandmarkOverlay(
+internal fun HandLandmarkOverlay(
     hands: List<List<Triple<Float, Float, Float>>>?,
     mirrorX: Boolean,
 ) {
@@ -608,7 +946,6 @@ private fun HandLandmarkOverlay(
         for (landmarks in hands) {
             if (landmarks.size < 21) continue
 
-            // Draw connections (white lines)
             for ((a, b) in HAND_CONNECTIONS) {
                 drawLine(
                     color = Color.White,
@@ -618,13 +955,8 @@ private fun HandLandmarkOverlay(
                 )
             }
 
-            // Draw landmark dots (red circles)
             for (lm in landmarks) {
-                drawCircle(
-                    color = Color.Red,
-                    radius = 6f,
-                    center = toScreen(lm),
-                )
+                drawCircle(color = Color.Red, radius = 6f, center = toScreen(lm))
             }
         }
     }
@@ -633,9 +965,18 @@ private fun HandLandmarkOverlay(
 // ── Shared composables ──────────────────────────────────────────
 
 @Composable
-private fun PracticeTopBar(onBack: () -> Unit) {
+private fun PracticeTopBar(
+    title: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    overCamera: Boolean = false,
+) {
+    // Over the camera, use white so the bar stays legible on any scene;
+    // on the result view fall back to the theme's foreground colour.
+    val tint = if (overCamera) Color.White else MaterialTheme.colorScheme.onBackground
+
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(56.dp)
             .padding(horizontal = 12.dp),
@@ -644,17 +985,18 @@ private fun PracticeTopBar(onBack: () -> Unit) {
         Icon(
             imageVector = ModulesIcons.ArrowBack,
             contentDescription = "Go back",
-            tint = MaterialTheme.colorScheme.onBackground,
+            tint = tint,
             modifier = Modifier
                 .size(28.dp)
                 .clickable(onClick = onBack),
         )
         Spacer(Modifier.size(12.dp))
         Text(
-            text = "Learning Room",
+            text = title,
             style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = tint,
             fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f),
         )
     }
 }
@@ -669,19 +1011,35 @@ private fun LogLine(label: String, value: String) {
     )
 }
 
-private fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
+internal fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
     if (degrees == 0) return bitmap
     val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
     return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
 }
 
 @Composable
-private fun CameraPreview(
+internal fun CameraPreview(
     onFrame: (Bitmap, Int) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val executor = remember { Executors.newSingleThreadExecutor() }
+
+    // The camera binds to the host lifecycle, which for a Home TAB outlives
+    // this composable. So we MUST stop it ourselves on dispose — otherwise the
+    // analyzer keeps firing onFrame after the caller has closed its detector,
+    // which is a native (uncatchable) crash. `active` also gates the callback
+    // so no frame sneaks through during teardown.
+    val active = remember { AtomicBoolean(true) }
+    val providerRef = remember { AtomicReference<ProcessCameraProvider?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            active.set(false)
+            runCatching { providerRef.get()?.unbindAll() }
+            runCatching { executor.shutdown() }
+        }
+    }
 
     AndroidView(
         factory = { ctx ->
@@ -691,7 +1049,11 @@ private fun CameraPreview(
 
             val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
             cameraProviderFuture.addListener({
+                // The composable may have been disposed before the provider
+                // finished loading — don't bind a camera nobody is showing.
+                if (!active.get()) return@addListener
                 val cameraProvider = cameraProviderFuture.get()
+                providerRef.set(cameraProvider)
 
                 val preview = Preview.Builder().build().also {
                     it.surfaceProvider = previewView.surfaceProvider
@@ -705,8 +1067,12 @@ private fun CameraPreview(
                 var lastProcessedTime = 0L
 
                 imageAnalysis.setAnalyzer(executor) { imageProxy ->
+                    if (!active.get()) {
+                        imageProxy.close()
+                        return@setAnalyzer
+                    }
                     val now = System.currentTimeMillis()
-                    if (now - lastProcessedTime < FRAME_INTERVAL_MS) {
+                    if (now - lastProcessedTime < OVERLAY_INTERVAL_MS) {
                         imageProxy.close()
                         return@setAnalyzer
                     }
@@ -716,8 +1082,10 @@ private fun CameraPreview(
                     val rotation = imageProxy.imageInfo.rotationDegrees
                     imageProxy.close()
 
-                    if (bitmap != null) {
+                    if (bitmap != null && active.get()) {
                         onFrame(bitmap, rotation)
+                    } else {
+                        bitmap?.recycle()
                     }
                 }
 

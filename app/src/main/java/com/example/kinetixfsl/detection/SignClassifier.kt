@@ -29,10 +29,22 @@ class SignClassifier(
     private val interpreter: Interpreter
     private val labels: List<String>
 
+    /** Asset filename of the loaded model — tag detection logs with this. */
+    val modelAssetName: String = modelAsset
+
     init {
         val model = loadModel(context, modelAsset)
         interpreter = Interpreter(model)
         labels = loadLabels(context, labelsAsset)
+
+        // Guard against a mismatched model/labels pair (e.g. only one of the
+        // two files re-copied after a retrain). Without this, the mismatch
+        // only surfaces later as a hard failure inside interpreter.run.
+        val outCount = interpreter.getOutputTensor(0).shape().last()
+        require(outCount == labels.size) {
+            "Model '$modelAsset' outputs $outCount classes but '$labelsAsset' " +
+                    "has ${labels.size} labels — re-copy the matching pair."
+        }
     }
 
     /**

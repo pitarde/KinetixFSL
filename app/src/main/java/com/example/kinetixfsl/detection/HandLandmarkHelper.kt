@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import kotlin.math.sqrt
@@ -31,8 +32,14 @@ class HandLandmarkHelper(
             .setModelAssetPath("hand_landmarker.task")
             .build()
 
+        // VIDEO running mode keeps a tracker between frames, so most frames
+        // skip the heavy palm-detection pass and only re-run the landmark
+        // model on the tracked hand. That is the difference between a laggy
+        // overlay and one that keeps up with fast motion. It requires each
+        // detectForVideo() call to carry a strictly increasing timestamp.
         val options = HandLandmarker.HandLandmarkerOptions.builder()
             .setBaseOptions(baseOptions)
+            .setRunningMode(RunningMode.VIDEO)
             .setNumHands(numHands)
             .setMinHandDetectionConfidence(0.7f)
             .setMinHandPresenceConfidence(0.7f)
@@ -50,7 +57,11 @@ class HandLandmarkHelper(
      *                       match a natural (non-mirrored) hand orientation.
      * @return 63-dim normalized feature vector, or null if no hand was detected.
      */
-    fun detectAndNormalize(bitmap: Bitmap, isFrontCamera: Boolean = true): FloatArray? {
+    fun detectAndNormalize(
+        bitmap: Bitmap,
+        timestampMs: Long,
+        isFrontCamera: Boolean = true,
+    ): FloatArray? {
         val processedBitmap = if (isFrontCamera) {
             val matrix = Matrix().apply { preScale(-1f, 1f) }
             Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, false)
@@ -59,7 +70,7 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult = handLandmarker.detect(mpImage)
+        val result: HandLandmarkerResult = handLandmarker.detectForVideo(mpImage, timestampMs)
 
         if (result.landmarks().isEmpty()) return null
 
@@ -75,6 +86,7 @@ class HandLandmarkHelper(
      */
     fun detectAndNormalizeWithLandmarks(
         bitmap: Bitmap,
+        timestampMs: Long,
         isFrontCamera: Boolean = true,
     ): Pair<FloatArray, List<Triple<Float, Float, Float>>>? {
         val processedBitmap = if (isFrontCamera) {
@@ -85,7 +97,7 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult = handLandmarker.detect(mpImage)
+        val result: HandLandmarkerResult = handLandmarker.detectForVideo(mpImage, timestampMs)
 
         if (result.landmarks().isEmpty()) return null
 
@@ -97,6 +109,52 @@ class HandLandmarkHelper(
         }
 
         return Pair(features, rawLandmarks)
+    }
+
+    /**
+     * Dynamic single-hand variant for the MOTION letters (J, Z, NG, Ñ).
+     *
+     * Same 63-dim layout as [detectAndNormalizeWithLandmarks], with one
+     * deliberate difference: landmark 0 carries the **raw wrist position**
+     * (0..1 image space) instead of being zeroed. That single slot is what
+     * lets the sequence model see the hand's PATH across the frame, not just
+     * how the fingers curl — which is exactly what a motion letter is made
+     * of. Static letters must NOT use this (a pose has no trajectory); they
+     * keep the wrist-zeroed [detectAndNormalizeWithLandmarks].
+     *
+     * Reuses the two-handed word-sign encoder [encodeHand], so a dynamic
+     * letter and a word sign describe motion the same way.
+     *
+     * @return Pair of (63-dim features, 21 raw (x, y, z) triples for the
+     *         overlay), or null if no hand was detected.
+     */
+    fun detectDynamicHandWithLandmarks(
+        bitmap: Bitmap,
+        timestampMs: Long,
+        isFrontCamera: Boolean = true,
+    ): Pair<FloatArray, List<Triple<Float, Float, Float>>>? {
+        val processedBitmap = if (isFrontCamera) {
+            val matrix = Matrix().apply { preScale(-1f, 1f) }
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, false)
+        } else {
+            bitmap
+        }
+
+        val mpImage = BitmapImageBuilder(processedBitmap).build()
+        val result: HandLandmarkerResult = handLandmarker.detectForVideo(mpImage, timestampMs)
+
+        if (result.landmarks().isEmpty()) return null
+
+        // Raw landmarks per hand; keep the leftmost for determinism.
+        val hands = result.landmarks().map { hand ->
+            hand.map { lm -> Triple(lm.x(), lm.y(), lm.z()) }
+        }
+        val hand = if (hands.size >= 2) hands.sortedBy { it[0].first }[0] else hands[0]
+
+        val features = FloatArray(SINGLE_HAND_FEATURES)
+        encodeHand(hand, features, 0)  // index 0 = raw wrist, 1..20 relative
+
+        return Pair(features, hand)
     }
 
     /**
@@ -131,6 +189,7 @@ class HandLandmarkHelper(
      */
     fun detectTwoHandsWithLandmarks(
         bitmap: Bitmap,
+        timestampMs: Long,
         isFrontCamera: Boolean = true,
     ): Pair<FloatArray, List<List<Triple<Float, Float, Float>>>>? {
         val processedBitmap = if (isFrontCamera) {
@@ -141,7 +200,7 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult = handLandmarker.detect(mpImage)
+        val result: HandLandmarkerResult = handLandmarker.detectForVideo(mpImage, timestampMs)
 
         if (result.landmarks().isEmpty()) return null
 

@@ -1,0 +1,4 @@
+# Offline tutorial videos
+# Drop one MP4 per sign here, named EXACTLY as the sign id + .mp4
+# e.g. alpha_a.mp4, num_0.mp4, greet_kamusta.mp4, school_pagaaral.mp4
+# res/raw names must be lowercase letters, digits and underscores only.

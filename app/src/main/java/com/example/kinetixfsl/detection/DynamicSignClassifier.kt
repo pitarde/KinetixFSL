@@ -38,6 +38,9 @@ class DynamicSignClassifier(
     private val interpreter: Interpreter
     private val labels: List<String>
 
+    /** Asset filename of the loaded model — tag detection logs with this. */
+    val modelAssetName: String = modelAsset
+
     private val buffer = ArrayList<FloatArray>(SEQUENCE_LENGTH)
     private val zeroFrame = FloatArray(numFeatures)
 
@@ -45,6 +48,15 @@ class DynamicSignClassifier(
         val model = loadModel(context, modelAsset)
         interpreter = Interpreter(model)
         labels = loadLabels(context, labelsAsset)
+
+        // Guard against a mismatched model/labels pair (e.g. only one of the
+        // two files re-copied after a retrain). Without this, the mismatch
+        // only surfaces later as a hard failure inside interpreter.run.
+        val outCount = interpreter.getOutputTensor(0).shape().last()
+        require(outCount == labels.size) {
+            "Model '$modelAsset' outputs $outCount classes but '$labelsAsset' " +
+                    "has ${labels.size} labels — re-copy the matching pair."
+        }
     }
 
     data class Result(
@@ -55,22 +67,34 @@ class DynamicSignClassifier(
     /** True once enough frames are buffered to start classifying. */
     val canClassify: Boolean get() = buffer.size >= MIN_FRAMES_FOR_EARLY
 
-    /** True when the buffer is completely full. */
+    /** True when the buffer holds a full [SEQUENCE_LENGTH] window. */
     val isFull: Boolean get() = buffer.size >= SEQUENCE_LENGTH
 
     val frameCount: Int get() = buffer.size
     val progress: Float get() = buffer.size.toFloat() / SEQUENCE_LENGTH
 
     /**
-     * Adds a frame. Keeps accepting frames until the buffer is full.
+     * Adds a frame to the rolling window.
+     *
+     * The buffer behaves as a sliding window of the most recent
+     * [SEQUENCE_LENGTH] frames: once full, the oldest frame is dropped so
+     * the newest can be appended. This keeps classification running
+     * continuously for as long as the user is attempting a sign, instead
+     * of filling up once and then going stale — the caller decides when
+     * the detection session ends (e.g. a fixed timeout) and calls [reset].
+     *
+     * The 1D-CNN pools over the whole time axis and was trained on
+     * zero-padded partial windows, so a window whose sign does not start
+     * exactly at frame 0 still classifies well.
      */
     fun addFrame(features: FloatArray) {
         require(features.size == numFeatures) {
             "Expected $numFeatures features, got ${features.size}"
         }
-        if (buffer.size < SEQUENCE_LENGTH) {
-            buffer.add(features)
+        if (buffer.size >= SEQUENCE_LENGTH) {
+            buffer.removeAt(0)   // slide: drop the oldest frame
         }
+        buffer.add(features)
     }
 
     /**
@@ -172,9 +196,13 @@ class DynamicSignClassifier(
         const val GREETINGS_MODEL = "fsl_greetings.tflite"
         const val GREETINGS_LABELS = "fsl_greetings_labels.txt"
 
-        // Basic Responses: Oo, Hindi, Hintay, Sige.
-        const val RESPONSES_MODEL = "fsl_responses.tflite"
-        const val RESPONSES_LABELS = "fsl_responses_labels.txt"
+        // School: Pag-aaral, Basahin, Paaralan, Mag-aaral.
+        const val SCHOOL_MODEL = "fsl_school.tflite"
+        const val SCHOOL_LABELS = "fsl_school_labels.txt"
+
+        // Inquiries & Status: Magkano, Tulong, Problema, Pakiusap.
+        const val INQUIRIES_MODEL = "fsl_inquiries.tflite"
+        const val INQUIRIES_LABELS = "fsl_inquiries_labels.txt"
 
         private data class Spec(
             val model: String,
@@ -198,7 +226,8 @@ class DynamicSignClassifier(
          */
         private fun specFor(categoryId: String): Spec = when (categoryId) {
             "greetings" -> Spec(GREETINGS_MODEL, GREETINGS_LABELS, TWO_HAND_FEATURES)
-            "responses" -> Spec(RESPONSES_MODEL, RESPONSES_LABELS, TWO_HAND_FEATURES)
+            "school" -> Spec(SCHOOL_MODEL, SCHOOL_LABELS, TWO_HAND_FEATURES)
+            "inquiries" -> Spec(INQUIRIES_MODEL, INQUIRIES_LABELS, TWO_HAND_FEATURES)
             else -> Spec(LETTERS_MODEL, LETTERS_LABELS, SINGLE_HAND_FEATURES)
         }
 

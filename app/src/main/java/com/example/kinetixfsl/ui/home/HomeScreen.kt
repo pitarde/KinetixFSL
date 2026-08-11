@@ -36,11 +36,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.kinetixfsl.detection.MainCameraScreen
 import com.example.kinetixfsl.modules.ModulesScreen
-import com.example.kinetixfsl.ui.home.tabs.CameraTabPlaceholder
 import com.example.kinetixfsl.ui.home.tabs.GameTabPlaceholder
 import com.example.kinetixfsl.ui.home.tabs.ProfileTabPlaceholder
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+import androidx.activity.compose.BackHandler
 import kotlinx.coroutines.launch
 
 @Composable
@@ -68,6 +69,18 @@ fun HomeScreen(
     // rememberSaveable keeps the selected tab alive across navigation
     // (navigate to SignList → press back → still on Modules tab, not Home).
     var selectedTab by rememberSaveable { mutableStateOf(HomeTab.HOME) }
+
+    // Back from any non-Home tab (Modules, Camera, Game, Profile) returns to
+    // the Dashboard instead of exiting the app. If the drawer is open, back
+    // closes it first. On the Home tab with the drawer closed, this handler is
+    // disabled so the system default (exit) applies.
+    BackHandler(enabled = drawerState.isOpen || selectedTab != HomeTab.HOME) {
+        if (drawerState.isOpen) {
+            scope.launch { drawerState.close() }
+        } else {
+            selectedTab = HomeTab.HOME
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -161,7 +174,7 @@ private fun HomeScaffold(
                         onNavigateToSignList(category.id)
                     },
                 )
-                HomeTab.CAMERA -> CameraTabPlaceholder()
+                HomeTab.CAMERA -> MainCameraScreen()
                 HomeTab.GAME -> GameTabPlaceholder()
                 HomeTab.PROFILE -> ProfileTabPlaceholder(onSignOut = onSignOut)
             }

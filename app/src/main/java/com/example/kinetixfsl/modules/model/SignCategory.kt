@@ -80,7 +80,7 @@ object FslSignData {
         // ── 2. Numbers 0–9 ──────────────────────────────────────
         SignCategory(
             id = "numbers",
-            title = "Numbers in Filipino",
+            title = "Numbers 0-9",
             signs = listOf(
                 SignEntry(
                     id = "num_0",
@@ -178,7 +178,7 @@ object FslSignData {
         // ── 3. Greetings & Courtesies ────────────────────────────
         SignCategory(
             id = "greetings",
-            title = "Greetings & Courtesies",
+            title = "Greetings",
             signs = listOf(
                 SignEntry(id = "greet_kamusta", name = "Kamusta", isDynamic = true),
                 SignEntry(id = "greet_salamat", name = "Salamat", isDynamic = true),
@@ -187,55 +187,17 @@ object FslSignData {
             ),
         ),
 
-        // ── 4. Basic Responses ───────────────────────────────────
+        // ── 4. School ────────────────────────────────────────────
         SignCategory(
-            id = "responses",
-            title = "Basic Responses",
+            id = "school",
+            title = "School",
+            // Steps intentionally left blank for all signs — video-based step
+            // guidance will be added after all categories are trained.
             signs = listOf(
-                SignEntry(
-                    id = "resp_oo",
-                    name = "Oo",
-                    isDynamic = true,
-                    steps = listOf(
-                        "Make a fist with your dominant hand, palm facing forward.",
-                        "Keep your thumb resting along the side of your index finger.",
-                        "Nod the fist down and up from the wrist, like a head nodding \"yes\".",
-                        "Repeat the nod two or three times, then return to rest.",
-                    ),
-                ),
-                SignEntry(
-                    id = "resp_hindi",
-                    name = "Hindi",
-                    isDynamic = true,
-                    steps = listOf(
-                        "Hold your dominant hand up, palm facing forward.",
-                        "Extend your index and middle fingers together with your thumb out.",
-                        "Snap the two fingers down to meet the thumb, closing the hand.",
-                        "Do it once, crisply, then return to rest.",
-                    ),
-                ),
-                SignEntry(
-                    id = "resp_hintay",
-                    name = "Hintay",
-                    isDynamic = true,
-                    steps = listOf(
-                        "Raise both hands in front of you, palms facing up.",
-                        "Spread your fingers apart, dominant hand slightly ahead of the other.",
-                        "Wiggle your fingers while holding the hands in place.",
-                        "Keep both hands inside the frame for the whole motion.",
-                    ),
-                ),
-                SignEntry(
-                    id = "resp_sige",
-                    name = "Sige",
-                    isDynamic = true,
-                    steps = listOf(
-                        "Make a fist with your dominant hand, palm facing forward.",
-                        "Extend your thumb straight up.",
-                        "Move the hand slightly forward and down in a short, firm motion.",
-                        "Return to a neutral rest position.",
-                    ),
-                ),
+                SignEntry(id = "school_pagaaral", name = "Pag-aaral", isDynamic = true),
+                SignEntry(id = "school_basahin", name = "Basahin", isDynamic = true),
+                SignEntry(id = "school_paaralan", name = "Paaralan", isDynamic = true),
+                SignEntry(id = "school_magaaral", name = "Mag-aaral", isDynamic = true),
             ),
         ),
 
@@ -245,9 +207,9 @@ object FslSignData {
             title = "Inquiries & Status",
             signs = listOf(
                 SignEntry(id = "inq_magkano", name = "Magkano", isDynamic = true),
-                SignEntry(id = "inq_ilan", name = "Ilan", isDynamic = true),
+                SignEntry(id = "inq_tulong", name = "Tulong", isDynamic = true),
                 SignEntry(id = "inq_problema", name = "Problema", isDynamic = true),
-                SignEntry(id = "inq_kamusta", name = "Kamusta", isDynamic = true),
+                SignEntry(id = "inq_pakiusap", name = "Pakiusap", isDynamic = true),
             ),
         ),
 
