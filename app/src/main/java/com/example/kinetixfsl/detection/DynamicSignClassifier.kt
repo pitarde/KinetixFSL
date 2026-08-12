@@ -91,10 +91,14 @@ class DynamicSignClassifier(
         require(features.size == numFeatures) {
             "Expected $numFeatures features, got ${features.size}"
         }
-        if (buffer.size >= SEQUENCE_LENGTH) {
-            buffer.removeAt(0)   // slide: drop the oldest frame
+        // Synchronized because frames arrive on the camera analyzer thread
+        // while reset() can run on the main thread (mode switch / new session).
+        synchronized(this) {
+            if (buffer.size >= SEQUENCE_LENGTH) {
+                buffer.removeAt(0)   // slide: drop the oldest frame
+            }
+            buffer.add(features)
         }
-        buffer.add(features)
     }
 
     /**
@@ -112,17 +116,25 @@ class DynamicSignClassifier(
             "Need at least $MIN_FRAMES_FOR_EARLY frames, have ${buffer.size}"
         }
 
-        // Build the (1, SEQUENCE_LENGTH, numFeatures) input tensor.
-        // Frames beyond buffer.size are left as zeros (padding).
-        val input = Array(1) {
-            Array(SEQUENCE_LENGTH) { i ->
-                if (i < buffer.size) buffer[i]
-                else zeroFrame
-            }
-        }
         val output = Array(1) { FloatArray(labels.size) }
 
+        // Guarded the same way as HandLandmarkHelper: the camera analyzer
+        // calls this on a background thread while close() may run on the main
+        // thread during disposal. Running a closed interpreter is fatal, so a
+        // late frame returns an empty result instead. The input tensor is
+        // built inside the lock too, so reset() cannot shrink the buffer
+        // midway through reading it.
         synchronized(this) {
+            if (closed) return Result("", 0f)
+
+            // Build the (1, SEQUENCE_LENGTH, numFeatures) input tensor.
+            // Frames beyond buffer.size are left as zeros (padding).
+            val input = Array(1) {
+                Array(SEQUENCE_LENGTH) { i ->
+                    if (i < buffer.size) buffer[i]
+                    else zeroFrame
+                }
+            }
             interpreter.run(input, output)
         }
 
@@ -138,11 +150,16 @@ class DynamicSignClassifier(
         )
     }
 
-    fun reset() {
+    fun reset() = synchronized(this) {
         buffer.clear()
     }
 
-    fun close() {
+    @Volatile
+    private var closed = false
+
+    fun close() = synchronized(this) {
+        if (closed) return@synchronized
+        closed = true
         interpreter.close()
     }
 
@@ -200,9 +217,17 @@ class DynamicSignClassifier(
         const val SCHOOL_MODEL = "fsl_school.tflite"
         const val SCHOOL_LABELS = "fsl_school_labels.txt"
 
-        // Inquiries & Status: Magkano, Tulong, Problema, Pakiusap.
-        const val INQUIRIES_MODEL = "fsl_inquiries.tflite"
-        const val INQUIRIES_LABELS = "fsl_inquiries_labels.txt"
+        // Emergency: Danger, Stop, Calm down, Accident.
+        const val EMERGENCY_MODEL = "fsl_emergency.tflite"
+        const val EMERGENCY_LABELS = "fsl_emergency_labels.txt"
+
+        // Daily Needs: Eat, Drink, Sleep, Hungry.
+        const val DAILYNEEDS_MODEL = "fsl_dailyneeds.tflite"
+        const val DAILYNEEDS_LABELS = "fsl_dailyneeds_labels.txt"
+
+        // Social Interaction: Oo, Hindi, Kaibigan, Patawad.
+        const val SOCIAL_MODEL = "fsl_social.tflite"
+        const val SOCIAL_LABELS = "fsl_social_labels.txt"
 
         private data class Spec(
             val model: String,
@@ -227,7 +252,9 @@ class DynamicSignClassifier(
         private fun specFor(categoryId: String): Spec = when (categoryId) {
             "greetings" -> Spec(GREETINGS_MODEL, GREETINGS_LABELS, TWO_HAND_FEATURES)
             "school" -> Spec(SCHOOL_MODEL, SCHOOL_LABELS, TWO_HAND_FEATURES)
-            "inquiries" -> Spec(INQUIRIES_MODEL, INQUIRIES_LABELS, TWO_HAND_FEATURES)
+            "emergency" -> Spec(EMERGENCY_MODEL, EMERGENCY_LABELS, TWO_HAND_FEATURES)
+            "dailyneeds" -> Spec(DAILYNEEDS_MODEL, DAILYNEEDS_LABELS, TWO_HAND_FEATURES)
+            "social" -> Spec(SOCIAL_MODEL, SOCIAL_LABELS, TWO_HAND_FEATURES)
             else -> Spec(LETTERS_MODEL, LETTERS_LABELS, SINGLE_HAND_FEATURES)
         }
 

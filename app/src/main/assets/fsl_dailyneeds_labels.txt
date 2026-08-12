@@ -1,0 +1,4 @@
+Drink
+Eat
+Hungry
+Sleep

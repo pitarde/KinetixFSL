@@ -27,6 +27,21 @@ class HandLandmarkHelper(
 
     private val handLandmarker: HandLandmarker
 
+    /**
+     * Guards the native detector against use-after-close.
+     *
+     * The camera analyzer calls the detect methods on a background thread,
+     * while [close] runs on the main thread when the screen leaves
+     * composition (e.g. switching Home tabs). Without this lock a frame that
+     * is already inside `detectForVideo` when `close()` lands would touch a
+     * freed native handle — an uncatchable crash that takes the app down.
+     *
+     * Every detect call and [close] take [lock]; [closed] makes a late frame
+     * return null instead of running.
+     */
+    private val lock = Any()
+    private var closed = false
+
     init {
         val baseOptions = BaseOptions.builder()
             .setModelAssetPath("hand_landmarker.task")
@@ -70,7 +85,8 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult = handLandmarker.detectForVideo(mpImage, timestampMs)
+        val result: HandLandmarkerResult =
+            detectLocked(mpImage, timestampMs) ?: return null
 
         if (result.landmarks().isEmpty()) return null
 
@@ -97,7 +113,8 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult = handLandmarker.detectForVideo(mpImage, timestampMs)
+        val result: HandLandmarkerResult =
+            detectLocked(mpImage, timestampMs) ?: return null
 
         if (result.landmarks().isEmpty()) return null
 
@@ -141,7 +158,8 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult = handLandmarker.detectForVideo(mpImage, timestampMs)
+        val result: HandLandmarkerResult =
+            detectLocked(mpImage, timestampMs) ?: return null
 
         if (result.landmarks().isEmpty()) return null
 
@@ -200,7 +218,8 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult = handLandmarker.detectForVideo(mpImage, timestampMs)
+        val result: HandLandmarkerResult =
+            detectLocked(mpImage, timestampMs) ?: return null
 
         if (result.landmarks().isEmpty()) return null
 
@@ -321,7 +340,30 @@ class HandLandmarkHelper(
         return features
     }
 
-    fun close() {
+    /**
+     * Runs the detector under [lock], returning null once [close] has run.
+     *
+     * This is the single point where the native handle is touched, so a frame
+     * already in flight when the screen is disposed either finishes first
+     * (close waits) or is skipped (closed == true) — never both at once.
+     */
+    private fun detectLocked(
+        mpImage: com.google.mediapipe.framework.image.MPImage,
+        timestampMs: Long,
+    ): HandLandmarkerResult? = synchronized(lock) {
+        if (closed) return@synchronized null
+        try {
+            handLandmarker.detectForVideo(mpImage, timestampMs)
+        } catch (e: Exception) {
+            // A stale/duplicate timestamp after a mode switch is recoverable;
+            // dropping the frame is better than taking the app down.
+            null
+        }
+    }
+
+    fun close() = synchronized(lock) {
+        if (closed) return@synchronized
+        closed = true
         handLandmarker.close()
     }
 

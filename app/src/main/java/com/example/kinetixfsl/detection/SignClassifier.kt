@@ -74,7 +74,12 @@ class SignClassifier(
         val input = arrayOf(features)
         val output = Array(1) { FloatArray(labels.size) }
 
+        // Guarded the same way as HandLandmarkHelper: the camera analyzer
+        // calls this on a background thread while close() may run on the main
+        // thread during disposal. Running a closed interpreter is fatal, so a
+        // late frame returns an empty result instead.
         synchronized(this) {
+            if (closed) return Result("", 0f)
             interpreter.run(input, output)
         }
 
@@ -86,7 +91,12 @@ class SignClassifier(
         )
     }
 
-    fun close() {
+    @Volatile
+    private var closed = false
+
+    fun close() = synchronized(this) {
+        if (closed) return@synchronized
+        closed = true
         interpreter.close()
     }
 

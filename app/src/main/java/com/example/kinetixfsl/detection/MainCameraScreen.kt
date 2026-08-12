@@ -86,11 +86,11 @@ private val MODES = listOf(
     CameraMode("Motion Letters", "alphabet", isDynamic = true),
     CameraMode("Numbers", "numbers", isDynamic = false),
     CameraMode("Greetings", "greetings", isDynamic = true),
+    CameraMode("School", "school", isDynamic = true),
     // Not trained yet — show a friendly notice instead of loading.
-    CameraMode("School", "school", isDynamic = true, available = false),
-    CameraMode("Inquiries", "inquiries", isDynamic = true, available = false),
-    CameraMode("Commerce", "commerce", isDynamic = true, available = false),
-    CameraMode("Everyday", "everyday", isDynamic = true, available = false),
+    CameraMode("Emergency", "emergency", isDynamic = true, available = false),
+    CameraMode("Daily Needs", "dailyneeds", isDynamic = true, available = false),
+    CameraMode("Social", "social", isDynamic = true, available = false),
 )
 
 private fun isTwoHanded(mode: CameraMode): Boolean =
@@ -337,7 +337,7 @@ fun MainCameraScreen(modifier: Modifier = Modifier) {
                 .padding(vertical = 16.dp),
         ) {
             Text(
-                text = "Detected — ${mode.label} mode",
+                text = "Detected — ${mode.label}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             )
@@ -379,7 +379,7 @@ fun MainCameraScreen(modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Pick a mode above, then sign.",
+                text = "Pick a mode above and then sign.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             )

@@ -201,39 +201,45 @@ object FslSignData {
             ),
         ),
 
-        // ── 5. Inquiries & Status ────────────────────────────────
+        // ── 5. Emergency ──────────────────────────────────────────
         SignCategory(
-            id = "inquiries",
-            title = "Inquiries & Status",
+            id = "emergency",
+            title = "Emergency",
+            // Steps intentionally left blank — video-based step guidance
+            // will be added after all categories are trained.
             signs = listOf(
-                SignEntry(id = "inq_magkano", name = "Magkano", isDynamic = true),
-                SignEntry(id = "inq_tulong", name = "Tulong", isDynamic = true),
-                SignEntry(id = "inq_problema", name = "Problema", isDynamic = true),
-                SignEntry(id = "inq_pakiusap", name = "Pakiusap", isDynamic = true),
+                SignEntry(id = "emer_danger", name = "Danger", isDynamic = true),
+                SignEntry(id = "emer_stop", name = "Stop", isDynamic = true),
+                SignEntry(id = "emer_calm_down", name = "Calm down", isDynamic = true),
+                SignEntry(id = "emer_accident", name = "Accident", isDynamic = true),
             ),
         ),
 
-        // ── 6. Commerce & Transactions ───────────────────────────
+        // ── 6. Daily Needs ────────────────────────────────────────
         SignCategory(
-            id = "commerce",
-            title = "Commerce & Transaction",
+            id = "dailyneeds",
+            title = "Daily Needs",
+            // Steps intentionally left blank — video-based step guidance
+            // will be added after all categories are trained.
             signs = listOf(
-                SignEntry(id = "com_barya", name = "Barya", isDynamic = true),
-                SignEntry(id = "com_cash", name = "Cash", isDynamic = true),
-                SignEntry(id = "com_card", name = "Card", isDynamic = true),
-                SignEntry(id = "com_resibo", name = "Resibo", isDynamic = true),
+                SignEntry(id = "dn_eat", name = "Eat", isDynamic = true),
+                SignEntry(id = "dn_drink", name = "Drink", isDynamic = true),
+                SignEntry(id = "dn_sleep", name = "Sleep", isDynamic = true),
+                SignEntry(id = "dn_hungry", name = "Hungry", isDynamic = true),
             ),
         ),
 
-        // ── 7. Everyday Expressions ──────────────────────────────
+        // ── 7. Social Interaction ─────────────────────────────────
         SignCategory(
-            id = "everyday",
-            title = "Everyday Expression",
+            id = "social",
+            title = "Social Interaction",
+            // Steps intentionally left blank — video-based step guidance
+            // will be added after all categories are trained.
             signs = listOf(
-                SignEntry(id = "every_discount", name = "Discount", isDynamic = true),
-                SignEntry(id = "every_ulit", name = "Ulit", isDynamic = true),
-                SignEntry(id = "every_ingat", name = "Ingat", isDynamic = true),
-                SignEntry(id = "every_paumanhin", name = "Paumanhin", isDynamic = true),
+                SignEntry(id = "soc_oo", name = "Oo", isDynamic = true),
+                SignEntry(id = "soc_hindi", name = "Hindi", isDynamic = true),
+                SignEntry(id = "soc_kaibigan", name = "Kaibigan", isDynamic = true),
+                SignEntry(id = "soc_patawad", name = "Patawad", isDynamic = true),
             ),
         ),
     )
