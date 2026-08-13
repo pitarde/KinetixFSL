@@ -1,5 +1,6 @@
 package com.example.kinetixfsl.modules
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,10 +29,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.kinetixfsl.R
 import com.example.kinetixfsl.modules.model.FslSignData
 import com.example.kinetixfsl.modules.model.SignCategory
 import com.example.kinetixfsl.modules.model.SignEntry
@@ -81,6 +85,7 @@ fun SignListScreen(
             // ── Category header ─────────────────────────────────
             item {
                 CategoryHeader(
+                    categoryId = category.id,
                     title = category.title,
                 )
             }
@@ -145,47 +150,67 @@ private fun TopBarWithBack(onBack: () -> Unit) {
 
 @Composable
 private fun CategoryHeader(
+    categoryId: String,
     title: String,
 ) {
+    val iconRes = categoryIconRes(categoryId)
+
     Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 20.dp),
     ) {
-        // Illustration placeholder — will be replaced with actual
-        // category illustrations (e.g. ABC blocks for alphabet,
-        // number blocks for numbers, etc.)
-        Box(
+        // Illustration card with a title banner pinned to its bottom edge,
+        // matching the category-detail mockup.
+        Column(
             modifier = Modifier
-                .size(120.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .fillMaxWidth()
+                .height(220.dp)
+                .clip(RoundedCornerShape(20.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = title.take(3).uppercase(),
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // Illustration takes all the space above the banner so it reads
+            // large and fills the card, with a little breathing room.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (iconRes != null) {
+                    Image(
+                        painter = painterResource(id = iconRes),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                    )
+                } else {
+                    Text(
+                        text = title.take(3).uppercase(),
+                        style = MaterialTheme.typography.headlineLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            // Title banner across the bottom of the card.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.primary)
+                    .padding(vertical = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         }
-
-        Spacer(Modifier.height(16.dp))
-
-        // Category title pill badge
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.primary)
-                .padding(horizontal = 24.dp, vertical = 10.dp),
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onPrimary,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-
-        Spacer(Modifier.height(20.dp))
     }
 }
 

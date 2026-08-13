@@ -38,8 +38,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kinetixfsl.detection.MainCameraScreen
 import com.example.kinetixfsl.modules.ModulesScreen
+import com.example.kinetixfsl.profile.ProfileScreen
 import com.example.kinetixfsl.ui.home.tabs.GameTabPlaceholder
-import com.example.kinetixfsl.ui.home.tabs.ProfileTabPlaceholder
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import androidx.activity.compose.BackHandler
 import kotlinx.coroutines.launch
@@ -176,7 +176,7 @@ private fun HomeScaffold(
                 )
                 HomeTab.CAMERA -> MainCameraScreen()
                 HomeTab.GAME -> GameTabPlaceholder()
-                HomeTab.PROFILE -> ProfileTabPlaceholder(onSignOut = onSignOut)
+                HomeTab.PROFILE -> ProfileScreen(onSignOut = onSignOut)
             }
         }
 

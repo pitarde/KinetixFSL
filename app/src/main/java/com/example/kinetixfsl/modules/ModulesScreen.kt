@@ -9,8 +9,10 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -31,10 +33,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.kinetixfsl.R
 import com.example.kinetixfsl.modules.model.FslSignData
 import com.example.kinetixfsl.modules.model.SignCategory
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
@@ -190,7 +195,9 @@ private fun CategoryCard(
         MaterialTheme.colorScheme.onPrimaryContainer
     }
 
-    Box(
+    val iconRes = categoryIconRes(category.id)
+
+    Column(
         modifier = modifier
             .aspectRatio(0.85f) // slightly taller than square, matching the Figma
             .clip(shape)
@@ -208,14 +215,44 @@ private fun CategoryCard(
             color = contentColor,
         )
 
-        // Sign count at the bottom — gives the learner a sense of scope
-        Text(
-            text = "${category.signCount} signs",
-            style = MaterialTheme.typography.labelSmall,
-            color = contentColor.copy(alpha = 0.7f),
-            modifier = Modifier.align(Alignment.BottomStart),
-        )
+        // Illustration fills the remaining space below the title. The
+        // artwork has its own colours and a transparent background, so it
+        // reads cleanly on both the light and dark checkerboard cards.
+        if (iconRes != null) {
+            Image(
+                painter = painterResource(id = iconRes),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(top = 6.dp),
+            )
+        } else {
+            Spacer(Modifier.weight(1f))
+            // Fallback for categories without artwork yet.
+            Text(
+                text = "${category.signCount} signs",
+                style = MaterialTheme.typography.labelSmall,
+                color = contentColor.copy(alpha = 0.7f),
+            )
+        }
     }
+}
+
+/**
+ * Maps a category id to its illustration drawable, or null if none exists yet.
+ * Shared with [SignListScreen] so both screens use the same artwork.
+ */
+internal fun categoryIconRes(categoryId: String): Int? = when (categoryId) {
+    "alphabet" -> R.drawable.alphabet_icon
+    "numbers" -> R.drawable.numbers_icon
+    "greetings" -> R.drawable.greetings_icon
+    "school" -> R.drawable.school_icon
+    "emergency" -> R.drawable.emergency_icon
+    "dailyneeds" -> R.drawable.dailyneeds_icon
+    "social" -> R.drawable.social_icon
+    else -> null
 }
 
 // ── Previews ────────────────────────────────────────────────────
