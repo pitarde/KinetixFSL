@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,38 +35,11 @@ fun CameraTabPlaceholder(modifier: Modifier = Modifier) =
 fun GameTabPlaceholder(modifier: Modifier = Modifier) =
     LabeledPlaceholder("Game", "Quiz mode.", modifier)
 
-/**
- * Profile placeholder also carries the temporary Sign Out button — the real
- * profile screen will absorb it when we build the account/settings area.
- */
-@Composable
-fun ProfileTabPlaceholder(
-    onSignOut: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    LabeledPlaceholder(
-        title = "Profile",
-        subtitle = "Account, streak history, achievements.",
-        modifier = modifier,
-        extra = {
-            Spacer(Modifier.height(24.dp))
-            TextButton(onClick = onSignOut) {
-                Text(
-                    text = "Sign out",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = KinetixIndigo,
-                )
-            }
-        },
-    )
-}
-
 @Composable
 private fun LabeledPlaceholder(
     title: String,
     subtitle: String,
     modifier: Modifier = Modifier,
-    extra: (@Composable () -> Unit)? = null,
 ) {
     Box(
         modifier = modifier
@@ -90,7 +62,6 @@ private fun LabeledPlaceholder(
                 color = KinetixMuted,
                 textAlign = TextAlign.Center,
             )
-            if (extra != null) extra()
         }
     }
 }
