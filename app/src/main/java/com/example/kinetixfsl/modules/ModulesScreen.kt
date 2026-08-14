@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -21,6 +22,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -63,6 +65,13 @@ fun ModulesScreen(
 ) {
     val categories = remember { FslSignData.categories }
     var searchQuery by remember { mutableStateOf("") }
+
+    // Per-category learned counts (e.g. Alphabet 5/28), from real progress.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val learnedCounts = remember {
+        com.example.kinetixfsl.progress.ProgressRepository(context).snapshot()
+            .categories.associate { it.id to it.learned }
+    }
 
     val filtered by remember(searchQuery) {
         derivedStateOf {
@@ -113,6 +122,7 @@ fun ModulesScreen(
                 CategoryCard(
                     category = category,
                     isDark = isDark,
+                    learned = learnedCounts[category.id] ?: 0,
                     onClick = { onCategoryClick(category) },
                 )
             }
@@ -176,6 +186,7 @@ private fun SearchBar(
 private fun CategoryCard(
     category: SignCategory,
     isDark: Boolean,
+    learned: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -230,13 +241,27 @@ private fun CategoryCard(
             )
         } else {
             Spacer(Modifier.weight(1f))
-            // Fallback for categories without artwork yet.
-            Text(
-                text = "${category.signCount} signs",
-                style = MaterialTheme.typography.labelSmall,
-                color = contentColor.copy(alpha = 0.7f),
-            )
         }
+
+        // Per-module progress: "5/28" + a thin bar (how far through the module).
+        val total = category.signCount
+        val fraction = if (total > 0) learned.toFloat() / total else 0f
+        Spacer(Modifier.size(8.dp))
+        Text(
+            text = "$learned/$total",
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+            color = contentColor,
+        )
+        Spacer(Modifier.size(4.dp))
+        LinearProgressIndicator(
+            progress = { fraction },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(5.dp)
+                .clip(RoundedCornerShape(3.dp)),
+            color = contentColor,
+            trackColor = contentColor.copy(alpha = 0.25f),
+        )
     }
 }
 

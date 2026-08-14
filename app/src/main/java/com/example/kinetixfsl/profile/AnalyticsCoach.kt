@@ -34,13 +34,14 @@ import androidx.compose.ui.unit.dp
  */
 @Composable
 fun CoachTab(
+    data: AnalyticsData,
     onStartDrill: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
 
         // ── Gradient hero: today's queue ────────────────────────────
-        RecommendedQueueHero(SampleProfile.recommendedQueue)
+        RecommendedQueueHero(data.recommendedQueue)
 
         CardGap()
 
@@ -54,13 +55,13 @@ fun CoachTab(
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                text = SampleProfile.fixWeakSpotStat,
+                text = data.fixWeakSpotStat,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(14.dp))
             CtaButton(
-                label = SampleProfile.fixWeakSpotCta,
+                label = data.fixWeakSpotCta,
                 accent = AccentCoach,
                 onClick = onStartDrill,
             )
@@ -78,7 +79,7 @@ fun CoachTab(
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                text = SampleProfile.bestTimeInsight,
+                text = data.bestTimeInsight,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -95,7 +96,7 @@ fun CoachTab(
                 subtitle = "How lessons will adjust to you",
             )
             Spacer(Modifier.height(14.dp))
-            SampleProfile.adaptiveLessons.forEachIndexed { i, item ->
+            data.adaptiveLessons.forEachIndexed { i, item ->
                 if (i > 0) Spacer(Modifier.height(12.dp))
                 AdaptiveRow(item)
             }

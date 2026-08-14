@@ -33,7 +33,11 @@ import androidx.compose.ui.unit.dp
  * practice-consistency heatmap.
  */
 @Composable
-fun ProgressTab(modifier: Modifier = Modifier) {
+fun ProgressTab(
+    data: AnalyticsData,
+    modifier: Modifier = Modifier,
+) {
+    val categoryMastery = data.categoryMastery
     Column(modifier = modifier.fillMaxWidth()) {
 
         // ── Weekly activity ─────────────────────────────────────────
@@ -45,7 +49,7 @@ fun ProgressTab(modifier: Modifier = Modifier) {
                 subtitle = "Signs learned per day",
             )
             Spacer(Modifier.height(16.dp))
-            WeeklyBars(SampleProfile.weeklyBars)
+            WeeklyBars(data.weeklyBars)
         }
 
         CardGap()
@@ -59,7 +63,7 @@ fun ProgressTab(modifier: Modifier = Modifier) {
                 subtitle = "How complete each module is",
             )
             Spacer(Modifier.height(14.dp))
-            SampleProfile.categoryMastery.forEachIndexed { i, cat ->
+            categoryMastery.forEachIndexed { i, cat ->
                 if (i > 0) Spacer(Modifier.height(12.dp))
                 MeterRow(
                     label = cat.name,
@@ -81,7 +85,7 @@ fun ProgressTab(modifier: Modifier = Modifier) {
                 subtitle = "Last 5 weeks",
             )
             Spacer(Modifier.height(14.dp))
-            Heatmap(SampleProfile.heatmap, AccentProgress)
+            Heatmap(data.heatmap, AccentProgress)
         }
     }
 }

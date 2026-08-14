@@ -35,7 +35,7 @@ import kotlin.math.min
  * A mastery-pace projection, a streak-risk gauge, and a skill-decay watchlist.
  */
 @Composable
-fun ForecastTab(modifier: Modifier = Modifier) {
+fun ForecastTab(data: AnalyticsData, modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxWidth()) {
 
         // ── Mastery forecast ────────────────────────────────────────
@@ -48,8 +48,8 @@ fun ForecastTab(modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.height(16.dp))
             ForecastChart(
-                actual = SampleProfile.forecastActual,
-                projected = SampleProfile.forecastProjected,
+                actual = data.forecastActual,
+                projected = data.forecastProjected,
             )
             Spacer(Modifier.height(14.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -70,7 +70,7 @@ fun ForecastTab(modifier: Modifier = Modifier) {
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
-                    "~${SampleProfile.forecastProjected.last()} by week 6",
+                    "~${data.forecastProjected.lastOrNull() ?: 0} by week 6",
                     style = MaterialTheme.typography.labelMedium,
                     color = AccentForecast,
                     fontWeight = FontWeight.Bold,
@@ -91,12 +91,12 @@ fun ForecastTab(modifier: Modifier = Modifier) {
             Spacer(Modifier.height(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 RiskGauge(
-                    percent = SampleProfile.streakRiskPercent,
+                    percent = data.streakRiskPercent,
                     modifier = Modifier.size(120.dp),
                 )
                 Spacer(Modifier.size(16.dp))
                 Text(
-                    text = "You most often miss practice on ${SampleProfile.dropOffWindow}. " +
+                    text = "You most often miss practice on ${data.dropOffWindow}. " +
                         "A quick session then keeps your streak alive.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -116,7 +116,14 @@ fun ForecastTab(modifier: Modifier = Modifier) {
                 subtitle = "Signs fading from memory",
             )
             Spacer(Modifier.height(14.dp))
-            SampleProfile.decayWatch.forEachIndexed { i, item ->
+            if (data.decayWatch.isEmpty()) {
+                Text(
+                    text = "Learn some signs and they'll show here as they fade.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            data.decayWatch.forEachIndexed { i, item ->
                 if (i > 0) Spacer(Modifier.height(12.dp))
                 DecayRow(item)
             }

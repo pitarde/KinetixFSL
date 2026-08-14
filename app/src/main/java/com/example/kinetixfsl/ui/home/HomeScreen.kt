@@ -37,9 +37,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.kinetixfsl.detection.MainCameraScreen
+import com.example.kinetixfsl.game.ui.QuizGameRoot
 import com.example.kinetixfsl.modules.ModulesScreen
 import com.example.kinetixfsl.profile.ProfileScreen
-import com.example.kinetixfsl.ui.home.tabs.GameTabPlaceholder
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import androidx.activity.compose.BackHandler
 import kotlinx.coroutines.launch
@@ -155,35 +155,47 @@ private fun HomeScaffold(
     onNavigateToSignList: (categoryId: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The Quiz Game runs an active level (tutorial/quiz/result) full-screen, with
+    // its own X and progress bar — so while it's immersive we hide the app's top
+    // bar and bottom nav. The flag is only ever consulted on the Game tab.
+    var gameImmersive by rememberSaveable { mutableStateOf(false) }
+    val hideChrome = selectedTab == HomeTab.GAME && gameImmersive
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding(),
     ) {
-        HomeTopBar(
-            tab = selectedTab,
-            onMenuClick = onMenuClick,
-        )
+        if (!hideChrome) {
+            HomeTopBar(
+                tab = selectedTab,
+                onMenuClick = onMenuClick,
+            )
+        }
 
         Box(modifier = Modifier.weight(1f)) {
             when (selectedTab) {
-                HomeTab.HOME -> DashboardContent()
+                HomeTab.HOME -> DashboardContent(onOpenModule = onNavigateToSignList)
                 HomeTab.MODULES -> ModulesScreen(
                     onCategoryClick = { category ->
                         onNavigateToSignList(category.id)
                     },
                 )
                 HomeTab.CAMERA -> MainCameraScreen()
-                HomeTab.GAME -> GameTabPlaceholder()
+                HomeTab.GAME -> QuizGameRoot(
+                    onImmersiveChange = { gameImmersive = it },
+                )
                 HomeTab.PROFILE -> ProfileScreen(onSignOut = onSignOut)
             }
         }
 
-        HomeBottomNav(
-            selectedTab = selectedTab,
-            onTabSelected = onTabSelected,
-        )
+        if (!hideChrome) {
+            HomeBottomNav(
+                selectedTab = selectedTab,
+                onTabSelected = onTabSelected,
+            )
+        }
     }
 }
 

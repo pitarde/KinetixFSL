@@ -157,6 +157,15 @@ fun CameraPracticeScreen(
     onProceed: (() -> Unit)?,
     modifier: Modifier = Modifier,
     onWatchDemo: (() -> Unit)? = null,
+    /** Fired once when the user successfully performs the target sign — used to
+     *  award Category XP for learning this item. */
+    onLearned: () -> Unit = {},
+    /** Fired when a practice session is entered (a lesson attempt, for drop-off). */
+    onSessionStart: () -> Unit = {},
+    /** Fired with a completed session's length in seconds (study-time tracking). */
+    onStudySeconds: (Long) -> Unit = {},
+    /** Fired on a failed attempt with the error type: "handshape" / "motion" / "timing". */
+    onFailure: (errorType: String) -> Unit = {},
 ) {
     val context = LocalContext.current
 
@@ -186,6 +195,15 @@ fun CameraPracticeScreen(
     var sessionId by remember { mutableIntStateOf(0) }
     var phase by remember { mutableStateOf(Phase.DETECTING) }
 
+    // Count this practice attempt once, when the screen is entered.
+    LaunchedEffect(Unit) { onSessionStart() }
+
+    // Award learning XP the moment the sign is performed correctly (once per
+    // reaching SUCCESS; recording the same sign again is harmless/idempotent).
+    LaunchedEffect(phase, sessionId) {
+        if (phase == Phase.SUCCESS) onLearned()
+    }
+
     // Live (current-frame) prediction.
     var confidence by remember { mutableFloatStateOf(0f) }
     var detectedLabel by remember { mutableStateOf("") }
@@ -198,6 +216,28 @@ fun CameraPracticeScreen(
     var consecutiveHits by remember { mutableIntStateOf(0) }
     var sessionStart by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var matchTimeMs by remember { mutableLongStateOf(0L) }
+
+    // Log the session's length as study time once it's successfully completed.
+    LaunchedEffect(phase, sessionId) {
+        if (phase == Phase.SUCCESS) {
+            onStudySeconds(((System.currentTimeMillis() - sessionStart) / 1000).coerceAtLeast(0))
+        }
+    }
+
+    // On a timeout, classify WHY it failed from the detection signals:
+    //  - a different sign was confidently seen → handshape (wrong hand shape)
+    //  - almost nothing was detected           → motion (hand not tracked)
+    //  - the right sign was close but unconfirmed → timing (ran out of time)
+    LaunchedEffect(phase, sessionId) {
+        if (phase == Phase.TIMEOUT) {
+            val errorType = when {
+                bestLabel.isNotEmpty() && bestLabel != targetLabel && bestConfidence >= 0.5f -> "handshape"
+                bestConfidence < 0.35f -> "motion"
+                else -> "timing"
+            }
+            onFailure(errorType)
+        }
+    }
 
     // Time-based progress across the 5 s window (0f..1f).
     var timeProgress by remember { mutableFloatStateOf(0f) }

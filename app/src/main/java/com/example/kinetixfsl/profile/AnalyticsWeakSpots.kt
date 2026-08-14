@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.dp
  * Confused sign pairs, per-module drop-off, and the error-type split.
  */
 @Composable
-fun WeakSpotsTab(modifier: Modifier = Modifier) {
+fun WeakSpotsTab(data: AnalyticsData, modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxWidth()) {
 
         // ── Confused pairs ──────────────────────────────────────────
@@ -41,7 +41,10 @@ fun WeakSpotsTab(modifier: Modifier = Modifier) {
                 subtitle = "How often each pair is confused",
             )
             Spacer(Modifier.height(14.dp))
-            SampleProfile.confusionPairs.forEachIndexed { i, pair ->
+            if (data.confusionPairs.isEmpty()) {
+                EmptyHint("No mix-ups logged yet — take a few quizzes to see them here.")
+            }
+            data.confusionPairs.forEachIndexed { i, pair ->
                 if (i > 0) Spacer(Modifier.height(12.dp))
                 MeterRow(
                     label = "${pair.first} vs ${pair.second}",
@@ -64,7 +67,10 @@ fun WeakSpotsTab(modifier: Modifier = Modifier) {
                 subtitle = "Lessons started vs. completed",
             )
             Spacer(Modifier.height(14.dp))
-            SampleProfile.dropOffs.forEachIndexed { i, d ->
+            if (data.dropOffs.isEmpty()) {
+                EmptyHint("Start some lessons to see where you drop off.")
+            }
+            data.dropOffs.forEachIndexed { i, d ->
                 if (i > 0) Spacer(Modifier.height(14.dp))
                 DropOffRow(d)
             }
@@ -88,9 +94,19 @@ fun WeakSpotsTab(modifier: Modifier = Modifier) {
                 subtitle = "Your error types",
             )
             Spacer(Modifier.height(16.dp))
-            ErrorSegmentedBar(SampleProfile.errorBreakdown)
+            ErrorSegmentedBar(data.errorBreakdown)
         }
     }
+}
+
+/** A small muted line shown when a card has no real data yet. */
+@Composable
+private fun EmptyHint(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 // ── Drop-off row ────────────────────────────────────────────────────

@@ -773,12 +773,17 @@ fun KinetixNavHost(
             val category = remember(categoryId) { FslSignData.findCategory(categoryId) }
 
             if (category != null) {
+                val signListContext = androidx.compose.ui.platform.LocalContext.current
+                val completed = remember(categoryId) {
+                    com.example.kinetixfsl.progress.ProgressRepository(signListContext).learnedSigns()
+                }
                 SignListScreen(
                     category = category,
                     onBack = { navController.popBackStack() },
                     onSignClick = { signIndex: Int ->
                         navController.navigate(Route.learningRoom(categoryId, signIndex))
                     },
+                    completedSignIds = completed,
                 )
             }
         }
@@ -865,11 +870,20 @@ fun KinetixNavHost(
                 val isLastSign = signIndex >= category.signCount - 1
 
                 if (sign != null) {
+                    val practiceContext = androidx.compose.ui.platform.LocalContext.current
+                    val progressRepo = remember {
+                        com.example.kinetixfsl.progress.ProgressRepository(practiceContext)
+                    }
                     CameraPracticeScreen(
                         targetLabel = sign.name,
                         displayName = "$displayPrefix ${sign.name}".trim(),
                         isDynamic = sign.isDynamic,
                         categoryId = categoryId,
+                        // Learning a sign correctly awards its Category XP.
+                        onLearned = { progressRepo.recordSignLearned(sign.id, categoryId) },
+                        onSessionStart = { progressRepo.recordLessonStarted(categoryId) },
+                        onStudySeconds = { progressRepo.recordStudySeconds(it) },
+                        onFailure = { errorType -> progressRepo.recordCameraError(errorType) },
                         onBack = {
                             // Back (arrow or device back) returns to this
                             // sign's Learning Room.

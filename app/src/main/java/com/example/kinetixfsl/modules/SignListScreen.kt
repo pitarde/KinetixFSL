@@ -60,10 +60,10 @@ fun SignListScreen(
     onBack: () -> Unit,
     onSignClick: (signIndex: Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Sign ids the user has learned (Camera Practice success). */
+    completedSignIds: Set<String> = emptySet(),
 ) {
-    // TODO: Replace with real Room-backed progress when we build the DB.
-    // For now, no signs are completed — progress is 0%.
-    val completedCount = 0
+    val completedCount = category.signs.count { it.id in completedSignIds }
     val progress = if (category.signCount > 0) {
         completedCount.toFloat() / category.signCount
     } else 0f
@@ -106,7 +106,7 @@ fun SignListScreen(
                 items = category.signs,
                 key = { _, sign -> sign.id },
             ) { index, sign ->
-                val isCompleted = index < completedCount
+                val isCompleted = sign.id in completedSignIds
                 val isLast = index == category.signs.lastIndex
 
                 SignListItem(
@@ -226,7 +226,7 @@ private fun ProgressSection(
     Column(modifier = Modifier.fillMaxWidth()) {
         val percentage = (progress * 100).toInt()
         Text(
-            text = "$categoryTitle Progress $percentage%",
+            text = "Progress $percentage%  ·  $completedCount / $totalCount done",
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onBackground,
         )
@@ -294,48 +294,62 @@ private fun SignListItem(
         }
 
         // ── Right: sign row card ────────────────────────────
+        // Done signs read as filled purple cards with a green check; not-yet-done
+        // signs stay light with a play icon (matching the mockup).
+        val cardColor = if (isCompleted) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.surfaceVariant
+        val nameColor = if (isCompleted) MaterialTheme.colorScheme.onPrimary
+        else MaterialTheme.colorScheme.onBackground
+        val xpColor = if (isCompleted) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+        else MaterialTheme.colorScheme.onSurfaceVariant
+
         Row(
             modifier = Modifier
                 .weight(1f)
                 .height(56.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .background(cardColor)
                 .clickable(onClick = onClick)
                 .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Sign name
             Text(
                 text = "$displayPrefix ${sign.name}",
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = nameColor,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
             )
-
-            // XP badge
             Text(
                 text = "${xp}xp",
                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = xpColor,
                 modifier = Modifier.padding(end = 8.dp),
             )
-
-            // Status icon
-            Icon(
-                imageVector = if (isCompleted) {
-                    ModulesIcons.CheckCircle
-                } else {
-                    ModulesIcons.PlayCircle
-                },
-                contentDescription = if (isCompleted) "Completed" else "Start",
-                tint = if (isCompleted) {
-                    KinetixGreen
-                } else {
-                    MaterialTheme.colorScheme.primary
-                },
-                modifier = Modifier.size(24.dp),
-            )
+            if (isCompleted) {
+                // Filled green check disc.
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(CircleShape)
+                        .background(KinetixGreen),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "✓",
+                        color = androidx.compose.ui.graphics.Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                    )
+                }
+            } else {
+                Icon(
+                    imageVector = ModulesIcons.PlayCircle,
+                    contentDescription = "Start",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
         }
     }
 }

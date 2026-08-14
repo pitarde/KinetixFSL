@@ -15,9 +15,11 @@ data class ModuleProgress(
     val subtitle: String,
     /** 0f..1f, drives the progress bar. */
     val progress: Float,
-    /** Displayed as-is on the right of the bar, e.g. "100xp". */
+    /** Displayed as-is on the right of the bar, e.g. "5/28". */
     val xpLabel: String,
     val status: ModuleStatus,
+    /** Category id this module maps to, for opening its sign list. */
+    val categoryId: String = "",
 )
 
 enum class ModuleStatus(val label: String) {
