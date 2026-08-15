@@ -173,6 +173,9 @@ class AuthRepository(
         // why the fire-and-forget version left the dot stuck on.
         runCatching { PresenceRepository.goOfflineAndAwait() }
         runCatching { FcmTokenStore.clear() }
+        // Drop any pending progress push so account A's queued write can't land
+        // after the account is cleared. Its data is safe in A's local store.
+        runCatching { com.example.kinetixfsl.progress.ProgressSync.cancelPending() }
         firebaseAuth.signOut()
     }
 

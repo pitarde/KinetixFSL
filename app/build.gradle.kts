@@ -91,6 +91,7 @@ dependencies {
 
     // Image loading
     implementation(libs.coil.compose)
+    implementation(libs.coil.svg)
 
     // Video playback + compression for community uploads
     implementation(libs.androidx.media3.exoplayer)

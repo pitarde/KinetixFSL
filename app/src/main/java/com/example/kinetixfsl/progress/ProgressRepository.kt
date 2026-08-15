@@ -29,6 +29,16 @@ class ProgressRepository(context: Context) {
     /** The set of sign ids the user has learned (for per-sign completion UI). */
     fun learnedSigns(): Set<String> = state.learnedSignIds
 
+    /**
+     * The set of currently-unlocked achievements. Runs a refresh first so it
+     * reflects any just-recorded events — capture this before and after an event
+     * and diff to find what was *newly* unlocked (for the unlock animation).
+     */
+    fun unlockedAchievements(): Set<Achievement> {
+        refreshAchievements()
+        return Achievement.entries.filter { it.name in state.unlockedAchievements }.toSet()
+    }
+
     private fun today(): Long = LocalDate.now().toEpochDay()
 
     /** Mark a day/hour as active (streak-risk, heatmap, best-time insight). */
@@ -75,7 +85,7 @@ class ProgressRepository(context: Context) {
         activity = activity.copy(
             lessonsStarted = activity.lessonsStarted + (categoryId to (activity.lessonsStarted[categoryId] ?: 0) + 1),
         )
-        activityStore.save(activity)
+        saveActivity()
     }
 
     /** Accumulate real study time (from camera sessions and quiz attempts). */
@@ -86,7 +96,7 @@ class ProgressRepository(context: Context) {
             dailyStudySeconds = activity.dailyStudySeconds + (day to (activity.dailyStudySeconds[day] ?: 0L) + seconds),
         )
         markActive(day)
-        activityStore.save(activity)
+        saveActivity()
     }
 
     /** Log a wrong quiz answer for confusion-pair analytics. */
@@ -94,7 +104,7 @@ class ProgressRepository(context: Context) {
         if (targetWord.isBlank() || chosenWord.isBlank()) return
         val entry = QuizMistake(targetSignId, targetWord, chosenWord, today())
         activity = activity.copy(mistakes = (activity.mistakes + entry).takeLast(MAX_MISTAKES))
-        activityStore.save(activity)
+        saveActivity()
     }
 
     /**
@@ -117,7 +127,7 @@ class ProgressRepository(context: Context) {
             hourCorrect = hc, hourAttempts = ha,
             categoryCorrect = catCorrect, categoryAttempts = catAttempts,
         )
-        activityStore.save(activity)
+        saveActivity()
     }
 
     /** Log a Camera-Practice failure reason: "handshape" / "motion" / "timing". */
@@ -126,7 +136,7 @@ class ProgressRepository(context: Context) {
         val errs = activity.cameraErrors.toMutableMap()
         errs[type] = (errs[type] ?: 0) + 1
         activity = activity.copy(cameraErrors = errs)
-        activityStore.save(activity)
+        saveActivity()
     }
 
     /**
@@ -187,7 +197,7 @@ class ProgressRepository(context: Context) {
         }
 
         val categoryXp = categories.sumOf { it.xp }
-        val quizXp = XpEngine.quizXp(quiz.firstClearScores)
+        val quizXp = XpEngine.quizXp(quiz.bestScores)
         val streakXp = XpEngine.streakXp(state.streakMilestones)
         val achievementXp = XpEngine.achievementXp(state.unlockedAchievements.size)
         val accountXpRaw = categoryXp + quizXp + streakXp + achievementXp
@@ -227,7 +237,7 @@ class ProgressRepository(context: Context) {
         val categoryXps = categoryItems.map { (_, ids) -> XpEngine.categoryXp(ids, state.learnedSignIds) }
         val masteredCount = categoryXps.count { it >= XpEngine.CATEGORY_MAX }
         val categoryXpTotal = categoryXps.sum()
-        val quizXp = XpEngine.quizXp(quiz.firstClearScores)
+        val quizXp = XpEngine.quizXp(quiz.bestScores)
         val streakXp = XpEngine.streakXp(state.streakMilestones)
 
         val unlocked = state.unlockedAchievements.toMutableSet()
@@ -239,7 +249,7 @@ class ProgressRepository(context: Context) {
             val satisfied = buildSet {
                 if (state.learnedSignIds.isNotEmpty()) add(Achievement.FIRST_LESSON)
                 if (quiz.firstClearScores.isNotEmpty()) add(Achievement.FIRST_QUIZ)
-                if (quiz.firstClearScores.values.any { it >= XpEngine.QUIZ_QUESTIONS }) add(Achievement.PERFECT_QUIZ)
+                if (quiz.bestScores.values.any { it >= XpEngine.QUIZ_QUESTIONS }) add(Achievement.PERFECT_QUIZ)
                 if (masteredCount >= 1) add(Achievement.MASTER_ONE)
                 if (masteredCount >= 3) add(Achievement.MASTER_THREE)
                 if (masteredCount >= 7) add(Achievement.MASTER_ALL)
@@ -259,11 +269,60 @@ class ProgressRepository(context: Context) {
         }
     }
 
-    private fun persist() = store.save(state)
+    private fun persist() {
+        store.save(state)
+        scheduleCloudSync()
+    }
 
     private fun persistAll() {
         store.save(state)
         activityStore.save(activity)
+        scheduleCloudSync()
+    }
+
+    /** Save the activity log AND mirror it to the cloud (debounced). */
+    private fun saveActivity() {
+        activityStore.save(activity)
+        scheduleCloudSync()
+    }
+
+    /**
+     * Builds the compact per-user document and hands it to [ProgressSync], which
+     * debounces and writes it to Firestore. Flat summary fields let the admin
+     * webpage sort/filter without parsing; the two JSON blobs are the exact
+     * local state, so a new device restores byte-for-byte.
+     */
+    private fun scheduleCloudSync() {
+        val snap = snapshot()
+        val user = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+        ProgressSync.schedulePush(
+            mapOf(
+                "uid" to (user?.uid ?: "guest"),
+                "displayName" to (user?.displayName ?: ""),
+                "email" to (user?.email ?: ""),
+                // ── Descriptive summary (admin at-a-glance) ──
+                "level" to snap.level,
+                "accountXp" to snap.accountXpRaw,
+                "rank" to snap.rank.title,
+                "streakDays" to snap.streakDays,
+                "bestStreak" to state.bestStreak,
+                "signsLearned" to snap.signsLearned,
+                "quizLevelsCleared" to snap.quizLevelsCleared,
+                "achievementsUnlocked" to snap.unlockedAchievementCount,
+                "lastActiveEpochDay" to state.streakLastEpochDay,
+                "categories" to snap.categories.map {
+                    mapOf(
+                        "id" to it.id, "name" to it.name,
+                        "learned" to it.learned, "total" to it.total,
+                    )
+                },
+                // ── Raw local state (for the app's own cross-device restore
+                //    and for the admin's diagnostic/predictive analytics) ──
+                "progressJson" to (store.rawJson() ?: ""),
+                "activityJson" to (activityStore.rawJson() ?: ""),
+                "quizJson" to (quizStore.rawJson() ?: ""),
+            )
+        )
     }
 
     private companion object {

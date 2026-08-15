@@ -23,6 +23,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,6 +66,51 @@ fun DashboardContent(
     val repo = remember { com.example.kinetixfsl.progress.ProgressRepository(context) }
     val progress = remember { repo.snapshot() }
     val analytics = remember(progress) { com.example.kinetixfsl.profile.computeAnalytics(repo, progress) }
+
+    // Celebrate reaching a new rank tier. We persist the last-acknowledged rank
+    // and pop the celebration once when the current rank climbs past it. The
+    // default seeds to the current rank, so a brand-new user is never falsely
+    // congratulated for merely starting at Novice.
+    var rankUp by remember { mutableStateOf<com.example.kinetixfsl.progress.RankTier?>(null) }
+    LaunchedEffect(progress.rank) {
+        val prefs = context.getSharedPreferences("kinetix_rank", android.content.Context.MODE_PRIVATE)
+        val acknowledged = prefs.getInt("ack_rank_ordinal", progress.rank.ordinal)
+        if (progress.rank.ordinal > acknowledged) {
+            rankUp = progress.rank
+        }
+        prefs.edit().putInt("ack_rank_ordinal", progress.rank.ordinal).apply()
+    }
+    rankUp?.let { tier ->
+        com.example.kinetixfsl.ui.RankUpDialog(rank = tier, onDismiss = { rankUp = null })
+    }
+
+    DashboardScreenContent(
+        displayName = state.displayName,
+        progress = progress,
+        weakSpots = analytics.confusionPairs.size,
+        streakRisk = analytics.streakRiskPercent,
+        modifier = modifier,
+        onOpenModule = onOpenModule,
+    )
+}
+
+/**
+ * The actual dashboard layout, taking plain data instead of a ViewModel +
+ * ProgressRepository. [DashboardContent] wires this from real sources; the
+ * @Preview functions at the bottom of this file call it directly with fake
+ * data, which is what makes a FULL-SCREEN preview possible — the ViewModel/
+ * repository path needs a real Context (SharedPreferences) that the Android
+ * Studio preview renderer can't provide.
+ */
+@Composable
+private fun DashboardScreenContent(
+    displayName: String,
+    progress: com.example.kinetixfsl.progress.PlayerProgress,
+    weakSpots: Int,
+    streakRisk: Int,
+    modifier: Modifier = Modifier,
+    onOpenModule: (categoryId: String) -> Unit = {},
+) {
     val streak = remember(progress) {
         StreakSummary(
             streakDays = progress.streakDays,
@@ -110,7 +156,7 @@ fun DashboardContent(
             color = MaterialTheme.colorScheme.onBackground,
         )
         Text(
-            text = state.displayName,
+            text = displayName,
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Bold,
@@ -127,8 +173,8 @@ fun DashboardContent(
         Spacer(Modifier.height(14.dp))
         StatsCard(
             signsLearned = progress.signsLearned,
-            weakSpots = analytics.confusionPairs.size,
-            streakRisk = analytics.streakRiskPercent,
+            weakSpots = weakSpots,
+            streakRisk = streakRisk,
         )
 
         // ---- Continue learning ----
@@ -250,6 +296,13 @@ private fun StatDivider() {
 /** The badges card — a wrap of achievement circles, filled when unlocked. */
 @Composable
 private fun BadgesCard(badges: List<com.example.kinetixfsl.progress.AchievementView>) {
+    // Tapping any badge explains how to earn it.
+    var selected by remember {
+        mutableStateOf<com.example.kinetixfsl.progress.AchievementView?>(null)
+    }
+    selected?.let { av ->
+        com.example.kinetixfsl.ui.AchievementInfoDialog(view = av, onDismiss = { selected = null })
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -260,7 +313,7 @@ private fun BadgesCard(badges: List<com.example.kinetixfsl.progress.AchievementV
         badges.chunked(5).forEach { row ->
             Row(modifier = Modifier.fillMaxWidth()) {
                 row.forEach { badge ->
-                    BadgeChip(badge, Modifier.weight(1f))
+                    BadgeChip(badge, Modifier.weight(1f), onClick = { selected = badge })
                 }
                 repeat(5 - row.size) { Spacer(Modifier.weight(1f)) }
             }
@@ -273,9 +326,14 @@ private fun BadgesCard(badges: List<com.example.kinetixfsl.progress.AchievementV
 private fun BadgeChip(
     view: com.example.kinetixfsl.progress.AchievementView,
     modifier: Modifier = Modifier,
+    onClick: () -> Unit = {},
 ) {
     Column(
-        modifier = modifier.padding(horizontal = 2.dp),
+        modifier = modifier
+            .padding(horizontal = 2.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val bg = if (view.unlocked) GoldBadge
@@ -501,10 +559,171 @@ private fun StatusPill(status: ModuleStatus) {
     }
 }
 
-@Preview(showBackground = true)
+// ── Previews ────────────────────────────────────────────────────
+//
+// DashboardContent() itself pulls a real ViewModel + ProgressRepository
+// (SharedPreferences via LocalContext), which the Preview renderer often
+// can't satisfy. DashboardScreenContent() is the same layout with that
+// dependency removed — plain data in, so it previews FULL-SCREEN with fake
+// data below, exactly like RegisterScreenPreview does for RegisterContent.
+
+private val PreviewProgress = com.example.kinetixfsl.progress.PlayerProgress(
+    accountXpRaw = 4200,
+    level = 7,
+    levelProgress = 0.55f,
+    xpIntoLevel = 320,
+    maxObtainable = 9500,
+    rank = com.example.kinetixfsl.progress.RankTier.SKILLED,
+    streakDays = 5,
+    streakMilestones = 1,
+    signsLearned = 42,
+    quizLevelsCleared = 3,
+    categoryXp = 1200,
+    quizXp = 600,
+    streakXp = 150,
+    achievementXp = 300,
+    categories = listOf(
+        com.example.kinetixfsl.progress.CategoryMasteryInfo(
+            id = "alphabet", name = "Alphabet", xp = 500,
+            fraction = 0.64f, learned = 18, total = 28,
+        ),
+        com.example.kinetixfsl.progress.CategoryMasteryInfo(
+            id = "numbers", name = "Numbers", xp = 200,
+            fraction = 0.40f, learned = 4, total = 10,
+        ),
+        com.example.kinetixfsl.progress.CategoryMasteryInfo(
+            id = "greetings", name = "Greetings", xp = 150,
+            fraction = 0.75f, learned = 3, total = 4,
+        ),
+    ),
+    achievements = com.example.kinetixfsl.progress.Achievement.entries
+        .mapIndexed { i, a -> com.example.kinetixfsl.progress.AchievementView(a, unlocked = i % 2 == 0) },
+)
+
+@Preview(showBackground = true, showSystemUi = true, name = "Dashboard - Light")
 @Composable
-private fun DashboardContentPreview() {
-    KinetixFSLTheme {
-        DashboardContent()
+private fun DashboardScreenPreviewLight() {
+    KinetixFSLTheme(darkTheme = false) {
+        DashboardScreenContent(
+            displayName = "Ken",
+            progress = PreviewProgress,
+            weakSpots = 3,
+            streakRisk = 20,
+        )
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Dashboard - Dark")
+@Composable
+private fun DashboardScreenPreviewDark() {
+    KinetixFSLTheme(darkTheme = true) {
+        DashboardScreenContent(
+            displayName = "Ken",
+            progress = PreviewProgress,
+            weakSpots = 3,
+            streakRisk = 20,
+        )
+    }
+}
+
+private val PreviewBadges = com.example.kinetixfsl.progress.Achievement.entries
+    .mapIndexed { i, a -> com.example.kinetixfsl.progress.AchievementView(a, unlocked = i % 2 == 0) }
+    .take(5)
+
+private val PreviewModule = ModuleProgress(
+    title = "Alphabet",
+    subtitle = "18 of 28 signs",
+    progress = 0.64f,
+    xpLabel = "18/28",
+    status = ModuleStatus.IN_PROGRESS,
+)
+
+@Preview(showBackground = true, showSystemUi = true, name = "Streak card - Light")
+@Composable
+private fun StreakCardPreviewLight() {
+    KinetixFSLTheme(darkTheme = false) {
+        StreakCard(
+            streak = StreakSummary(streakDays = 5, overallProgress = 0.42f),
+            rankBadgeRes = com.example.kinetixfsl.progress.RankTier.SKILLED.badgeRes,
+            level = 7,
+            levelProgress = 0.55f,
+        )
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Streak card - Dark")
+@Composable
+private fun StreakCardPreviewDark() {
+    KinetixFSLTheme(darkTheme = true) {
+        StreakCard(
+            streak = StreakSummary(streakDays = 5, overallProgress = 0.42f),
+            rankBadgeRes = com.example.kinetixfsl.progress.RankTier.SKILLED.badgeRes,
+            level = 7,
+            levelProgress = 0.55f,
+        )
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Stats card - Light")
+@Composable
+private fun StatsCardPreviewLight() {
+    KinetixFSLTheme(darkTheme = false) {
+        StatsCard(signsLearned = 42, weakSpots = 3, streakRisk = 20)
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Stats card - Dark")
+@Composable
+private fun StatsCardPreviewDark() {
+    KinetixFSLTheme(darkTheme = true) {
+        StatsCard(signsLearned = 42, weakSpots = 3, streakRisk = 20)
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Module card - Light")
+@Composable
+private fun ModuleCardPreviewLight() {
+    KinetixFSLTheme(darkTheme = false) {
+        ModuleCard(module = PreviewModule, onClick = {})
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Module card - Dark")
+@Composable
+private fun ModuleCardPreviewDark() {
+    KinetixFSLTheme(darkTheme = true) {
+        ModuleCard(module = PreviewModule, onClick = {})
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Badges card - Light")
+@Composable
+private fun BadgesCardPreviewLight() {
+    KinetixFSLTheme(darkTheme = false) {
+        BadgesCard(PreviewBadges)
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Badges card - Dark")
+@Composable
+private fun BadgesCardPreviewDark() {
+    KinetixFSLTheme(darkTheme = true) {
+        BadgesCard(PreviewBadges)
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Hint card - Light")
+@Composable
+private fun HintCardPreviewLight() {
+    KinetixFSLTheme(darkTheme = false) {
+        HintCard("No modules in progress yet — open the Modules tab to start one.")
+    }
+}
+
+@Preview(showBackground = true, showSystemUi = true, name = "Hint card - Dark")
+@Composable
+private fun HintCardPreviewDark() {
+    KinetixFSLTheme(darkTheme = true) {
+        HintCard("No modules in progress yet — open the Modules tab to start one.")
     }
 }

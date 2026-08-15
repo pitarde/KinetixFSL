@@ -27,11 +27,14 @@ object XpEngine {
     const val CATEGORY_COMPLETION_BONUS = 100
     const val CATEGORY_MAX = 500
 
-    // Quiz
-    const val QUIZ_CORRECT_XP = 50
-    const val QUIZ_COMPLETION_BONUS = 50
+    // Quiz. A level's 300 XP is split evenly across its 5 questions — 60 per
+    // correct answer — and each level tracks the learner's BEST score. Improving
+    // your best on a retake tops up the difference (2→3 correct adds 1×60), so a
+    // level only ever pays out for answers you've actually gotten right, up to the
+    // full 300 at 5/5. Clearing every level at 5/5 totals exactly 3,000.
     const val QUIZ_QUESTIONS = 5
     const val QUIZ_LEVEL_MAX = 300
+    const val QUIZ_XP_PER_CORRECT = QUIZ_LEVEL_MAX / QUIZ_QUESTIONS // 60
 
     // Streak
     const val STREAK_MILESTONE_XP = 500
@@ -81,14 +84,16 @@ object XpEngine {
 
     // ── Quiz XP ────────────────────────────────────────────────────────────
 
-    /** XP for a single quiz level's first clear: 50 per correct + 50 completion, max 300. */
+    /**
+     * XP a level is worth for a given best score: [QUIZ_XP_PER_CORRECT] (60) per
+     * correct answer, so 3/5 → 180 and 5/5 → 300 (the full [QUIZ_LEVEL_MAX]).
+     */
     fun quizLevelXp(correctCount: Int): Int =
-        (correctCount.coerceIn(0, QUIZ_QUESTIONS) * QUIZ_CORRECT_XP + QUIZ_COMPLETION_BONUS)
-            .coerceAtMost(QUIZ_LEVEL_MAX)
+        correctCount.coerceIn(0, QUIZ_QUESTIONS) * QUIZ_XP_PER_CORRECT
 
-    /** Total quiz XP from the first-clear score of each cleared level. */
-    fun quizXp(firstClearScores: Map<Int, Int>): Int =
-        firstClearScores.values.sumOf { quizLevelXp(it) }
+    /** Total quiz XP from the best score of each level played. */
+    fun quizXp(bestScores: Map<Int, Int>): Int =
+        bestScores.values.sumOf { quizLevelXp(it) }
 
     // ── Streak & achievements ──────────────────────────────────────────────
 

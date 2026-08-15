@@ -74,6 +74,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.kinetixfsl.modules.ModulesIcons
+import com.example.kinetixfsl.ui.AchievementUnlockedPopup
+import com.example.kinetixfsl.ui.FloatingXpBadge
 import com.example.kinetixfsl.ui.theme.KinetixError
 import com.example.kinetixfsl.ui.theme.KinetixGreen
 import kotlinx.coroutines.delay
@@ -102,12 +104,17 @@ private const val DETECTION_WINDOW_MS = 5_000L
 // The overlay and the classifier run at DIFFERENT rates on purpose:
 //
 //  - OVERLAY_INTERVAL_MS drives how often MediaPipe runs and the red-dot
-//    skeleton redraws. Fast (~12 fps) so the landmarks keep up with motion.
+//    skeleton redraws. Lower = snappier landmarks that keep up with fast
+//    motion signs (e.g. Drink), at the cost of more CPU/battery. ~20 fps
+//    feels responsive on a mid-range phone; if a low-end device overheats or
+//    stutters, raise this back toward 80. (The actual ceiling is however long
+//    one MediaPipe detection takes on the device — frames faster than that
+//    are dropped by STRATEGY_KEEP_ONLY_LATEST, so this never queues lag.)
 //  - CLASSIFIER_FEED_MS is how often a frame is pushed into the sign
 //    classifier. It stays at 5 fps to match the training data
 //    (CAPTURE_FPS = 5.0, 30-frame window). Feeding it faster would fill the
 //    buffer in half the time and break the motion timing the model learned.
-private const val OVERLAY_INTERVAL_MS = 80L
+private const val OVERLAY_INTERVAL_MS = 50L
 private const val CLASSIFIER_FEED_MS = 200L
 
 // Feedback accents come from the KinetixFSL brand palette (ui/theme/Color.kt):
@@ -166,6 +173,13 @@ fun CameraPracticeScreen(
     onStudySeconds: (Long) -> Unit = {},
     /** Fired on a failed attempt with the error type: "handshape" / "motion" / "timing". */
     onFailure: (errorType: String) -> Unit = {},
+    /** Category XP this sign is worth — shown as a "+N XP" animation on success. */
+    learnedXp: Int = 0,
+    /** Whether this sign was ALREADY learned before entering — suppresses the
+     *  "+N XP" animation, which should only celebrate the first-ever learn. */
+    alreadyLearnedSign: Boolean = false,
+    /** Achievements newly unlocked by learning this sign (for the unlock animation). */
+    newAchievements: List<com.example.kinetixfsl.progress.Achievement> = emptyList(),
 ) {
     val context = LocalContext.current
 
@@ -197,6 +211,23 @@ fun CameraPracticeScreen(
 
     // Count this practice attempt once, when the screen is entered.
     LaunchedEffect(Unit) { onSessionStart() }
+
+    // The "+N XP" reward plays exactly once — only when THIS visit first learns
+    // the sign. It stays hidden if the sign was already learned before, and once
+    // it has played it never replays (e.g. tapping Replay and signing again),
+    // because the XP was only awarded that first time.
+    var xpBadgeConsumed by remember { mutableStateOf(alreadyLearnedSign) }
+    var showXpBadge by remember { mutableStateOf(false) }
+    LaunchedEffect(phase) {
+        if (phase == Phase.SUCCESS) {
+            if (!xpBadgeConsumed && learnedXp > 0) {
+                showXpBadge = true
+                xpBadgeConsumed = true
+            }
+        } else {
+            showXpBadge = false
+        }
+    }
 
     // Award learning XP the moment the sign is performed correctly (once per
     // reaching SUCCESS; recording the same sign again is harmless/idempotent).
@@ -640,6 +671,25 @@ fun CameraPracticeScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp),
             ) {
+                // Newly-unlocked achievements celebrate at the top of the result.
+                AchievementUnlockedPopup(
+                    achievements = newAchievements,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                // A "+N XP" badge floats up as the learner's Category XP is awarded,
+                // so it's clear that performing the sign correctly earned something.
+                // Only shown the first time this sign is learned (see showXpBadge).
+                if (showXpBadge) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        FloatingXpBadge(xp = learnedXp, visible = true)
+                    }
+                }
+
                 ResultCard(
                     success = phase == Phase.SUCCESS,
                     displayName = displayName,

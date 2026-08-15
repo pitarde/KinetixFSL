@@ -40,6 +40,14 @@ class ProgressStore(context: Context) {
         prefs.edit().putString(KEY, toJson(state).toString()).apply()
     }
 
+    /** The exact stored JSON, for mirroring to the cloud. Null if nothing saved. */
+    fun rawJson(): String? = prefs.getString(KEY, null)
+
+    /** Writes cloud-restored JSON straight back, byte-for-byte (no re-parse). */
+    fun saveRawJson(json: String) {
+        prefs.edit().putString(KEY, json).apply()
+    }
+
     private fun toJson(s: ProgressState): JSONObject = JSONObject().apply {
         put("learnedSignIds", JSONArray(s.learnedSignIds.toList()))
         put("streakLastEpochDay", s.streakLastEpochDay)

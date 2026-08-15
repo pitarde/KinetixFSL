@@ -24,7 +24,7 @@ val KinetixMint20 = Color(0xFFE9F6F4)
 val KinetixWhite = Color(0xFFFFFFFF)
 val KinetixSurface = Color(0xFFFAFAFC)
 val KinetixOutline = Color(0xFFD6D6E0)
-val KinetixMuted = Color(0xFF7D809E)
+val KinetixMuted = Color(0xFF5E657E)
 
 // Feedback
 val KinetixError = Color(0xFFC0392B)

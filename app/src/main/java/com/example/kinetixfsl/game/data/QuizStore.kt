@@ -29,8 +29,12 @@ data class QuizProgress(
     val passedLevels: Set<Int> = emptySet(),
     val firstAssignedLevels: Set<Int> = emptySet(),
     val usedInitialPass: Map<Tier, Set<String>> = emptyMap(),
-    /** Correct-answer count of each level's FIRST clear, for XP (level → 0..5). */
+    /** Correct-answer count of each level's FIRST clear (level → 0..5). Used to
+     *  count cleared levels; XP now tracks [bestScores] instead. */
     val firstClearScores: Map<Int, Int> = emptyMap(),
+    /** Best correct-answer count ever achieved per level (level → 0..5). Quiz XP
+     *  is 60 × best, so retaking and improving tops up the difference. */
+    val bestScores: Map<Int, Int> = emptyMap(),
     val session: QuizSession? = null,
 )
 
@@ -66,6 +70,14 @@ class QuizStore(context: Context) {
         prefs.edit().remove(KEY_PROGRESS).apply()
     }
 
+    /** The exact stored JSON, for mirroring to the cloud. Null if nothing saved. */
+    fun rawJson(): String? = prefs.getString(KEY_PROGRESS, null)
+
+    /** Writes cloud-restored JSON straight back, byte-for-byte (no re-parse). */
+    fun saveRawJson(json: String) {
+        prefs.edit().putString(KEY_PROGRESS, json).apply()
+    }
+
     // ── serialisation ──────────────────────────────────────────────────────
 
     private fun progressToJson(p: QuizProgress): JSONObject = JSONObject().apply {
@@ -78,6 +90,9 @@ class QuizStore(context: Context) {
         put("firstClearScores", JSONObject().apply {
             p.firstClearScores.forEach { (level, score) -> put(level.toString(), score) }
         })
+        put("bestScores", JSONObject().apply {
+            p.bestScores.forEach { (level, score) -> put(level.toString(), score) }
+        })
         p.session?.let { put("session", sessionToJson(it)) }
     }
 
@@ -87,6 +102,10 @@ class QuizStore(context: Context) {
         firstAssignedLevels = o.optJSONArray("firstAssignedLevels").toIntSet(),
         usedInitialPass = o.optJSONObject("usedInitialPass").toUsedMap(),
         firstClearScores = o.optJSONObject("firstClearScores").toIntIntMap(),
+        // Migrate: older saves have no bestScores, so seed from the first-clear
+        // scores (the best a returning player has demonstrably scored so far).
+        bestScores = if (o.has("bestScores")) o.optJSONObject("bestScores").toIntIntMap()
+        else o.optJSONObject("firstClearScores").toIntIntMap(),
         session = o.optJSONObject("session")?.let { parseSession(it) },
     )
 

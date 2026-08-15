@@ -52,6 +52,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Load the saved light/dark choice before the first frame.
+        com.example.kinetixfsl.ui.theme.ThemePreference.init(this)
+
         deepLinkPostId = ShareLinks.postIdFrom(intent?.data)
         deepLinkCommunityId = ShareLinks.communityIdFrom(intent?.data)
         deepLinkUserId = ShareLinks.profileIdFrom(intent?.data)
@@ -60,12 +63,26 @@ class MainActivity : ComponentActivity() {
         watchForSignIn()
 
         setContent {
-            KinetixFSLTheme {
-                KinetixNavHost(
-                    deepLinkPostId = deepLinkPostId,
-                    deepLinkCommunityId = deepLinkCommunityId,
-                    deepLinkUserId = deepLinkUserId,
-                )
+            // Reading ThemePreference.mode here re-themes the whole app the
+            // instant Settings changes it — System follows the phone, On/Off
+            // force dark/light.
+            val dark = when (com.example.kinetixfsl.ui.theme.ThemePreference.mode) {
+                com.example.kinetixfsl.ui.theme.ThemePreference.Mode.SYSTEM ->
+                    androidx.compose.foundation.isSystemInDarkTheme()
+                com.example.kinetixfsl.ui.theme.ThemePreference.Mode.LIGHT -> false
+                com.example.kinetixfsl.ui.theme.ThemePreference.Mode.DARK -> true
+            }
+            KinetixFSLTheme(darkTheme = dark) {
+                // Make -night drawables/resources follow the chosen theme, not
+                // just the Compose colours (fixes forced light/dark leaving the
+                // onboarding illustration on the phone's actual mode).
+                com.example.kinetixfsl.ui.theme.ForcedThemeResources(darkTheme = dark) {
+                    KinetixNavHost(
+                        deepLinkPostId = deepLinkPostId,
+                        deepLinkCommunityId = deepLinkCommunityId,
+                        deepLinkUserId = deepLinkUserId,
+                    )
+                }
             }
         }
     }
@@ -139,6 +156,13 @@ class MainActivity : ComponentActivity() {
                 runCatching { CommunityRepository().ensureUserProfile() }
                 runCatching { FcmTokenStore.register() }
                 runCatching { AccountNotifier.check(applicationContext) }
+                // On a fresh install / new device, pull this account's progress
+                // back from the cloud. No-op if local progress already exists,
+                // so it never clobbers on-device data.
+                runCatching {
+                    com.example.kinetixfsl.progress.ProgressSync
+                        .restoreFromCloudIfLocalEmpty(applicationContext)
+                }
             }
         }
     }

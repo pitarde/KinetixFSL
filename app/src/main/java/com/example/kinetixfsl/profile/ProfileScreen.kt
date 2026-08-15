@@ -83,6 +83,14 @@ fun ProfileScreen(
         )
     }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var showSettings by remember { mutableStateOf(false) }
+
+    if (showSettings) {
+        AccountSettingsDialog(
+            onDismiss = { showSettings = false },
+            onSignOut = onSignOut,
+        )
+    }
 
     Column(
         modifier = modifier
@@ -97,7 +105,7 @@ fun ProfileScreen(
             name = name,
             summary = summary,
             tier = progress.rank,
-            onSettings = { /* TODO settings */ },
+            onSettings = { showSettings = true },
         )
 
         Spacer(Modifier.height(18.dp))
@@ -320,6 +328,11 @@ private fun RankPill(tier: RankTier) {
 @Composable
 private fun AchievementsGrid(achievements: List<AchievementView>) {
     val unlocked = achievements.count { it.unlocked }
+    // Tapping a badge opens a dialog explaining how to earn it.
+    var selected by remember { mutableStateOf<AchievementView?>(null) }
+    selected?.let { av ->
+        com.example.kinetixfsl.ui.AchievementInfoDialog(view = av, onDismiss = { selected = null })
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -350,7 +363,7 @@ private fun AchievementsGrid(achievements: List<AchievementView>) {
             Row(modifier = Modifier.fillMaxWidth()) {
                 row.forEach { av ->
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        AchievementBadge(av)
+                        AchievementBadge(av, onClick = { selected = av })
                     }
                 }
                 repeat(5 - row.size) { Spacer(Modifier.weight(1f)) }
@@ -361,10 +374,16 @@ private fun AchievementsGrid(achievements: List<AchievementView>) {
 }
 
 @Composable
-private fun AchievementBadge(view: AchievementView) {
+private fun AchievementBadge(view: AchievementView, onClick: () -> Unit) {
     val bg = if (view.unlocked) AchievementGold
     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.18f)
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(4.dp),
+    ) {
         Box(
             modifier = Modifier
                 .size(46.dp)

@@ -874,13 +874,38 @@ fun KinetixNavHost(
                     val progressRepo = remember {
                         com.example.kinetixfsl.progress.ProgressRepository(practiceContext)
                     }
+                    // This sign's Category XP share (400 pooled across the category,
+                    // remainder on the last item) — shown as the "+N XP" animation.
+                    val learnedXp = remember(categoryId, signIndex) {
+                        com.example.kinetixfsl.progress.XpEngine
+                            .perItemXp(category.signCount)
+                            .getOrElse(signIndex) { 0 }
+                    }
+                    // Whether this sign was already learned before this visit,
+                    // captured once on entry — the "+N XP" animation only plays for
+                    // a first-ever learn, never on a repeat of an already-earned sign.
+                    val alreadyLearnedSign = remember(categoryId, signIndex) {
+                        sign.id in progressRepo.learnedSigns()
+                    }
+                    // Captured after recording a learn, so the screen can celebrate
+                    // anything that success newly unlocked.
+                    var newAchievements by remember {
+                        mutableStateOf<List<com.example.kinetixfsl.progress.Achievement>>(emptyList())
+                    }
                     CameraPracticeScreen(
                         targetLabel = sign.name,
                         displayName = "$displayPrefix ${sign.name}".trim(),
                         isDynamic = sign.isDynamic,
                         categoryId = categoryId,
+                        learnedXp = learnedXp,
+                        alreadyLearnedSign = alreadyLearnedSign,
+                        newAchievements = newAchievements,
                         // Learning a sign correctly awards its Category XP.
-                        onLearned = { progressRepo.recordSignLearned(sign.id, categoryId) },
+                        onLearned = {
+                            val before = progressRepo.unlockedAchievements()
+                            progressRepo.recordSignLearned(sign.id, categoryId)
+                            newAchievements = (progressRepo.unlockedAchievements() - before).toList()
+                        },
                         onSessionStart = { progressRepo.recordLessonStarted(categoryId) },
                         onStudySeconds = { progressRepo.recordStudySeconds(it) },
                         onFailure = { errorType -> progressRepo.recordCameraError(errorType) },

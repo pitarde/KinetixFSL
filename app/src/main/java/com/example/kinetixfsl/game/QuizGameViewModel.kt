@@ -10,13 +10,21 @@ import com.example.kinetixfsl.game.model.LevelStatus
 import com.example.kinetixfsl.game.model.MAX_LEVEL
 import com.example.kinetixfsl.game.model.levelTitle
 import com.example.kinetixfsl.game.model.PASS_THRESHOLD
-import com.example.kinetixfsl.game.model.SIGNS_PER_LEVEL
+import com.example.kinetixfsl.progress.XpEngine
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** One node on the level roadmap. */
-data class LevelCard(val level: Int, val status: LevelStatus, val title: String)
+data class LevelCard(
+    val level: Int,
+    val status: LevelStatus,
+    val title: String,
+    /** XP already earned from this level's first clear (0 until it's passed). */
+    val xpEarned: Int,
+    /** Max XP this level can award on a first clear (a perfect 5/5). */
+    val xpReward: Int,
+)
 
 /** What the whole Quiz Game tab is showing right now. */
 sealed interface QuizScreen {
@@ -27,8 +35,9 @@ sealed interface QuizScreen {
         /** The level the "CURRENT GOAL" card points at (a resume target if any). */
         val goalLevel: Int,
         val goalTitle: String,
-        /** Progress through [goalLevel]'s attempt, styled as XP (0..[xpGoal]). */
+        /** Total quiz XP earned so far across every cleared level. */
         val goalXp: Int,
+        /** Total quiz XP obtainable from all levels (10 × 300 = 3,000). */
         val xpGoal: Int,
         /** True when an unfinished attempt can be resumed. */
         val canResume: Boolean,
@@ -48,6 +57,14 @@ sealed interface QuizScreen {
         val correctCount: Int,
         val passed: Boolean,
         val elapsedSeconds: Int,
+        /** XP awarded for this attempt (0 on a fail or a replay of a cleared level). */
+        val xpEarned: Int,
+        /** Total quiz XP before this attempt — the progress bar animates from here. */
+        val quizXpBefore: Int = 0,
+        /** Total quiz XP obtainable (10 × 300 = 3,000), the bar's full width. */
+        val quizXpGoal: Int = 1,
+        /** Achievements unlocked by finishing this attempt (for the unlock animation). */
+        val newAchievements: List<com.example.kinetixfsl.progress.Achievement> = emptyList(),
     ) : QuizScreen
 }
 
@@ -88,27 +105,35 @@ class QuizGameViewModel(context: Context) {
         if (offerResume && pending != null) resumePromptConsumed = true
         val current = repo.currentLevel()
         // The goal card points at the resume target if there is one, else the
-        // current level. XP mirrors real progress through that level's attempt:
-        // 10 steps (5 videos + 5 questions) × 10 = 100.
+        // current level.
         val goalLevel = pending?.plan?.level ?: current
-        val goalXp = pending?.takeIf { it.plan.level == goalLevel }?.let { stepsDone(it) * 10 } ?: 0
+
+        // Real quiz XP: the goal bar tracks total XP earned across all cleared
+        // levels toward the game's full 3,000-XP quiz pool, so it actually moves
+        // as levels are passed (the old "steps × 10" was 0 unless mid-attempt).
+        val bestScores = repo.bestScores()
+        val quizXpEarned = XpEngine.quizXp(bestScores)
+        val quizXpTotal = MAX_LEVEL * XpEngine.QUIZ_LEVEL_MAX
 
         _screen.value = QuizScreen.Map(
-            levels = (1..MAX_LEVEL).map { LevelCard(it, repo.statusOf(it), levelTitle(it)) },
+            levels = (1..MAX_LEVEL).map { level ->
+                LevelCard(
+                    level = level,
+                    status = repo.statusOf(level),
+                    title = levelTitle(level),
+                    // XP banked so far for this level = 60 × best score.
+                    xpEarned = XpEngine.quizLevelXp(bestScores[level] ?: 0),
+                    xpReward = XpEngine.QUIZ_LEVEL_MAX,
+                )
+            },
             goalLevel = goalLevel,
             goalTitle = levelTitle(goalLevel),
-            goalXp = goalXp,
-            xpGoal = XP_PER_LEVEL,
+            goalXp = quizXpEarned,
+            xpGoal = quizXpTotal,
             canResume = pending != null,
             passedCount = repo.passedCount(),
             resumeSession = if (offerResume) pending else null,
         )
-    }
-
-    /** Steps completed in an attempt: full videos watched, then questions reached. */
-    private fun stepsDone(session: QuizSession): Int = when (session.phase) {
-        LevelPhase.VIDEO -> session.index
-        LevelPhase.QUIZ -> SIGNS_PER_LEVEL + session.index
     }
 
     /** The goal card's button: resume the unfinished attempt, or start the level. */
@@ -204,12 +229,34 @@ class QuizGameViewModel(context: Context) {
             val passed = correct >= PASS_THRESHOLD
             val elapsed = if (quizStartMillis == 0L) 0
                 else ((System.currentTimeMillis() - quizStartMillis) / 1000).toInt()
+            // XP tracks the BEST score per level: an attempt only earns the
+            // difference between this run's correct count and the best banked so
+            // far (60 per extra correct). Beating your best on a retake tops it up;
+            // matching or doing worse earns nothing.
+            val previousBest = repo.bestScores()[s.plan.level] ?: 0
+            val newBest = maxOf(previousBest, correct)
+            val xpEarned = (newBest - previousBest) * XpEngine.QUIZ_XP_PER_CORRECT
+            // Snapshot quiz XP + unlocked achievements BEFORE the clear is recorded
+            // so the results screen can animate the +XP into the bar and celebrate
+            // anything this attempt newly unlocked.
+            val quizXpBefore = XpEngine.quizXp(repo.bestScores())
+            val achievementsBefore = progress.unlockedAchievements()
             repo.completeLevel(s.plan.level, correct, passed)
             // Finishing a quiz counts as a practice day (streak), logs study time,
             // and may unlock achievements; quiz XP is read from the quiz store.
             progress.recordPracticeDay()
             if (elapsed > 0) progress.recordStudySeconds(elapsed.toLong())
-            _screen.value = QuizScreen.Result(s.plan, correct, passed, elapsed)
+            val newAchievements = (progress.unlockedAchievements() - achievementsBefore).toList()
+            _screen.value = QuizScreen.Result(
+                plan = s.plan,
+                correctCount = correct,
+                passed = passed,
+                elapsedSeconds = elapsed,
+                xpEarned = xpEarned,
+                quizXpBefore = quizXpBefore,
+                quizXpGoal = MAX_LEVEL * XpEngine.QUIZ_LEVEL_MAX,
+                newAchievements = newAchievements,
+            )
         }
     }
 
@@ -241,9 +288,6 @@ class QuizGameViewModel(context: Context) {
     private fun freshAnswers(plan: LevelPlan): List<Boolean?> = List(plan.questions.size) { null }
 
     private companion object {
-        /** Display-only XP goal per level for the roadmap card (XP scaling is TBD, §8). */
-        const val XP_PER_LEVEL = 100
-
         /**
          * Whether the "Continue last session?" popup has already been offered this
          * app process. Static so it survives the ViewModel being recreated each

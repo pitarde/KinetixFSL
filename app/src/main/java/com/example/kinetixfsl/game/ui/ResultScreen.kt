@@ -1,6 +1,7 @@
 package com.example.kinetixfsl.game.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -17,12 +18,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.tween
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +47,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.kinetixfsl.game.model.LevelPlan
 import com.example.kinetixfsl.game.model.SIGNS_PER_LEVEL
+import com.example.kinetixfsl.progress.Achievement
+import com.example.kinetixfsl.ui.AchievementUnlockedPopup
+import com.example.kinetixfsl.ui.FloatingXpBadge
 
 /**
  * End-of-level summary (the "Quiz_Done" mockup). On a pass it celebrates —
@@ -55,6 +63,10 @@ fun ResultScreen(
     correctCount: Int,
     passed: Boolean,
     elapsedSeconds: Int,
+    xpEarned: Int,
+    quizXpBefore: Int = 0,
+    quizXpGoal: Int = 1,
+    newAchievements: List<Achievement> = emptyList(),
     onRetry: () -> Unit,
     onProceed: () -> Unit,
     onHome: () -> Unit,
@@ -91,10 +103,13 @@ fun ResultScreen(
             )
             Spacer(Modifier.height(20.dp))
 
+            // The "better luck" vector's artwork is centred in a square viewport
+            // with side margins, so at the same box size it reads smaller than the
+            // pass image — give it a larger box so it lands at a matching visual size.
             ResultIllustration(
                 passed = passed,
                 modifier = Modifier
-                    .size(200.dp)
+                    .size(if (passed) 200.dp else 260.dp)
                     .scale(popScale),
             )
 
@@ -111,6 +126,19 @@ fun ResultScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 StatPill(icon = QuizIcons.Clock, label = formatTime(elapsedSeconds))
                 StatPill(icon = QuizIcons.Flag, label = "$scorePct%")
+            }
+
+            // XP feedback so the learner sees exactly what the quiz was worth —
+            // the +XP badge floats up into the bar, which fills to its new total.
+            // Shown on a pass, and also whenever the attempt improved the best
+            // score (a not-yet-passing run still banks XP for its correct answers).
+            if (passed || xpEarned > 0) {
+                Spacer(Modifier.height(20.dp))
+                AnimatedXpReward(
+                    xpEarned = xpEarned,
+                    xpBefore = quizXpBefore,
+                    xpGoal = quizXpGoal,
+                )
             }
 
             Spacer(Modifier.height(40.dp))
@@ -155,6 +183,82 @@ fun ResultScreen(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+
+        // Any achievements this attempt unlocked slide in as a top banner.
+        AchievementUnlockedPopup(
+            achievements = newAchievements,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+        )
+    }
+}
+
+/**
+ * The results-screen XP reward: a "+N XP" badge that floats up into a quiz-XP
+ * progress bar, which then fills from the pre-attempt total to the new total. A
+ * replay that earns nothing shows "no new XP" instead of a misleading badge.
+ */
+@Composable
+private fun AnimatedXpReward(xpEarned: Int, xpBefore: Int, xpGoal: Int) {
+    var showBadge by remember { mutableStateOf(false) }
+    var arrived by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        showBadge = true
+        // Matches the badge's own timing (see FloatingXpBadge): it sits still and
+        // readable for the first ~45% of its ~3.2s flight before rising into the
+        // bar, so the fill only starts once it visibly "arrives".
+        delay(1450)
+        arrived = true
+    }
+
+    val goal = xpGoal.coerceAtLeast(1)
+    val shownXp = xpBefore + if (arrived) xpEarned else 0
+    val fill by animateFloatAsState(
+        targetValue = (shownXp.toFloat() / goal).coerceIn(0f, 1f),
+        animationSpec = tween(1800, easing = LinearOutSlowInEasing),
+        label = "xpFill",
+    )
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // Reserved space above the bar for the badge to rise through.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (xpEarned > 0) {
+                FloatingXpBadge(xp = xpEarned, visible = showBadge)
+            } else {
+                Text(
+                    text = "Already earned · no new XP",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        LinearProgressIndicator(
+            progress = { fill },
+            modifier = Modifier
+                .fillMaxWidth(0.82f)
+                .height(10.dp)
+                .clip(RoundedCornerShape(5.dp)),
+            color = MaterialTheme.colorScheme.tertiary,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "$shownXp / $goal quiz XP",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 

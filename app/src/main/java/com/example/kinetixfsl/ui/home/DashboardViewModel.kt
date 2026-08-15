@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import com.example.kinetixfsl.auth.AuthRepository
 
 /**
- * The dashboard's state. Extremely small for now — the interesting fields
+ * The dashboard's state. Extremely-small for now — the interesting fields
  * (streak, module progress) are still hardcoded and read directly by the UI
  * from `DashboardData.kt`, so this ViewModel only needs to worry about the
  * greeting name.

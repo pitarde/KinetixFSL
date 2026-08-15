@@ -3,6 +3,9 @@ package com.example.kinetixfsl.game.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
@@ -24,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.kinetixfsl.game.model.LevelPlan
@@ -93,16 +98,34 @@ fun QuizQuestionScreen(
                         correct = cor
                         chosenLabel = chosen
                     }
+                    // Each new question slides up and fades in, so the quiz feels
+                    // lively rather than snapping between static screens.
+                    var entered by remember(index) { mutableStateOf(false) }
+                    LaunchedEffect(index) { entered = true }
+                    val enterAlpha by animateFloatAsState(
+                        targetValue = if (entered) 1f else 0f,
+                        animationSpec = tween(320),
+                        label = "qEnterAlpha",
+                    )
+                    val enterShift by animateFloatAsState(
+                        targetValue = if (entered) 0f else 70f,
+                        animationSpec = tween(360, easing = FastOutSlowInEasing),
+                        label = "qEnterShift",
+                    )
+                    val entry = Modifier.graphicsLayer {
+                        alpha = enterAlpha
+                        translationY = enterShift
+                    }
                     when (question.type) {
                         // These two fill the screen — their cards stretch to fit,
                         // so they never scroll.
                         QuestionType.MATCH ->
-                            MatchQuestion(question, revealed, onSelection, Modifier.fillMaxSize())
+                            MatchQuestion(question, revealed, onSelection, entry.fillMaxSize())
                         QuestionType.VIDEO_FROM_WORD ->
-                            VideoFromWordQuestion(question, revealed, onSelection, Modifier.fillMaxSize())
+                            VideoFromWordQuestion(question, revealed, onSelection, entry.fillMaxSize())
                         // The single-video questions scroll if taller than the screen.
                         else -> Column(
-                            modifier = Modifier
+                            modifier = entry
                                 .fillMaxSize()
                                 .verticalScroll(rememberScrollState()),
                         ) {
@@ -179,6 +202,19 @@ fun QuizQuestionScreen(
             modifier = Modifier.align(Alignment.Center),
         ) {
             FeedbackCard(correct = shownCorrect, isLast = isLast, onNext = onNext)
+        }
+
+        // A confetti burst rains down while a correct answer is celebrated.
+        if (revealed && shownCorrect) {
+            ConfettiOverlay(
+                colors = listOf(
+                    MaterialTheme.colorScheme.primary,
+                    MaterialTheme.colorScheme.tertiary,
+                    MaterialTheme.colorScheme.secondary,
+                    MaterialTheme.colorScheme.error,
+                ),
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }

@@ -25,7 +25,17 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,6 +49,7 @@ import com.example.kinetixfsl.R
 import com.example.kinetixfsl.modules.model.FslSignData
 import com.example.kinetixfsl.modules.model.SignCategory
 import com.example.kinetixfsl.modules.model.SignEntry
+import com.example.kinetixfsl.progress.XpEngine
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import com.example.kinetixfsl.ui.theme.KinetixGreen
 
@@ -67,6 +78,11 @@ fun SignListScreen(
     val progress = if (category.signCount > 0) {
         completedCount.toFloat() / category.signCount
     } else 0f
+
+    // The exact XP each sign awards — the category's 400-XP pool split evenly per
+    // item (remainder on the last), the SAME value Camera Practice awards on a
+    // correct sign. Displaying this here keeps the label and the reward in sync.
+    val perSignXp = remember(category.id) { XpEngine.perItemXp(category.signCount) }
 
     Column(
         modifier = modifier
@@ -114,6 +130,7 @@ fun SignListScreen(
                     displayPrefix = getDisplayPrefix(category.id),
                     isCompleted = isCompleted,
                     showConnector = !isLast,
+                    xpReward = perSignXp.getOrElse(index) { 0 },
                     onClick = { onSignClick(index) },
                 )
             }
@@ -233,8 +250,17 @@ private fun ProgressSection(
 
         Spacer(Modifier.height(6.dp))
 
+        // The bar animates up from empty on entry and glides whenever a new sign
+        // is learned, so progress feels like it's moving rather than jumping.
+        var start by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { start = true }
+        val animatedProgress by animateFloatAsState(
+            targetValue = if (start) progress else 0f,
+            animationSpec = tween(900, easing = FastOutSlowInEasing),
+            label = "moduleProgress",
+        )
         LinearProgressIndicator(
-            progress = { progress },
+            progress = { animatedProgress },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(6.dp)
@@ -255,12 +281,38 @@ private fun SignListItem(
     displayPrefix: String,
     isCompleted: Boolean,
     showConnector: Boolean,
+    xpReward: Int,
     onClick: () -> Unit,
 ) {
-    val xp = if (isCompleted) 20 else 30
+    // The XP this sign awards — the exact value Camera Practice grants on a
+    // correct sign, so the label a learner sees before doing it matches what
+    // they earn. It's the same whether or not the sign is already completed.
+    val xp = xpReward
+
+    // Tap feedback: the card dips slightly while pressed.
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(if (pressed) 0.96f else 1f, label = "signPress")
+
+    // Gentle entry: each row fades and slides in from the left the first time
+    // it appears, giving the learning path a lively "unrolling" feel.
+    var appeared by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { appeared = true }
+    val enterAlpha by animateFloatAsState(
+        targetValue = if (appeared) 1f else 0f,
+        animationSpec = tween(340),
+        label = "signEnterAlpha",
+    )
+    val enterShift by animateFloatAsState(
+        targetValue = if (appeared) 0f else 48f,
+        animationSpec = tween(340, easing = FastOutSlowInEasing),
+        label = "signEnterShift",
+    )
 
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer { alpha = enterAlpha; translationX = enterShift },
         verticalAlignment = Alignment.Top,
     ) {
         // ── Left: connector line ────────────────────────────
@@ -307,9 +359,10 @@ private fun SignListItem(
             modifier = Modifier
                 .weight(1f)
                 .height(56.dp)
+                .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
                 .clip(RoundedCornerShape(12.dp))
                 .background(cardColor)
-                .clickable(onClick = onClick)
+                .clickable(interactionSource = interaction, indication = null, onClick = onClick)
                 .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

@@ -3,8 +3,10 @@ package com.example.kinetixfsl.detection
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.util.Log
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
@@ -43,8 +45,25 @@ class HandLandmarkHelper(
     private var closed = false
 
     init {
+        // Try the GPU delegate first — hand landmark detection is much faster
+        // on the GPU, which is what makes the overlay keep up with fast motion
+        // signs. Not every device/driver supports it, and a bad one throws at
+        // creation time, so we fall back to CPU rather than crash. Both paths
+        // produce identical landmark coordinates, so nothing downstream (the
+        // classifier, the training match) changes — only the speed.
+        handLandmarker = buildLandmarker(context, numHands, Delegate.GPU)
+            ?: buildLandmarker(context, numHands, Delegate.CPU)
+            ?: error("HandLandmarker failed to initialize on both GPU and CPU")
+    }
+
+    private fun buildLandmarker(
+        context: Context,
+        numHands: Int,
+        delegate: Delegate,
+    ): HandLandmarker? = try {
         val baseOptions = BaseOptions.builder()
             .setModelAssetPath("hand_landmarker.task")
+            .setDelegate(delegate)
             .build()
 
         // VIDEO running mode keeps a tracker between frames, so most frames
@@ -61,7 +80,14 @@ class HandLandmarkHelper(
             .setMinTrackingConfidence(0.3f)
             .build()
 
-        handLandmarker = HandLandmarker.createFromOptions(context, options)
+        HandLandmarker.createFromOptions(context, options).also {
+            Log.d(TAG, "HandLandmarker running on $delegate")
+        }
+    } catch (e: Throwable) {
+        // Throwable, not Exception: a missing GPU delegate can surface as an
+        // UnsatisfiedLinkError / native error, which is not an Exception.
+        Log.w(TAG, "HandLandmarker $delegate init failed, will fall back", e)
+        null
     }
 
     /**
@@ -85,10 +111,10 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult =
-            detectLocked(mpImage, timestampMs) ?: return null
+        val result = detectLocked(mpImage, timestampMs)
+        recycleIfCopy(processedBitmap, bitmap)
 
-        if (result.landmarks().isEmpty()) return null
+        if (result == null || result.landmarks().isEmpty()) return null
 
         return normalizeLandmarks(result)
     }
@@ -113,10 +139,10 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult =
-            detectLocked(mpImage, timestampMs) ?: return null
+        val result = detectLocked(mpImage, timestampMs)
+        recycleIfCopy(processedBitmap, bitmap)
 
-        if (result.landmarks().isEmpty()) return null
+        if (result == null || result.landmarks().isEmpty()) return null
 
         val features = normalizeLandmarks(result)
 
@@ -158,10 +184,10 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult =
-            detectLocked(mpImage, timestampMs) ?: return null
+        val result = detectLocked(mpImage, timestampMs)
+        recycleIfCopy(processedBitmap, bitmap)
 
-        if (result.landmarks().isEmpty()) return null
+        if (result == null || result.landmarks().isEmpty()) return null
 
         // Raw landmarks per hand; keep the leftmost for determinism.
         val hands = result.landmarks().map { hand ->
@@ -218,10 +244,10 @@ class HandLandmarkHelper(
         }
 
         val mpImage = BitmapImageBuilder(processedBitmap).build()
-        val result: HandLandmarkerResult =
-            detectLocked(mpImage, timestampMs) ?: return null
+        val result = detectLocked(mpImage, timestampMs)
+        recycleIfCopy(processedBitmap, bitmap)
 
-        if (result.landmarks().isEmpty()) return null
+        if (result == null || result.landmarks().isEmpty()) return null
 
         // Raw landmarks per hand, in MediaPipe's 0..1 space.
         val hands = result.landmarks().map { hand ->
@@ -341,6 +367,17 @@ class HandLandmarkHelper(
     }
 
     /**
+     * Frees the mirrored frame copy made for front-camera detection as soon as
+     * the detection is done. Without this, every camera frame leaks a full-res
+     * bitmap; a sign that takes the whole detection window to (not) match churns
+     * dozens of them, which can exhaust native memory and crash the app. Never
+     * recycles [original] — the caller still owns and recycles that one.
+     */
+    private fun recycleIfCopy(processed: Bitmap, original: Bitmap) {
+        if (processed !== original && !processed.isRecycled) processed.recycle()
+    }
+
+    /**
      * Runs the detector under [lock], returning null once [close] has run.
      *
      * This is the single point where the native handle is touched, so a frame
@@ -368,6 +405,7 @@ class HandLandmarkHelper(
     }
 
     companion object {
+        private const val TAG = "HandLandmarkHelper"
         const val SINGLE_HAND_FEATURES = 63
         const val TWO_HAND_FEATURES = 126
     }

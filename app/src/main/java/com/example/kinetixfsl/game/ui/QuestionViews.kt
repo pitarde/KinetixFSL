@@ -1,9 +1,16 @@
 package com.example.kinetixfsl.game.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -123,10 +132,17 @@ fun VideoFromWordQuestion(
         ) {
             question.signOptions.forEach { signId ->
                 val state = optionState(revealed, selected == signId, signId == question.correctSignId)
+                // The correct video gently pops when the answer is revealed.
+                val pop by animateFloatAsState(
+                    targetValue = if (state == OptionVisual.CORRECT) 1.04f else 1f,
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                    label = "videoPop",
+                )
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
+                        .graphicsLayer { scaleX = pop; scaleY = pop }
                         .clip(CARD_SHAPE)
                         .border(feedbackBorder(state), CARD_SHAPE)
                         .clickable(enabled = !revealed) {
@@ -195,9 +211,24 @@ fun MatchQuestion(
                             assigned = assignment.containsKey(i),
                             correct = correctPair,
                             selected = selectedLeft == i,
-                            accent = assignment[i]?.let { pairColor(i) },
+                            accent = if (assignment.containsKey(i))
+                                MaterialTheme.colorScheme.primary else null,
                         ),
-                        onClick = if (revealed) null else ({ selectedLeft = i }),
+                        onClick = if (revealed) null else ({
+                            when {
+                                // Already paired: tapping it again unmarks the pair
+                                // and selects it, so the learner can pick a new word
+                                // without being stuck with their first answer.
+                                assignment.containsKey(i) && selectedLeft != i -> {
+                                    assignment = assignment - i
+                                    selectedLeft = i
+                                    report()
+                                }
+                                // Tapping the same unpaired card again deselects it.
+                                selectedLeft == i -> selectedLeft = null
+                                else -> selectedLeft = i
+                            }
+                        }),
                     ) {
                         SignVideo(
                             signId = signId,
@@ -224,14 +255,23 @@ fun MatchQuestion(
                             assigned = assignedLeft != null,
                             correct = correctPair,
                             selected = false,
-                            accent = assignedLeft?.let { pairColor(it) },
+                            accent = if (assignedLeft != null)
+                                MaterialTheme.colorScheme.primary else null,
                         ),
                         onClick = if (revealed) null else ({
                             val l = selectedLeft
-                            if (l != null) {
-                                assignment = assignment.filterValues { it != j } + (l to j)
-                                selectedLeft = null
-                                report()
+                            when {
+                                l != null -> {
+                                    assignment = assignment.filterValues { it != j } + (l to j)
+                                    selectedLeft = null
+                                    report()
+                                }
+                                // Nothing selected and this word is already paired:
+                                // tapping it unmarks that pair so it can be redone.
+                                assignedLeft != null -> {
+                                    assignment = assignment.filterValues { it != j }
+                                    report()
+                                }
                             }
                         }),
                     ) {
@@ -382,12 +422,41 @@ fun OptionChip(
         OptionVisual.SELECTED -> MaterialTheme.colorScheme.primaryContainer
         OptionVisual.NEUTRAL -> MaterialTheme.colorScheme.surfaceVariant
     }
+
+    // Tactile feedback: a dip on press, a happy pop when it's revealed correct,
+    // and a side-to-side shake when the chosen answer turns out wrong.
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(if (pressed) 0.94f else 1f, label = "chipPress")
+    val correctPop by animateFloatAsState(
+        targetValue = if (state == OptionVisual.CORRECT) 1.06f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "chipPop",
+    )
+    val shake = remember { Animatable(0f) }
+    LaunchedEffect(state) {
+        if (state == OptionVisual.WRONG) {
+            repeat(3) {
+                shake.animateTo(12f, tween(45))
+                shake.animateTo(-12f, tween(45))
+            }
+            shake.animateTo(0f, tween(45))
+        } else {
+            shake.snapTo(0f)
+        }
+    }
+
     Box(
         modifier = modifier
+            .graphicsLayer {
+                scaleX = pressScale * correctPop
+                scaleY = pressScale * correctPop
+                translationX = shake.value
+            }
             .clip(RoundedCornerShape(18.dp))
             .background(container)
             .border(feedbackBorder(state), RoundedCornerShape(18.dp))
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -401,12 +470,3 @@ fun OptionChip(
     }
 }
 
-/** Distinct accent per matched pair, so connections read at a glance. */
-@Composable
-private fun pairColor(pairIndex: Int): Color {
-    val palette = listOf(
-        MaterialTheme.colorScheme.primary,
-        MaterialTheme.colorScheme.tertiary,
-    )
-    return palette[pairIndex % palette.size]
-}

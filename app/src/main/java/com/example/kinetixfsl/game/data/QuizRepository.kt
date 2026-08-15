@@ -34,6 +34,15 @@ class QuizRepository(context: Context) {
 
     fun passedCount(): Int = progress.passedLevels.count()
 
+    /** Correct-answer count of each level's first clear (level → 0..5). */
+    fun firstClearScores(): Map<Int, Int> = progress.firstClearScores
+
+    /** Best correct-answer count reached per level (level → 0..5) — drives XP. */
+    fun bestScores(): Map<Int, Int> = progress.bestScores
+
+    /** True once [level] has been cleared for the first time. */
+    fun isFirstCleared(level: Int): Boolean = level in progress.firstClearScores
+
     /** An unfinished attempt to offer to resume, or null. */
     fun pendingSession(): QuizSession? = progress.session
 
@@ -96,12 +105,18 @@ class QuizRepository(context: Context) {
      */
     fun completeLevel(level: Int, correctCount: Int, passed: Boolean) {
         var next = progress.copy(session = null)
+
+        // Best score drives XP and is tracked on EVERY attempt, pass or not — a
+        // 2/5 attempt still banks 2 correct's worth of XP, and a later 3/5 tops it
+        // up. It only ever moves up (max), so replaying a worse run costs nothing.
+        val newBest = maxOf(next.bestScores[level] ?: 0, correctCount)
+        next = next.copy(bestScores = next.bestScores + (level to newBest))
+
         if (passed) {
             next = next.copy(
                 passedLevels = next.passedLevels + level,
                 unlockedMaxLevel = maxOf(next.unlockedMaxLevel, (level + 1).coerceAtMost(MAX_LEVEL)),
-                // Record the score of the FIRST clear only — later replays don't
-                // overwrite it, keeping quiz XP a one-time award per level.
+                // First-clear score is recorded once, only to count cleared levels.
                 firstClearScores = if (level in next.firstClearScores) next.firstClearScores
                 else next.firstClearScores + (level to correctCount),
             )

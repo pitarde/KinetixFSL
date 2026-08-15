@@ -31,6 +31,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -343,11 +348,20 @@ fun LearningRoomScreen(
         Spacer(Modifier.weight(1f))
 
         // ── Practice button ──
+        // A gentle breathing pulse invites the learner to try the sign.
+        val pulse = rememberInfiniteTransition(label = "practicePulse")
+        val pulseScale by pulse.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.035f,
+            animationSpec = infiniteRepeatable(tween(950), RepeatMode.Reverse),
+            label = "practicePulseScale",
+        )
         Button(
             onClick = onPractice,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 12.dp)
+                .graphicsLayer { scaleX = pulseScale; scaleY = pulseScale }
                 .height(54.dp),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(
