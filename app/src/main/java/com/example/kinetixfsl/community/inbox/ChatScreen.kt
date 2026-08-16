@@ -50,7 +50,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -148,9 +152,19 @@ fun ChatScreen(
         if (totalRows > 0) listState.animateScrollToItem(totalRows - 1)
     }
 
+    // Gentle fade + slide-up on entry, matching the other community screens.
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val enter by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = tween(380, easing = FastOutSlowInEasing),
+        label = "chatEnter",
+    )
+
     Column(
         modifier = modifier
             .fillMaxSize()
+            .graphicsLayer { alpha = enter; translationY = (1f - enter) * 36f }
             .background(MaterialTheme.colorScheme.background)
             .statusBarsPadding(),
     ) {

@@ -265,7 +265,8 @@ private fun ProgressSection(
                 .fillMaxWidth()
                 .height(6.dp)
                 .clip(RoundedCornerShape(3.dp)),
-            color = MaterialTheme.colorScheme.primary,
+            // Shared app-wide progress accent (matches Profile / Dashboard / Quiz).
+            color = com.example.kinetixfsl.profile.AccentProgress,
             trackColor = MaterialTheme.colorScheme.surfaceVariant,
         )
 

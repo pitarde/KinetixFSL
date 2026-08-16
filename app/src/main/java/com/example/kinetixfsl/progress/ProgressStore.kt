@@ -17,6 +17,10 @@ data class ProgressState(
     val currentStreak: Int = 0,
     val bestStreak: Int = 0,
     val streakMilestones: Int = 0,
+    /** Which streak days (1..6) the user has explicitly claimed for XP. Streak XP
+     *  is derived from THIS, so a day's 500 XP only lands when the user taps
+     *  Claim — and is never revoked once banked. */
+    val claimedStreakDays: Set<Int> = emptySet(),
     val hadComeback: Boolean = false,
     val unlockedAchievements: Set<String> = emptySet(),
 )
@@ -54,6 +58,7 @@ class ProgressStore(context: Context) {
         put("currentStreak", s.currentStreak)
         put("bestStreak", s.bestStreak)
         put("streakMilestones", s.streakMilestones)
+        put("claimedStreakDays", JSONArray(s.claimedStreakDays.toList()))
         put("hadComeback", s.hadComeback)
         put("unlockedAchievements", JSONArray(s.unlockedAchievements.toList()))
     }
@@ -64,12 +69,21 @@ class ProgressStore(context: Context) {
         currentStreak = o.optInt("currentStreak", 0),
         bestStreak = o.optInt("bestStreak", 0),
         streakMilestones = o.optInt("streakMilestones", 0),
+        // Migration: users from before claiming existed had streak XP granted
+        // automatically per 7-day milestone. Seed those as already-claimed so
+        // switching to the claim model never drops their banked XP or level.
+        claimedStreakDays = if (o.has("claimedStreakDays"))
+            o.optJSONArray("claimedStreakDays").toIntSet()
+        else (1..o.optInt("streakMilestones", 0)).toSet(),
         hadComeback = o.optBoolean("hadComeback", false),
         unlockedAchievements = o.optJSONArray("unlockedAchievements").toStringSet(),
     )
 
     private fun JSONArray?.toStringSet(): Set<String> =
         if (this == null) emptySet() else (0 until length()).map { optString(it) }.toSet()
+
+    private fun JSONArray?.toIntSet(): Set<Int> =
+        if (this == null) emptySet() else (0 until length()).map { optInt(it) }.toSet()
 
     private companion object {
         const val KEY = "progress_v1"

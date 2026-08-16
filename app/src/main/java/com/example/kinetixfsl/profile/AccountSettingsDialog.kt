@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
@@ -173,7 +174,15 @@ private fun SettingsCard(onDeleteAccount: () -> Unit, onDismiss: () -> Unit) {
                     .clip(RoundedCornerShape(12.dp))
                     .clickable(onClick = onDeleteAccount)
                     .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                Icon(
+                    imageVector = com.example.kinetixfsl.community.CommunityIcons.Delete,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.size(10.dp))
                 Text(
                     text = "Delete account",
                     style = MaterialTheme.typography.titleMedium,

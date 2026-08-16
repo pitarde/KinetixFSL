@@ -59,6 +59,7 @@ import coil.decode.SvgDecoder
 import coil.request.ImageRequest
 import com.example.kinetixfsl.game.QuizScreen
 import com.example.kinetixfsl.game.model.LevelStatus
+import com.example.kinetixfsl.profile.AccentProgress
 import com.example.kinetixfsl.ui.theme.KinetixGreen
 import com.example.kinetixfsl.ui.theme.KinetixIndigo
 import kotlin.math.PI
@@ -183,7 +184,9 @@ private fun AdventureHeader(state: QuizScreen.Map, allDone: Boolean, onAction: (
                 .fillMaxWidth()
                 .height(12.dp)
                 .clip(CircleShape),
-            color = MaterialTheme.colorScheme.tertiary,
+            // Matches the Profile screen's progress accent so bars read the same
+            // everywhere in the app.
+            color = AccentProgress,
             trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f),
         )
         Spacer(Modifier.height(8.dp))

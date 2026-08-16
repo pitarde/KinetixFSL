@@ -6,6 +6,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import com.google.firebase.firestore.CollectionReference
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -73,6 +74,7 @@ class AccountEraser(
         deleteOwnPosts(uid)
         deleteOwnCommunities(uid)
         deleteNotifications(uid)
+        deleteUserProfile(uid)
     }
 
     /** Clears the per-account progress, activity and quiz SharedPreferences. */
@@ -99,14 +101,53 @@ class AccountEraser(
         }
     }.onFailure { Log.w(TAG, "own-posts delete failed", it) }.let { }
 
-    /** Deletes communities this user created, members first. */
+    /**
+     * Deletes communities this user created — and crucially, EVERY post inside
+     * them (by any author, not just this user), members, then the community doc
+     * itself. Without the post sweep, the community's content used to linger in
+     * the feed after the owner deleted their account.
+     */
     private suspend fun deleteOwnCommunities(uid: String) = runCatching {
         val comms = db.collection(COMMUNITIES).whereEqualTo("creatorId", uid).get().await()
         for (doc in comms.documents) {
+            deletePostsInCommunity(doc.id)
             deleteAllIn(doc.reference.collection(MEMBERS))
             runCatching { doc.reference.delete().await() }
         }
     }.onFailure { Log.w(TAG, "own-communities delete failed", it) }.let { }
+
+    /** Deletes every post in a community (any author), tree-first. */
+    private suspend fun deletePostsInCommunity(communityId: String) = runCatching {
+        val posts = db.collection(POSTS)
+            .whereEqualTo(FIELD_COMMUNITY_ID, communityId).get().await()
+        for (doc in posts.documents) {
+            val ref = doc.reference
+            deleteAllIn(ref.collection(COMMENTS))
+            deleteAllIn(ref.collection(VOTES))
+            deleteAllIn(ref.collection(SHARES))
+            runCatching { ref.delete().await() }
+        }
+    }.onFailure { Log.w(TAG, "community-posts delete failed", it) }.let { }
+
+    /**
+     * Removes the user's public profile so a later sign-in starts from a default
+     * profile instead of the deleted account's name/photo. Best-effort: if the
+     * security rules forbid deleting `users/{uid}`, blank the identifying fields
+     * as a fallback so nothing recognisable is left behind.
+     */
+    private suspend fun deleteUserProfile(uid: String) {
+        val ref = db.collection(USERS).document(uid)
+        runCatching { deleteAllIn(ref.collection(JOINED)) }
+        val deleted = runCatching { ref.delete().await() }.isSuccess
+        if (!deleted) {
+            runCatching {
+                ref.set(
+                    mapOf("displayName" to "Anonymous", "avatarUrl" to null),
+                    SetOptions.merge(),
+                ).await()
+            }.onFailure { Log.w(TAG, "profile blank fallback failed", it) }
+        }
+    }
 
     /** Empties this user's notification inbox. */
     private suspend fun deleteNotifications(uid: String) = runCatching {
@@ -138,6 +179,9 @@ class AccountEraser(
         const val MEMBERS = "members"
         const val NOTIFICATIONS = "notifications"
         const val ITEMS = "items"
+        const val USERS = "users"
+        const val JOINED = "joined"
+        const val FIELD_COMMUNITY_ID = "communityId"
         const val BATCH = 300
     }
 }

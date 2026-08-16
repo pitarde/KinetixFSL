@@ -226,6 +226,26 @@ class CommunityDirectoryRepository(
     }
 
     /**
+     * Finds communities whose name contains [query] (case-insensitive).
+     * One-shot read + client-side filter, same tradeoff as [observeAllCommunities].
+     */
+    suspend fun searchCommunities(query: String, limit: Int = 15): List<Community> {
+        val needle = query.trim().lowercase()
+        if (needle.isEmpty()) return emptyList()
+        return try {
+            firestore.collection(COMMUNITIES)
+                .get()
+                .await()
+                .documents
+                .mapNotNull { it.toCommunityOrNull() }
+                .filter { it.name.lowercase().contains(needle) }
+                .take(limit)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
      * Every community, newest first. Discover filters this list by category
      * client-side — the set is small enough that a single ordered read beats a
      * composite index per category combination.

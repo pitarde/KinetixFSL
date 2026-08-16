@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -40,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+import com.example.kinetixfsl.profile.AccentProgress
+import com.example.kinetixfsl.ui.theme.KinetixIndigo
 import com.example.kinetixfsl.ui.theme.KinetixNavy
 import com.example.kinetixfsl.ui.theme.KinetixWhite
 
@@ -64,7 +67,21 @@ fun DashboardContent(
     // in-progress modules the user has started but not finished.
     val context = androidx.compose.ui.platform.LocalContext.current
     val repo = remember { com.example.kinetixfsl.progress.ProgressRepository(context) }
-    val progress = remember { repo.snapshot() }
+    // Mutable so claiming a streak day re-snapshots and the UI reflects the new
+    // XP/level immediately.
+    var progress by remember { mutableStateOf(repo.snapshot()) }
+    // Opening the app counts as today's activity, so the login streak actually
+    // advances day-to-day (it used to only move when you finished a lesson or
+    // quiz, which is why it looked stuck at 1). Idempotent within a calendar day.
+    // If a day (or more) was missed, the streak resets and this captures that so
+    // the card can show a one-time "Skipped" notice instead of just silently
+    // dropping back to Day 1.
+    var streakSkipped by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val outcome = repo.recordPracticeDay()
+        streakSkipped = outcome.isSkipped
+        progress = repo.snapshot()
+    }
     val analytics = remember(progress) { com.example.kinetixfsl.profile.computeAnalytics(repo, progress) }
 
     // Celebrate reaching a new rank tier. We persist the last-acknowledged rank
@@ -89,8 +106,14 @@ fun DashboardContent(
         progress = progress,
         weakSpots = analytics.confusionPairs.size,
         streakRisk = analytics.streakRiskPercent,
+        streakSkipped = streakSkipped,
         modifier = modifier,
         onOpenModule = onOpenModule,
+        onClaimStreak = { day ->
+            val awarded = repo.claimStreakDay(day)
+            if (awarded > 0) progress = repo.snapshot()
+            awarded
+        },
     )
 }
 
@@ -108,8 +131,13 @@ private fun DashboardScreenContent(
     progress: com.example.kinetixfsl.progress.PlayerProgress,
     weakSpots: Int,
     streakRisk: Int,
+    /** True when today's login followed a missed day — the streak card shows a
+     *  one-time "Skipped" notice instead of silently resetting quietly. */
+    streakSkipped: Boolean = false,
     modifier: Modifier = Modifier,
     onOpenModule: (categoryId: String) -> Unit = {},
+    /** Claims streak [day]; returns XP awarded (0 if not claimable). */
+    onClaimStreak: (day: Int) -> Int = { 0 },
 ) {
     val streak = remember(progress) {
         StreakSummary(
@@ -168,6 +196,9 @@ private fun DashboardScreenContent(
             rankBadgeRes = progress.rank.badgeRes,
             level = progress.level,
             levelProgress = progress.levelProgress,
+            claimedDays = progress.claimedStreakDays,
+            skipped = streakSkipped,
+            onClaimStreak = onClaimStreak,
         )
 
         Spacer(Modifier.height(14.dp))
@@ -392,12 +423,31 @@ private fun StreakCard(
     rankBadgeRes: Int,
     level: Int,
     levelProgress: Float,
+    claimedDays: Set<Int> = emptySet(),
+    /** Today's login followed a missed day — show a one-time "Skipped" notice. */
+    skipped: Boolean = false,
+    onClaimStreak: (day: Int) -> Int = { 0 },
 ) {
+    // Tapping the card opens the daily-streak reward sheet.
+    var showClaim by remember { mutableStateOf(false) }
+    if (showClaim) {
+        com.example.kinetixfsl.ui.StreakClaimDialog(
+            streakDays = streak.streakDays,
+            claimedDays = claimedDays,
+            onClaim = onClaimStreak,
+            onDismiss = { showClaim = false },
+        )
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .background(KinetixNavy)
+            // Same indigo gradient as the Quiz game hero card, so the streak card,
+            // the quiz cards and the module cards all read as one design system.
+            .background(
+                Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, KinetixIndigo)),
+            )
+            .clickable { showClaim = true }
             .padding(20.dp),
     ) {
         Column {
@@ -413,6 +463,28 @@ private fun StreakCard(
                 color = KinetixWhite,
                 fontWeight = FontWeight.ExtraBold,
             )
+            // One-time notice: a day (or more) was missed since the last login,
+            // so the streak reset and any days not already claimed are gone —
+            // this session's login started the count back at 1.
+            if (skipped) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(KinetixWhite.copy(alpha = 0.16f))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(text = "⚠️", fontSize = 12.sp)
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "Skipped — streak reset to Day 1",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = KinetixWhite,
+                    )
+                }
+            }
 
             Spacer(Modifier.height(16.dp))
 
@@ -482,7 +554,8 @@ private fun NavyMeter(fraction: Float) {
                 .fillMaxWidth(fraction.coerceIn(0f, 1f))
                 .height(8.dp)
                 .clip(RoundedCornerShape(50))
-                .background(KinetixWhite),
+                // Profile-screen progress accent, used for every bar app-wide.
+                .background(AccentProgress),
         )
     }
 }
@@ -528,7 +601,7 @@ private fun ModuleCard(
                     .weight(1f)
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp)),
-                color = MaterialTheme.colorScheme.primary,
+                color = AccentProgress,
                 trackColor = MaterialTheme.colorScheme.outline,
             )
             Spacer(Modifier.size(12.dp))

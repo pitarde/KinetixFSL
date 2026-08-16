@@ -36,6 +36,9 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -89,9 +93,19 @@ fun InboxScreen(
     /** The thread a long-press is asking to clear, or null. */
     var pendingClear by remember { mutableStateOf<Conversation?>(null) }
 
+    // Gentle fade + slide-up on entry, matching the community home screen.
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val enter by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = tween(380, easing = FastOutSlowInEasing),
+        label = "inboxEnter",
+    )
+
     Column(
         modifier = modifier
             .fillMaxSize()
+            .graphicsLayer { alpha = enter; translationY = (1f - enter) * 36f }
             .background(MaterialTheme.colorScheme.background),
     ) {
         // A screen title, matching the pattern EditPostScreen and

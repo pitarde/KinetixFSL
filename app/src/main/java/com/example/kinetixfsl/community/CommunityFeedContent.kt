@@ -1,5 +1,10 @@
 package com.example.kinetixfsl.community
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -138,6 +143,8 @@ fun CommunityFeedContent(
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val userResults by viewModel.userResults.collectAsStateWithLifecycle()
+    val communityResults by viewModel.communityResults.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val actionError by viewModel.actionError.collectAsStateWithLifecycle()
     val joinedCommunityIds by viewModel.joinedCommunityIds.collectAsStateWithLifecycle()
@@ -230,14 +237,40 @@ fun CommunityFeedContent(
                     item(key = COMMUNITY_HEADER_KEY) { headerContent() }
                 }
 
-                if (showSearchBar) {
-                    item {
-                        SearchBar(
-                            query = searchQuery,
-                            onQueryChange = viewModel::onSearchQueryChange,
-                        )
+                // Always present so it can animate in AND out on toggle — an
+                // `if (showSearchBar)` would yank it from the list instantly,
+                // killing the collapse animation. AnimatedVisibility expands it
+                // down when Search is tapped and shrinks it back up when tapped
+                // again; on a community's own feed showSearchBar is always false,
+                // so it simply stays collapsed (zero height).
+                item(key = "search-section") {
+                    AnimatedVisibility(
+                        visible = showSearchBar,
+                        enter = expandVertically(animationSpec = tween(280, easing = FastOutSlowInEasing)) +
+                            fadeIn(tween(280)),
+                        exit = shrinkVertically(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                            fadeOut(tween(160)),
+                    ) {
+                        Column {
+                            SearchBar(
+                                query = searchQuery,
+                                onQueryChange = viewModel::onSearchQueryChange,
+                            )
+                            // Matching users and communities — these aren't
+                            // limited to what's in the loaded feed, unlike the
+                            // post filter below, so someone who hasn't posted (or
+                            // an empty new community) is still findable.
+                            if (searchQuery.isNotBlank() && (userResults.isNotEmpty() || communityResults.isNotEmpty())) {
+                                SearchDirectoryResults(
+                                    users = userResults,
+                                    communities = communityResults,
+                                    onUserClick = onAuthorClick,
+                                    onCommunityClick = onOpenCommunity,
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                        }
                     }
-                    item { Spacer(Modifier.height(8.dp)) }
                 }
 
                 when (val current = state) {
@@ -421,7 +454,7 @@ private fun SearchBar(
                     Box(Modifier.weight(1f)) {
                         if (query.isEmpty()) {
                             Text(
-                                "Search posts, users...",
+                                "Search posts, users, communities...",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -440,6 +473,107 @@ private fun SearchBar(
                     }
                 }
             },
+        )
+    }
+}
+
+/**
+ * Matching users and communities, shown above the (already-filtered) post list
+ * while a search is active. Each row opens the same profile/community overlay
+ * a post's author chip or community badge would.
+ */
+@Composable
+private fun SearchDirectoryResults(
+    users: List<com.example.kinetixfsl.community.model.UserProfile>,
+    communities: List<com.example.kinetixfsl.community.model.Community>,
+    onUserClick: (String) -> Unit,
+    onCommunityClick: (String) -> Unit,
+) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+        if (users.isNotEmpty()) {
+            Text(
+                text = "Users",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(6.dp))
+            users.forEach { user ->
+                SearchResultRow(
+                    avatarUrl = user.avatarUrl,
+                    title = user.displayName,
+                    onClick = { onUserClick(user.uid) },
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+        if (communities.isNotEmpty()) {
+            Text(
+                text = "Communities",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(6.dp))
+            communities.forEach { community ->
+                SearchResultRow(
+                    avatarUrl = community.avatarUrl,
+                    title = community.name,
+                    onClick = { onCommunityClick(community.id) },
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+        HorizontalDivider(
+            modifier = Modifier.padding(top = 8.dp),
+            color = MaterialTheme.colorScheme.outlineVariant,
+        )
+    }
+}
+
+@Composable
+private fun SearchResultRow(avatarUrl: String?, title: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (avatarUrl.isNullOrBlank()) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = title.take(1).uppercase(),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        } else {
+            AsyncImage(
+                model = avatarUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

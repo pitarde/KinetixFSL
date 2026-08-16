@@ -61,6 +61,21 @@ data class AchievementView(
 )
 
 /**
+ * What happened to the login streak on one [ProgressRepository.recordPracticeDay]
+ * call — lets a caller distinguish "kept going", "brand new", "same day again"
+ * (no-op) from "a day was missed and the streak reset", so the UI can show a
+ * "Skipped" notice instead of silently starting the count back over.
+ */
+data class StreakOutcome(
+    val kind: Kind,
+    /** Full calendar days missed between the last login and today (SKIPPED only). */
+    val skippedDays: Int = 0,
+) {
+    enum class Kind { STARTED, CONTINUED, SKIPPED, SAME_DAY }
+    val isSkipped: Boolean get() = kind == Kind.SKIPPED
+}
+
+/**
  * An immutable snapshot of everything the Profile/Dashboard need. Computed by
  * [ProgressRepository] from the local stores via [XpEngine].
  */
@@ -73,6 +88,8 @@ data class PlayerProgress(
     val rank: RankTier,
     val streakDays: Int,
     val streakMilestones: Int,
+    /** Streak days (1..6) already claimed for XP — drives the claim UI. */
+    val claimedStreakDays: Set<Int> = emptySet(),
     val signsLearned: Int,
     val quizLevelsCleared: Int,
     val categoryXp: Int,

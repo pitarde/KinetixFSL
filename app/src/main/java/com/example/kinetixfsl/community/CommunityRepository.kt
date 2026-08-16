@@ -93,6 +93,35 @@ class CommunityRepository(
     }
 
     // -------------------------------------------------------------------------
+    // Search
+    // -------------------------------------------------------------------------
+
+    /**
+     * Finds users whose display name contains [query] (case-insensitive).
+     *
+     * `users` is public-read (post cards and follower lists already show
+     * anyone's name), so this fetches the collection and filters client-side —
+     * the same approach [CommunityDirectoryRepository.observeAllCommunities]
+     * uses for communities. Fine at this app's scale; a text index (Algolia/
+     * Cloud Function) would be the next step if the user base grows large.
+     */
+    suspend fun searchUsers(query: String, limit: Int = 15): List<com.example.kinetixfsl.community.model.UserProfile> {
+        val needle = query.trim().lowercase()
+        if (needle.isEmpty()) return emptyList()
+        return try {
+            firestore.collection(USERS)
+                .get()
+                .await()
+                .documents
+                .mapNotNull { it.toObject(com.example.kinetixfsl.community.model.UserProfile::class.java) }
+                .filter { it.displayName.lowercase().contains(needle) }
+                .take(limit)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Following
     // -------------------------------------------------------------------------
 

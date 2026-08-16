@@ -136,10 +136,22 @@ class QuizGameViewModel(context: Context) {
         )
     }
 
-    /** The goal card's button: resume the unfinished attempt, or start the level. */
+    /**
+     * The goal card's button:
+     *  - an unfinished attempt in progress → Resume it;
+     *  - every level already cleared ("Review Again") → restart from Level 1;
+     *  - otherwise → start the current goal level.
+     * (Players can still tap any unlocked node on the map to re-quiz a specific
+     * level; this is just the default action of the header button.)
+     */
     fun onGoalAction() {
         val map = _screen.value as? QuizScreen.Map ?: return
-        if (map.canResume) resumeLast() else startLevel(map.goalLevel)
+        val allDone = map.levels.isNotEmpty() && map.passedCount == map.levels.size
+        when {
+            map.canResume -> resumeLast()
+            allDone -> startLevel(1)
+            else -> startLevel(map.goalLevel)
+        }
     }
 
     fun dismissResumePrompt() {

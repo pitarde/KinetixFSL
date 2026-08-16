@@ -112,6 +112,16 @@ class CommunityFeedViewModel(
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    /** Users whose name matches the current search query. */
+    private val _userResults = MutableStateFlow<List<com.example.kinetixfsl.community.model.UserProfile>>(emptyList())
+    val userResults: StateFlow<List<com.example.kinetixfsl.community.model.UserProfile>> = _userResults.asStateFlow()
+
+    /** Communities whose name matches the current search query. */
+    private val _communityResults = MutableStateFlow<List<com.example.kinetixfsl.community.model.Community>>(emptyList())
+    val communityResults: StateFlow<List<com.example.kinetixfsl.community.model.Community>> = _communityResults.asStateFlow()
+
+    private var searchJob: Job? = null
+
     private var feedJob: Job? = null
 
     /**
@@ -212,6 +222,24 @@ class CommunityFeedViewModel(
     fun onSearchQueryChange(query: String) {
         _searchQuery.value = query
         emitFiltered()
+
+        // Users and communities aren't limited to what's in the loaded feed
+        // (someone who hasn't posted, or an empty new community, wouldn't show
+        // up otherwise), so these are looked up separately. Debounced so fast
+        // typing doesn't fire a query per keystroke; cancelling the previous
+        // job means a stale, slower query can never overwrite a newer one.
+        searchJob?.cancel()
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) {
+            _userResults.value = emptyList()
+            _communityResults.value = emptyList()
+            return
+        }
+        searchJob = viewModelScope.launch {
+            delay(300)
+            _userResults.value = repository.searchUsers(trimmed)
+            _communityResults.value = directory.searchCommunities(trimmed)
+        }
     }
 
     private fun observeFeed() {
@@ -302,10 +330,14 @@ class CommunityFeedViewModel(
         val filtered = if (query.isEmpty()) {
             ordered
         } else {
+            // Matches a post's own text, its author's name, or its community's
+            // name — one search box covering "users, posts, communities" as
+            // asked, without a separate search screen/index.
             ordered.filter { post ->
                 post.title.lowercase().contains(query) ||
                         post.body.lowercase().contains(query) ||
-                        post.authorName.lowercase().contains(query)
+                        post.authorName.lowercase().contains(query) ||
+                        post.communityName.lowercase().contains(query)
             }
         }
 

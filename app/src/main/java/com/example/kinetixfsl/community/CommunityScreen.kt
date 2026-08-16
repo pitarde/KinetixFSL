@@ -3,7 +3,9 @@ package com.example.kinetixfsl.community
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
@@ -43,6 +46,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -495,6 +499,9 @@ private fun CommunityScaffold(
     // No bottom nav any more — Profile, Create and Inbox each moved to their
     // own entry point (top bar or drawer), so the community screen is just the
     // feed and its own top bar, full height.
+    // The search icon toggles the feed's inline search bar rather than it
+    // always showing — cleaner default state, matching the reference design.
+    var searchActive by remember { mutableStateOf(false) }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -502,10 +509,18 @@ private fun CommunityScaffold(
             .statusBarsPadding(),
     ) {
         CommunityTopBar(
+            searchActive = searchActive,
             onMenuClick = onMenuClick,
+            onSearchClick = {
+                searchActive = !searchActive
+                // Collapsing search returns the feed to normal — drop any query
+                // so the post list isn't left filtered behind a hidden bar.
+                if (!searchActive) feedViewModel.onSearchQueryChange("")
+            },
             onCreateClick = onCreateClick,
             onProfileClick = onProfileClick,
         )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
         CommunityFeedContent(
             modifier = Modifier.weight(1f),
@@ -516,6 +531,7 @@ private fun CommunityScaffold(
             onMediaClick = onMediaClick,
             onAuthorClick = onAuthorClick,
             showCommunityBadge = true,
+            showSearchBar = searchActive,
             onOpenCommunity = onOpenCommunity,
             isFeedActive = isFeedActive,
             onMenuClick = onFeedMenuClick,
@@ -528,24 +544,37 @@ private fun CommunityScaffold(
 }
 
 /**
- * Hamburger on the left; on the right, the two actions that used to be
- * separate bottom-nav tabs — compose a post, and open your own profile.
- * Nothing switches here: both open as overlays over the feed, so there's no
- * "which screen am I on" state for this bar to reflect.
+ * Single row, matching the reference design: hamburger + title on the left,
+ * then Search / Create / Profile icons together on the trailing edge. Search
+ * toggles the feed's inline search bar; Create and Profile open as overlays
+ * over the feed, so there's no "which screen am I on" state for this bar to
+ * reflect.
  */
 @Composable
 private fun CommunityTopBar(
+    searchActive: Boolean,
     onMenuClick: () -> Unit,
+    onSearchClick: () -> Unit,
     onCreateClick: () -> Unit,
     onProfileClick: () -> Unit,
 ) {
+    // The whole bar eases in on first show, matching the other community screens.
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val enter by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = tween(360, easing = FastOutSlowInEasing),
+        label = "topBarEnter",
+    )
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp)
-            // A bit more room on the trailing edge than the leading one, so the
-            // create/profile pair sits a little clear of the screen edge rather
-            // than flush against it.
+            .graphicsLayer {
+                alpha = enter
+                translationY = (1f - enter) * -30f
+            }
             .padding(start = 12.dp, end = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -557,7 +586,27 @@ private fun CommunityTopBar(
                 .size(32.dp)
                 .clickable(onClick = onMenuClick),
         )
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = "KinetixFSL Community",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = CommunityIcons.Search,
+            contentDescription = if (searchActive) "Hide search" else "Search",
+            // Highlights while the search bar is open, so it reads as a toggle.
+            tint = if (searchActive) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .size(26.dp)
+                .clickable(onClick = onSearchClick),
+        )
+        Spacer(Modifier.width(18.dp))
         Icon(
             imageVector = CommunityIcons.CreatePost,
             contentDescription = "Create post",
@@ -566,7 +615,7 @@ private fun CommunityTopBar(
                 .size(26.dp)
                 .clickable(onClick = onCreateClick),
         )
-        Spacer(Modifier.width(20.dp))
+        Spacer(Modifier.width(18.dp))
         Icon(
             imageVector = CommunityIcons.Profile,
             contentDescription = "Your profile",

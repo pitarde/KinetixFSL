@@ -143,16 +143,32 @@ class ProgressRepository(context: Context) {
      * Marks today as a practice day: advances the streak, awards streak
      * milestones at each 7-day boundary (cap 6), and flags a comeback after a
      * gap of 3+ days. Idempotent within the same calendar day.
+     *
+     * Returns what happened to the streak on THIS call, so a caller like the
+     * Dashboard can tell the learner "you skipped a day" instead of silently
+     * dropping them back to Day 1. [XpEngine] never grants XP for a day that
+     * wasn't actually logged in — [claimStreakDay] only allows claiming up to
+     * `currentStreak`, so a 5-day gap followed by one login only ever unlocks
+     * that one day's XP, never a backdated 5 days' worth.
      */
-    fun recordPracticeDay(persist: Boolean = true) {
+    fun recordPracticeDay(persist: Boolean = true): StreakOutcome {
         val day = today()
         val last = state.streakLastEpochDay
+        var result = StreakOutcome(StreakOutcome.Kind.SAME_DAY)
         if (day != last) {
             val newStreak = when {
                 last < 0 -> 1
                 day - last == 1L -> state.currentStreak + 1
                 else -> 1
             }
+            val kind = when {
+                last < 0 -> StreakOutcome.Kind.STARTED
+                day - last == 1L -> StreakOutcome.Kind.CONTINUED
+                else -> StreakOutcome.Kind.SKIPPED
+            }
+            val skippedDays =
+                if (kind == StreakOutcome.Kind.SKIPPED) (day - last - 1).toInt().coerceAtLeast(0) else 0
+            result = StreakOutcome(kind, skippedDays)
             val comeback = state.hadComeback || (last >= 0 && day - last >= 3)
             var milestones = state.streakMilestones
             // Award a milestone each time a running streak crosses a 7-day mark.
@@ -170,6 +186,29 @@ class ProgressRepository(context: Context) {
         markActive(day)
         refreshAchievements()
         if (persist) persistAll()
+        return result
+    }
+
+    /**
+     * Claims streak [day] (1..[XpEngine.STREAK_MAX_MILESTONES]) for its XP.
+     *
+     * A day is claimable only once the current streak has actually reached it
+     * (`currentStreak >= day`) and it hasn't been claimed already. Returns the XP
+     * awarded ([XpEngine.STREAK_MILESTONE_XP]) or 0 if not claimable.
+     *
+     * Claims are sticky: breaking the streak (missing a day) never revokes XP
+     * already banked — it just stops the user reaching, and therefore claiming,
+     * the higher days. A learner who can't sustain the streak simply won't
+     * collect that XP and must lean on achievements to reach Level 20.
+     */
+    fun claimStreakDay(day: Int): Int {
+        if (day < 1 || day > XpEngine.STREAK_MAX_MILESTONES) return 0
+        if (day in state.claimedStreakDays) return 0
+        if (state.currentStreak < day) return 0
+        state = state.copy(claimedStreakDays = state.claimedStreakDays + day)
+        refreshAchievements()
+        persistAll()
+        return XpEngine.STREAK_MILESTONE_XP
     }
 
     /** Re-evaluate achievements (e.g. after a quiz clear) and persist. */
@@ -198,7 +237,8 @@ class ProgressRepository(context: Context) {
 
         val categoryXp = categories.sumOf { it.xp }
         val quizXp = XpEngine.quizXp(quiz.bestScores)
-        val streakXp = XpEngine.streakXp(state.streakMilestones)
+        // Streak XP now comes from claimed days, not auto-granted milestones.
+        val streakXp = XpEngine.streakXp(state.claimedStreakDays.size)
         val achievementXp = XpEngine.achievementXp(state.unlockedAchievements.size)
         val accountXpRaw = categoryXp + quizXp + streakXp + achievementXp
         val level = XpEngine.levelForXp(accountXpRaw)
@@ -212,6 +252,7 @@ class ProgressRepository(context: Context) {
             rank = RankTier.forLevel(level),
             streakDays = state.currentStreak,
             streakMilestones = state.streakMilestones,
+            claimedStreakDays = state.claimedStreakDays,
             signsLearned = state.learnedSignIds.size,
             quizLevelsCleared = quiz.firstClearScores.size,
             categoryXp = categoryXp,
@@ -238,7 +279,7 @@ class ProgressRepository(context: Context) {
         val masteredCount = categoryXps.count { it >= XpEngine.CATEGORY_MAX }
         val categoryXpTotal = categoryXps.sum()
         val quizXp = XpEngine.quizXp(quiz.bestScores)
-        val streakXp = XpEngine.streakXp(state.streakMilestones)
+        val streakXp = XpEngine.streakXp(state.claimedStreakDays.size)
 
         val unlocked = state.unlockedAchievements.toMutableSet()
         while (true) {
