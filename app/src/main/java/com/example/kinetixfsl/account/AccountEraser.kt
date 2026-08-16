@@ -77,8 +77,20 @@ class AccountEraser(
         deleteUserProfile(uid)
     }
 
-    /** Clears the per-account progress, activity and quiz SharedPreferences. */
+    /**
+     * Clears this account's local offline data: the Room/SQLite rows for its uid
+     * (progress, activity log, quiz game) plus any leftover legacy
+     * SharedPreferences files from before the Room migration.
+     */
     private fun clearLocalProgress(context: Context, uid: String) {
+        runCatching {
+            val db = com.example.kinetixfsl.data.local.KinetixDatabase.get(context)
+            db.progressDao().wipe(uid)
+            db.activityDao().wipe(uid)
+            db.quizDao().wipe(uid)
+        }.onFailure { Log.w(TAG, "local Room wipe failed", it) }
+
+        // Legacy prefs (harmless if already migrated/removed).
         listOf("kinetix_progress__$uid", "kinetix_activity__$uid", "quiz_game__$uid")
             .forEach { name ->
                 runCatching {

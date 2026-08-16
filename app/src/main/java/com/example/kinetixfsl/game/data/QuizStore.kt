@@ -1,11 +1,18 @@
 package com.example.kinetixfsl.game.data
 
 import android.content.Context
+import com.example.kinetixfsl.data.local.KinetixDatabase
+import com.example.kinetixfsl.data.local.QuizFirstAssignedLevelEntity
+import com.example.kinetixfsl.data.local.QuizPassedLevelEntity
+import com.example.kinetixfsl.data.local.QuizProgressEntity
+import com.example.kinetixfsl.data.local.QuizScoreEntity
+import com.example.kinetixfsl.data.local.QuizUsedInitialPassEntity
 import com.example.kinetixfsl.game.model.LevelPhase
 import com.example.kinetixfsl.game.model.LevelPlan
 import com.example.kinetixfsl.game.model.QuestionType
 import com.example.kinetixfsl.game.model.QuizQuestion
 import com.example.kinetixfsl.game.model.Tier
+import com.example.kinetixfsl.progress.UserScope
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -51,31 +58,71 @@ data class QuizProgress(
  */
 class QuizStore(context: Context) {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences(
-            com.example.kinetixfsl.progress.UserScope.prefs("quiz_game"),
-            Context.MODE_PRIVATE,
-        )
+    private val dao = KinetixDatabase.get(context).quizDao()
+
+    private val legacyPrefs = context.applicationContext
+        .getSharedPreferences(UserScope.prefs("quiz_game"), Context.MODE_PRIVATE)
 
     fun load(): QuizProgress {
-        val json = prefs.getString(KEY_PROGRESS, null) ?: return QuizProgress()
-        return runCatching { parseProgress(JSONObject(json)) }.getOrDefault(QuizProgress())
+        val uid = UserScope.uid()
+        migrateLegacyIfNeeded(uid)
+        val p = dao.progress(uid) ?: return QuizProgress()
+        val scores = dao.scores(uid)
+        val used = dao.usedInitialPass(uid)
+            .groupBy { it.tier }
+            .mapNotNull { (tierName, rows) ->
+                runCatching { Tier.valueOf(tierName) }.getOrNull()?.let { it to rows.map { r -> r.signId }.toSet() }
+            }
+            .toMap()
+        return QuizProgress(
+            unlockedMaxLevel = p.unlockedMaxLevel.coerceAtLeast(1),
+            passedLevels = dao.passedLevels(uid).toSet(),
+            firstAssignedLevels = dao.firstAssignedLevels(uid).toSet(),
+            usedInitialPass = used,
+            firstClearScores = scores.filter { it.firstClearScore != null }
+                .associate { it.level to it.firstClearScore!! },
+            bestScores = scores.filter { it.bestScore != null }.associate { it.level to it.bestScore!! },
+            session = p.sessionJson?.let { runCatching { parseSession(JSONObject(it)) }.getOrNull() },
+        )
     }
 
     fun save(progress: QuizProgress) {
-        prefs.edit().putString(KEY_PROGRESS, progressToJson(progress).toString()).apply()
+        val uid = UserScope.uid()
+        val scoreLevels = progress.firstClearScores.keys + progress.bestScores.keys
+        dao.replaceAll(
+            progress = QuizProgressEntity(
+                uid = uid,
+                unlockedMaxLevel = progress.unlockedMaxLevel,
+                sessionJson = progress.session?.let { sessionToJson(it).toString() },
+            ),
+            passed = progress.passedLevels.map { QuizPassedLevelEntity(uid, it) },
+            firstAssigned = progress.firstAssignedLevels.map { QuizFirstAssignedLevelEntity(uid, it) },
+            scores = scoreLevels.map {
+                QuizScoreEntity(uid, it, progress.firstClearScores[it], progress.bestScores[it])
+            },
+            usedInitialPass = progress.usedInitialPass.flatMap { (tier, ids) ->
+                ids.map { QuizUsedInitialPassEntity(uid, tier.name, it) }
+            },
+        )
     }
 
     fun clear() {
-        prefs.edit().remove(KEY_PROGRESS).apply()
+        dao.wipe(UserScope.uid())
     }
 
-    /** The exact stored JSON, for mirroring to the cloud. Null if nothing saved. */
-    fun rawJson(): String? = prefs.getString(KEY_PROGRESS, null)
+    /** The current state as the cloud-document JSON (never null). */
+    fun rawJson(): String = progressToJson(load()).toString()
 
-    /** Writes cloud-restored JSON straight back, byte-for-byte (no re-parse). */
+    /** Restores from the cloud-document JSON into the local database. */
     fun saveRawJson(json: String) {
-        prefs.edit().putString(KEY_PROGRESS, json).apply()
+        runCatching { save(parseProgress(JSONObject(json))) }
+    }
+
+    private fun migrateLegacyIfNeeded(uid: String) {
+        if (dao.rowCount(uid) > 0) return
+        val json = legacyPrefs.getString(KEY_PROGRESS, null) ?: return
+        runCatching { save(parseProgress(JSONObject(json))) }
+        legacyPrefs.edit().remove(KEY_PROGRESS).apply()
     }
 
     // ── serialisation ──────────────────────────────────────────────────────

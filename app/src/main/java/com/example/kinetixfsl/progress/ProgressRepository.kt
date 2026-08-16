@@ -17,6 +17,7 @@ import java.time.LocalTime
  */
 class ProgressRepository(context: Context) {
 
+    private val appContext = context.applicationContext
     private val store = ProgressStore(context)
     private val quizStore = QuizStore(context)
     private val activityStore = ActivityLogStore(context)
@@ -327,17 +328,21 @@ class ProgressRepository(context: Context) {
         scheduleCloudSync()
     }
 
-    /**
-     * Builds the compact per-user document and hands it to [ProgressSync], which
-     * debounces and writes it to Firestore. Flat summary fields let the admin
-     * webpage sort/filter without parsing; the two JSON blobs are the exact
-     * local state, so a new device restores byte-for-byte.
-     */
+    /** Enqueues the connectivity-gated [ProgressSyncWorker] to mirror to cloud. */
     private fun scheduleCloudSync() {
+        ProgressSync.scheduleSync(appContext)
+    }
+
+    /**
+     * Builds the compact per-user document the [ProgressSyncWorker] uploads to
+     * Firestore. Flat summary fields let the admin webpage sort/filter without
+     * parsing; the JSON blobs are the exact local state, so a new device
+     * restores byte-for-byte.
+     */
+    fun buildSyncDocument(): Map<String, Any?> {
         val snap = snapshot()
         val user = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
-        ProgressSync.schedulePush(
-            mapOf(
+        return mapOf<String, Any?>(
                 "uid" to (user?.uid ?: "guest"),
                 "displayName" to (user?.displayName ?: ""),
                 "email" to (user?.email ?: ""),
@@ -359,10 +364,9 @@ class ProgressRepository(context: Context) {
                 },
                 // ── Raw local state (for the app's own cross-device restore
                 //    and for the admin's diagnostic/predictive analytics) ──
-                "progressJson" to (store.rawJson() ?: ""),
-                "activityJson" to (activityStore.rawJson() ?: ""),
-                "quizJson" to (quizStore.rawJson() ?: ""),
-            )
+                "progressJson" to store.rawJson(),
+                "activityJson" to activityStore.rawJson(),
+                "quizJson" to quizStore.rawJson(),
         )
     }
 

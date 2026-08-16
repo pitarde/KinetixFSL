@@ -2,39 +2,33 @@ package com.example.kinetixfsl.progress
 
 import android.content.Context
 import android.util.Log
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkRequest
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.SetOptions
-import kotlinx.coroutines.CoroutineScope
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Mirrors each signed-in user's progress + activity to Firestore, one document
- * per account at `users/{uid}`.
+ * Schedules background mirroring of each signed-in user's progress to Firestore
+ * (`progress/{uid}`), and restores it on a fresh install.
  *
- * ## Why there is no hand-written "sync engine"
+ * ## The sync mechanism: a WorkManager worker, connectivity-gated
  *
- * Firestore's Android SDK has **offline persistence on by default**: a write
- * lands in a local cache immediately and returns; when the phone next has data
- * or Wi-Fi, the SDK flushes queued writes to the server automatically, and
- * reads fall back to that cache while offline. So the *local database* and the
- * *online sync* are both the SDK's job — this object only decides WHAT to write
- * and WHEN, and reads the cloud copy back to restore a fresh install / new
- * device.
- *
- * ## Keeping Firestore reads/writes cheap
- *
- * Everything for one user is a single document, and pushes are **debounced**
- * (a burst of XP events collapses into one write). So a practice session is
- * ~1 write, and the admin reading a user is ~1 read — nowhere near the free
- * tier's 20k writes / 50k reads per day.
+ * A save enqueues a [ProgressSyncWorker] with a `CONNECTED` network constraint
+ * and a short initial delay. WorkManager holds the job until the device is
+ * online, then runs it (retrying with backoff on failure) — so connectivity
+ * handling and retry are the OS's job, and the worker itself just uploads the
+ * latest local state. The enqueue is a **unique** job with `REPLACE`, so a burst
+ * of events while offline collapses into a single upload when connectivity
+ * returns. That keeps writes far under the Firestore free tier.
  */
 object ProgressSync {
 
@@ -45,47 +39,50 @@ object ProgressSync {
     // activity analytics must not be. Security rules make `progress/{uid}`
     // private to that user plus the admin.
     private const val COLLECTION = "progress"
+    private const val WORK_NAME = "progress-cloud-sync"
     private const val DEBOUNCE_MS = 2_500L
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var pending: Job? = null
+    // Captured on the first schedule so a later sign-out can cancel the work
+    // without the caller needing to thread a Context through.
+    @Volatile private var appContext: Context? = null
 
     private fun db(): FirebaseFirestore = FirebaseFirestore.getInstance()
     private fun uid(): String? = FirebaseAuth.getInstance().currentUser?.uid
 
     /**
-     * Queues a push of the whole per-user document. Safe to call on every save —
-     * repeated calls within [DEBOUNCE_MS] collapse into a single Firestore write,
-     * always using the most recent document.
-     *
-     * A signed-out ("guest") session is skipped: there is no account to sync to.
+     * Enqueues a connectivity-gated background upload of the current local state.
+     * Safe to call on every save: the unique `REPLACE` policy collapses a burst
+     * into one run. Skipped when signed out — there is no account to sync to.
      */
-    fun schedulePush(document: Map<String, Any?>) {
-        // Capture the account NOW. If it changes before the debounce fires
-        // (sign-out / switch), we drop the write rather than stamp account A's
-        // data onto account B's document.
-        val id = uid() ?: return
-        pending?.cancel()
-        pending = scope.launch {
-            delay(DEBOUNCE_MS)
-            if (uid() != id) return@launch
-            val doc = document + mapOf("updatedAt" to FieldValue.serverTimestamp())
-            runCatching {
-                // set() updates the offline cache instantly and syncs when online.
-                db().collection(COLLECTION).document(id).set(doc, SetOptions.merge())
-            }.onFailure { Log.w(TAG, "cloud push scheduling failed", it) }
-        }
+    fun scheduleSync(context: Context) {
+        if (uid() == null) return
+        val app = context.applicationContext.also { appContext = it }
+
+        val request = OneTimeWorkRequestBuilder<ProgressSyncWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build(),
+            )
+            .setInitialDelay(DEBOUNCE_MS, TimeUnit.MILLISECONDS)
+            .setBackoffCriteria(
+                BackoffPolicy.LINEAR,
+                WorkRequest.MIN_BACKOFF_MILLIS,
+                TimeUnit.MILLISECONDS,
+            )
+            .build()
+
+        WorkManager.getInstance(app)
+            .enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.REPLACE, request)
     }
 
     /**
-     * Drop any queued push. Call on sign-out BEFORE Firebase clears the uid, so
-     * account A's pending write never fires against a signed-out / switched
-     * session. No data is lost: account A's latest state is still in its own
-     * local store and re-pushes the next time that account signs in.
+     * Cancel any queued upload. Called on sign-out so account A's pending work
+     * never fires against a switched session. No data is lost: A's latest state
+     * is in its own local store and re-syncs the next time A signs in.
      */
     fun cancelPending() {
-        pending?.cancel()
-        pending = null
+        appContext?.let { WorkManager.getInstance(it).cancelUniqueWork(WORK_NAME) }
     }
 
     /**

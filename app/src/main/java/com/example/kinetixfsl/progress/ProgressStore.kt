@@ -1,6 +1,11 @@
 package com.example.kinetixfsl.progress
 
 import android.content.Context
+import com.example.kinetixfsl.data.local.ClaimedStreakDayEntity
+import com.example.kinetixfsl.data.local.KinetixDatabase
+import com.example.kinetixfsl.data.local.LearnedSignEntity
+import com.example.kinetixfsl.data.local.ProgressEntity
+import com.example.kinetixfsl.data.local.UnlockedAchievementEntity
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -26,30 +31,74 @@ data class ProgressState(
 )
 
 /**
- * Local, offline-first persistence for account progress — SharedPreferences +
- * JSON, mirroring the quiz's [com.example.kinetixfsl.game.data.QuizStore] so no
- * Room/backend is needed in this pass.
+ * Local, offline-first persistence for account progress — now backed by the
+ * Room/SQLite [KinetixDatabase] (was SharedPreferences+JSON). The public API is
+ * unchanged so callers ([ProgressRepository], [ProgressSync]) don't change:
+ *
+ *  - [load]/[save] map the [ProgressState] to/from the typed `progress`,
+ *    `learned_sign`, `claimed_streak_day` and `unlocked_achievement` tables;
+ *  - [rawJson]/[saveRawJson] keep the exact JSON shape the cloud document uses,
+ *    so cross-device restore stays byte-compatible with existing accounts.
+ *
+ * Data is scoped by the current account id ([UserScope.uid]); the first read for
+ * an account transparently imports any pre-Room SharedPreferences blob.
  */
 class ProgressStore(context: Context) {
 
-    private val prefs = context.applicationContext
+    private val db = KinetixDatabase.get(context)
+    private val dao = db.progressDao()
+
+    // Kept only to import a pre-migration SharedPreferences blob once.
+    private val legacyPrefs = context.applicationContext
         .getSharedPreferences(UserScope.prefs("kinetix_progress"), Context.MODE_PRIVATE)
 
     fun load(): ProgressState {
-        val json = prefs.getString(KEY, null) ?: return ProgressState()
-        return runCatching { parse(JSONObject(json)) }.getOrDefault(ProgressState())
+        val uid = UserScope.uid()
+        migrateLegacyIfNeeded(uid)
+        val p = dao.progress(uid)
+        return ProgressState(
+            learnedSignIds = dao.learnedSigns(uid).toSet(),
+            streakLastEpochDay = p?.streakLastEpochDay ?: -1,
+            currentStreak = p?.currentStreak ?: 0,
+            bestStreak = p?.bestStreak ?: 0,
+            streakMilestones = p?.streakMilestones ?: 0,
+            claimedStreakDays = dao.claimedStreakDays(uid).toSet(),
+            hadComeback = p?.hadComeback ?: false,
+            unlockedAchievements = dao.unlockedAchievements(uid).toSet(),
+        )
     }
 
     fun save(state: ProgressState) {
-        prefs.edit().putString(KEY, toJson(state).toString()).apply()
+        val uid = UserScope.uid()
+        dao.replaceAll(
+            progress = ProgressEntity(
+                uid = uid,
+                streakLastEpochDay = state.streakLastEpochDay,
+                currentStreak = state.currentStreak,
+                bestStreak = state.bestStreak,
+                streakMilestones = state.streakMilestones,
+                hadComeback = state.hadComeback,
+            ),
+            learned = state.learnedSignIds.map { LearnedSignEntity(uid, it) },
+            claimed = state.claimedStreakDays.map { ClaimedStreakDayEntity(uid, it) },
+            achievements = state.unlockedAchievements.map { UnlockedAchievementEntity(uid, it) },
+        )
     }
 
-    /** The exact stored JSON, for mirroring to the cloud. Null if nothing saved. */
-    fun rawJson(): String? = prefs.getString(KEY, null)
+    /** The current state as the cloud-document JSON (never null; empty = defaults). */
+    fun rawJson(): String = toJson(load()).toString()
 
-    /** Writes cloud-restored JSON straight back, byte-for-byte (no re-parse). */
+    /** Restores from the cloud-document JSON into the local database. */
     fun saveRawJson(json: String) {
-        prefs.edit().putString(KEY, json).apply()
+        runCatching { save(parse(JSONObject(json))) }
+    }
+
+    /** One-time import of the pre-Room SharedPreferences blob, if present. */
+    private fun migrateLegacyIfNeeded(uid: String) {
+        if (dao.rowCount(uid) > 0) return
+        val json = legacyPrefs.getString(KEY, null) ?: return
+        runCatching { save(parse(JSONObject(json))) }
+        legacyPrefs.edit().remove(KEY).apply()
     }
 
     private fun toJson(s: ProgressState): JSONObject = JSONObject().apply {

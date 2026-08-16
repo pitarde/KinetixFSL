@@ -1,0 +1,552 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "68145f042747118b04aabbb3ef28220e",
+    "entities": [
+      {
+        "tableName": "progress",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `streakLastEpochDay` INTEGER NOT NULL, `currentStreak` INTEGER NOT NULL, `bestStreak` INTEGER NOT NULL, `streakMilestones` INTEGER NOT NULL, `hadComeback` INTEGER NOT NULL, PRIMARY KEY(`uid`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "streakLastEpochDay",
+            "columnName": "streakLastEpochDay",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currentStreak",
+            "columnName": "currentStreak",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bestStreak",
+            "columnName": "bestStreak",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "streakMilestones",
+            "columnName": "streakMilestones",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hadComeback",
+            "columnName": "hadComeback",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid"
+          ]
+        }
+      },
+      {
+        "tableName": "learned_sign",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `signId` TEXT NOT NULL, PRIMARY KEY(`uid`, `signId`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "signId",
+            "columnName": "signId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "signId"
+          ]
+        }
+      },
+      {
+        "tableName": "claimed_streak_day",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `day` INTEGER NOT NULL, PRIMARY KEY(`uid`, `day`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "day",
+            "columnName": "day",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "day"
+          ]
+        }
+      },
+      {
+        "tableName": "unlocked_achievement",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `achievement` TEXT NOT NULL, PRIMARY KEY(`uid`, `achievement`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "achievement",
+            "columnName": "achievement",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "achievement"
+          ]
+        }
+      },
+      {
+        "tableName": "activity_day",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `epochDay` INTEGER NOT NULL, `learnedCount` INTEGER NOT NULL, `studySeconds` INTEGER NOT NULL, `active` INTEGER NOT NULL, PRIMARY KEY(`uid`, `epochDay`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "epochDay",
+            "columnName": "epochDay",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "learnedCount",
+            "columnName": "learnedCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "studySeconds",
+            "columnName": "studySeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "active",
+            "columnName": "active",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "epochDay"
+          ]
+        }
+      },
+      {
+        "tableName": "activity_hour",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `hour` INTEGER NOT NULL, `histogram` INTEGER NOT NULL, `correct` INTEGER NOT NULL, `attempts` INTEGER NOT NULL, PRIMARY KEY(`uid`, `hour`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hour",
+            "columnName": "hour",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "histogram",
+            "columnName": "histogram",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "correct",
+            "columnName": "correct",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "hour"
+          ]
+        }
+      },
+      {
+        "tableName": "sign_last_practiced",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `signId` TEXT NOT NULL, `epochDay` INTEGER NOT NULL, PRIMARY KEY(`uid`, `signId`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "signId",
+            "columnName": "signId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "epochDay",
+            "columnName": "epochDay",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "signId"
+          ]
+        }
+      },
+      {
+        "tableName": "lesson_count",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `categoryId` TEXT NOT NULL, `started` INTEGER NOT NULL, `completed` INTEGER NOT NULL, PRIMARY KEY(`uid`, `categoryId`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "categoryId",
+            "columnName": "categoryId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "started",
+            "columnName": "started",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completed",
+            "columnName": "completed",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "categoryId"
+          ]
+        }
+      },
+      {
+        "tableName": "category_quiz_stat",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `categoryId` TEXT NOT NULL, `correct` INTEGER NOT NULL, `attempts` INTEGER NOT NULL, PRIMARY KEY(`uid`, `categoryId`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "categoryId",
+            "columnName": "categoryId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "correct",
+            "columnName": "correct",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "categoryId"
+          ]
+        }
+      },
+      {
+        "tableName": "camera_error",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `errorType` TEXT NOT NULL, `count` INTEGER NOT NULL, PRIMARY KEY(`uid`, `errorType`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorType",
+            "columnName": "errorType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "count",
+            "columnName": "count",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "errorType"
+          ]
+        }
+      },
+      {
+        "tableName": "quiz_mistake",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `uid` TEXT NOT NULL, `targetSignId` TEXT NOT NULL, `targetWord` TEXT NOT NULL, `chosenWord` TEXT NOT NULL, `epochDay` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetSignId",
+            "columnName": "targetSignId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetWord",
+            "columnName": "targetWord",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chosenWord",
+            "columnName": "chosenWord",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "epochDay",
+            "columnName": "epochDay",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "quiz_progress",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `unlockedMaxLevel` INTEGER NOT NULL, `sessionJson` TEXT, PRIMARY KEY(`uid`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unlockedMaxLevel",
+            "columnName": "unlockedMaxLevel",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionJson",
+            "columnName": "sessionJson",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid"
+          ]
+        }
+      },
+      {
+        "tableName": "quiz_passed_level",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `level` INTEGER NOT NULL, PRIMARY KEY(`uid`, `level`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "level",
+            "columnName": "level",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "level"
+          ]
+        }
+      },
+      {
+        "tableName": "quiz_first_assigned_level",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `level` INTEGER NOT NULL, PRIMARY KEY(`uid`, `level`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "level",
+            "columnName": "level",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "level"
+          ]
+        }
+      },
+      {
+        "tableName": "quiz_score",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `level` INTEGER NOT NULL, `firstClearScore` INTEGER, `bestScore` INTEGER, PRIMARY KEY(`uid`, `level`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "level",
+            "columnName": "level",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "firstClearScore",
+            "columnName": "firstClearScore",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "bestScore",
+            "columnName": "bestScore",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "level"
+          ]
+        }
+      },
+      {
+        "tableName": "quiz_used_initial_pass",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uid` TEXT NOT NULL, `tier` TEXT NOT NULL, `signId` TEXT NOT NULL, PRIMARY KEY(`uid`, `tier`, `signId`))",
+        "fields": [
+          {
+            "fieldPath": "uid",
+            "columnName": "uid",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tier",
+            "columnName": "tier",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "signId",
+            "columnName": "signId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "uid",
+            "tier",
+            "signId"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '68145f042747118b04aabbb3ef28220e')"
+    ]
+  }
+}

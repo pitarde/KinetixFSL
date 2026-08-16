@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.google.services)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -60,6 +61,12 @@ android {
     }
 }
 
+// Room exports the SQLite schema as JSON to /app/schemas on every build, so the
+// exact table/column layout is inspectable and version-controlled.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
@@ -92,6 +99,14 @@ dependencies {
     // Image loading
     implementation(libs.coil.compose)
     implementation(libs.coil.svg)
+
+    // Room — offline-first local SQLite database.
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+
+    // WorkManager — background cloud-sync worker.
+    implementation(libs.androidx.work.runtime.ktx)
 
     // Video playback + compression for community uploads
     implementation(libs.androidx.media3.exoplayer)

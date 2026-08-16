@@ -1,6 +1,14 @@
 package com.example.kinetixfsl.progress
 
 import android.content.Context
+import com.example.kinetixfsl.data.local.ActivityDayEntity
+import com.example.kinetixfsl.data.local.ActivityHourEntity
+import com.example.kinetixfsl.data.local.CameraErrorEntity
+import com.example.kinetixfsl.data.local.CategoryQuizStatEntity
+import com.example.kinetixfsl.data.local.KinetixDatabase
+import com.example.kinetixfsl.data.local.LessonCountEntity
+import com.example.kinetixfsl.data.local.QuizMistakeEntity
+import com.example.kinetixfsl.data.local.SignLastPracticedEntity
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -44,27 +52,110 @@ data class ActivityLogState(
     val cameraErrors: Map<String, Int> = emptyMap(),
 )
 
-/** Local JSON persistence for [ActivityLogState], same style as the other stores. */
+/**
+ * Room/SQLite persistence for [ActivityLogState] (was SharedPreferences+JSON).
+ * Public API unchanged; the state is spread across the typed activity tables
+ * (`activity_day`, `activity_hour`, `sign_last_practiced`, `lesson_count`,
+ * `category_quiz_stat`, `camera_error`, `quiz_mistake`), while [rawJson]/
+ * [saveRawJson] keep the exact cloud-document JSON shape.
+ */
 class ActivityLogStore(context: Context) {
 
-    private val prefs = context.applicationContext
+    private val dao = KinetixDatabase.get(context).activityDao()
+
+    private val legacyPrefs = context.applicationContext
         .getSharedPreferences(UserScope.prefs("kinetix_activity"), Context.MODE_PRIVATE)
 
     fun load(): ActivityLogState {
-        val json = prefs.getString(KEY, null) ?: return ActivityLogState()
-        return runCatching { parse(JSONObject(json)) }.getOrDefault(ActivityLogState())
+        val uid = UserScope.uid()
+        migrateLegacyIfNeeded(uid)
+
+        val days = dao.days(uid)
+        val hist = MutableList(24) { 0 }
+        val correct = MutableList(24) { 0 }
+        val attempts = MutableList(24) { 0 }
+        dao.hours(uid).forEach {
+            if (it.hour in 0..23) {
+                hist[it.hour] = it.histogram
+                correct[it.hour] = it.correct
+                attempts[it.hour] = it.attempts
+            }
+        }
+        val lessons = dao.lessonCounts(uid)
+        val catStats = dao.categoryStats(uid)
+        return ActivityLogState(
+            dailyLearned = days.filter { it.learnedCount != 0 }.associate { it.epochDay to it.learnedCount },
+            dailyStudySeconds = days.filter { it.studySeconds != 0L }.associate { it.epochDay to it.studySeconds },
+            activeDays = days.filter { it.active }.map { it.epochDay }.toSet(),
+            hourHistogram = hist,
+            signLastPracticed = dao.signLastPracticed(uid).associate { it.signId to it.epochDay },
+            lessonsStarted = lessons.filter { it.started != 0 }.associate { it.categoryId to it.started },
+            lessonsCompleted = lessons.filter { it.completed != 0 }.associate { it.categoryId to it.completed },
+            mistakes = dao.mistakes(uid).map { QuizMistake(it.targetSignId, it.targetWord, it.chosenWord, it.epochDay) },
+            hourCorrect = correct,
+            hourAttempts = attempts,
+            categoryCorrect = catStats.filter { it.correct != 0 }.associate { it.categoryId to it.correct },
+            categoryAttempts = catStats.filter { it.attempts != 0 }.associate { it.categoryId to it.attempts },
+            cameraErrors = dao.cameraErrors(uid).associate { it.errorType to it.count },
+        )
     }
 
     fun save(state: ActivityLogState) {
-        prefs.edit().putString(KEY, toJson(state).toString()).apply()
+        val uid = UserScope.uid()
+        val dayKeys = state.dailyLearned.keys + state.dailyStudySeconds.keys + state.activeDays
+        val lessonKeys = state.lessonsStarted.keys + state.lessonsCompleted.keys
+        val catKeys = state.categoryCorrect.keys + state.categoryAttempts.keys
+        dao.replaceAll(
+            uid = uid,
+            days = dayKeys.map {
+                ActivityDayEntity(
+                    uid, it,
+                    learnedCount = state.dailyLearned[it] ?: 0,
+                    studySeconds = state.dailyStudySeconds[it] ?: 0L,
+                    active = it in state.activeDays,
+                )
+            },
+            hours = (0..23).map {
+                ActivityHourEntity(
+                    uid, it,
+                    histogram = state.hourHistogram.getOrElse(it) { 0 },
+                    correct = state.hourCorrect.getOrElse(it) { 0 },
+                    attempts = state.hourAttempts.getOrElse(it) { 0 },
+                )
+            },
+            signLastPracticed = state.signLastPracticed.map { (k, v) -> SignLastPracticedEntity(uid, k, v) },
+            lessonCounts = lessonKeys.map {
+                LessonCountEntity(uid, it, state.lessonsStarted[it] ?: 0, state.lessonsCompleted[it] ?: 0)
+            },
+            categoryStats = catKeys.map {
+                CategoryQuizStatEntity(uid, it, state.categoryCorrect[it] ?: 0, state.categoryAttempts[it] ?: 0)
+            },
+            cameraErrors = state.cameraErrors.map { (k, v) -> CameraErrorEntity(uid, k, v) },
+            mistakes = state.mistakes.map {
+                QuizMistakeEntity(
+                    uid = uid,
+                    targetSignId = it.targetSignId,
+                    targetWord = it.targetWord,
+                    chosenWord = it.chosenWord,
+                    epochDay = it.epochDay,
+                )
+            },
+        )
     }
 
-    /** The exact stored JSON, for mirroring to the cloud. Null if nothing saved. */
-    fun rawJson(): String? = prefs.getString(KEY, null)
+    /** The current state as the cloud-document JSON (never null). */
+    fun rawJson(): String = toJson(load()).toString()
 
-    /** Writes cloud-restored JSON straight back, byte-for-byte (no re-parse). */
+    /** Restores from the cloud-document JSON into the local database. */
     fun saveRawJson(json: String) {
-        prefs.edit().putString(KEY, json).apply()
+        runCatching { save(parse(JSONObject(json))) }
+    }
+
+    private fun migrateLegacyIfNeeded(uid: String) {
+        if (dao.rowCount(uid) > 0) return
+        val json = legacyPrefs.getString(KEY, null) ?: return
+        runCatching { save(parse(JSONObject(json))) }
+        legacyPrefs.edit().remove(KEY).apply()
     }
 
     private fun toJson(s: ActivityLogState): JSONObject = JSONObject().apply {
