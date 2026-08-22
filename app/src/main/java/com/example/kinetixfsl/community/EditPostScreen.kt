@@ -234,6 +234,12 @@ fun EditPostScreen(
             )
         }
 
+        // ---- Request admin validation toggle ----
+        ValidationToggleRow(
+            checked = state.requestValidation,
+            onToggle = { viewModel.onToggleValidation(it) },
+        )
+
         // ---- Fields ----
         Column(
             modifier = Modifier

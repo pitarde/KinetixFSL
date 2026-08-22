@@ -2,6 +2,7 @@ package com.example.kinetixfsl.account
 
 import android.content.Context
 import android.util.Log
+import com.example.kinetixfsl.auth.AuthRepository
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException
 import com.google.firebase.firestore.CollectionReference
@@ -14,25 +15,35 @@ import kotlinx.coroutines.tasks.await
  *
  * Best-effort and client-side: each step is guarded, so one failure never
  * aborts the rest. It deletes everything the security rules let a user delete
- * for themselves (their local progress, their `progress/{uid}` doc, their own
- * posts + the votes/shares/comments under them, communities they created, and
- * their notifications).
+ * for themselves: their local Room database rows, their `progress/{uid}` doc,
+ * their own posts (with the comments/votes/shares under them), every
+ * community they created (with EVERY post inside it, by any author, so a
+ * deleted community's content doesn't linger in the feed), their
+ * notifications, and their public `users/{uid}` profile.
  *
  * ## What it deliberately does NOT delete (rule-limited)
  *
- * The rules block a client from deleting `users/{uid}` (their public profile)
- * and conversation documents (`allow delete: if false`). Fully removing those
- * needs a Cloud Function with the Admin SDK. For now the profile row lingers
- * after a full delete; loosen the users `delete` rule or add a Function later
- * for a truly complete wipe.
+ * The rules block a client from deleting conversation documents
+ * (`allow delete: if false`) — fully removing those needs a Cloud Function
+ * with the Admin SDK. Chat messages a deleted user sent therefore remain
+ * visible to the other participant, attributed to a profile that no longer
+ * resolves.
  */
 class AccountEraser(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
+    private val authRepository: AuthRepository = AuthRepository(auth),
 ) {
 
     /** Outcome of a full delete, so the UI can tell the user what happened. */
-    enum class DeleteOutcome { DELETED, DATA_WIPED_NEEDS_REAUTH, FAILED }
+    enum class DeleteOutcome {
+        DELETED,
+        DATA_WIPED_NEEDS_REAUTH,
+        /** The user backed out of the "confirm it's you" reauth step. Nothing
+         *  was touched — data, posts and the Auth account are all intact. */
+        REAUTH_CANCELLED,
+        FAILED,
+    }
 
     /**
      * Reset: wipe all of this account's data but keep the login alive. After it
@@ -44,13 +55,38 @@ class AccountEraser(
     }
 
     /**
-     * Full delete: wipe the data AND remove the Firebase Auth account. Data is
-     * wiped first, while still authenticated. Deleting the login can fail if the
-     * session is old ("recent login required") — the data is still gone, and the
-     * UI should ask the user to sign in again and retry.
+     * Full delete: reauthenticate, wipe the data, then remove the Firebase Auth
+     * account itself.
+     *
+     * ## Why reauthenticate FIRST
+     *
+     * `FirebaseUser.delete()` requires a "recent" sign-in — a token that's
+     * merely valid (silently auto-refreshed, as it normally is during everyday
+     * use) doesn't count. A user almost never deletes their account within
+     * minutes of originally signing in, so without this step `delete()` throws
+     * [FirebaseAuthRecentLoginRequiredException] nearly every time: the data
+     * gets wiped, the Auth record survives, and — this was the actual bug —
+     * nothing ever retried the deletion on a later sign-in, so the account
+     * looked "deleted" but blocked the same Google account from registering
+     * fresh. Reauthenticating up front makes the session fresh on purpose, so
+     * `delete()` actually succeeds in the normal case instead of leaving an
+     * orphaned Auth record behind.
+     *
+     * Only Google-signed-in accounts are reauthenticated here (that's this
+     * app's primary sign-in path); an email/password account still falls back
+     * to [DeleteOutcome.DATA_WIPED_NEEDS_REAUTH] as before.
      */
     suspend fun deleteAccount(context: Context): DeleteOutcome {
         val user = auth.currentUser ?: return DeleteOutcome.FAILED
+
+        if (authRepository.isGoogleAccount()) {
+            val reauth = authRepository.reauthenticateWithGoogle(context)
+            if (reauth is com.example.kinetixfsl.auth.AuthResult.Error) {
+                Log.w(TAG, "reauth before delete failed: ${reauth.message}")
+                return DeleteOutcome.REAUTH_CANCELLED
+            }
+        }
+
         val uid = user.uid
         runCatching { wipeEverything(context, uid) }
             .onFailure { Log.w(TAG, "data wipe had failures (continuing)", it) }
@@ -58,6 +94,8 @@ class AccountEraser(
             user.delete().await()
             DeleteOutcome.DELETED
         } catch (e: FirebaseAuthRecentLoginRequiredException) {
+            // Rare now that we reauthenticate up front (e.g. the fresh session
+            // itself expired in the few seconds it took to wipe Firestore data).
             DeleteOutcome.DATA_WIPED_NEEDS_REAUTH
         } catch (e: Exception) {
             Log.e(TAG, "auth delete failed", e)

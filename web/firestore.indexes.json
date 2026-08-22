@@ -3,7 +3,26 @@
   "//deploy": "firebase deploy --only firestore:indexes",
   "//note": "These are COLLECTION GROUP single-field indexes. Firestore auto-creates single-field indexes for normal (collection-scoped) queries, but a collectionGroup() query needs the field's index explicitly promoted to collection-group scope — which is what each fieldOverride below does.",
 
-  "indexes": [],
+  "indexes": [
+    {
+      "//": "Admin Reports & Moderation queue: reports filtered by status and shown newest-first (moderation.js subscribeReports).",
+      "collectionGroup": "reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Admin Content Validation queue: posts awaiting validation, newest-first (validation.js subscribeValidationQueue).",
+      "collectionGroup": "posts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "validationStatus", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
 
   "fieldOverrides": [
     {

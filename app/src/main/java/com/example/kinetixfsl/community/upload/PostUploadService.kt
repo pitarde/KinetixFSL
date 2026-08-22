@@ -48,6 +48,7 @@ class PostUploadService : Service() {
         val links = intent?.getStringArrayListExtra(EXTRA_LINK_URLS).orEmpty()
         val communityId = intent?.getStringExtra(EXTRA_COMMUNITY_ID) ?: ""
         val communityName = intent?.getStringExtra(EXTRA_COMMUNITY_NAME) ?: ""
+        val requestValidation = intent?.getBooleanExtra(EXTRA_REQUEST_VALIDATION, false) ?: false
         val mediaUriStrings = intent?.getStringArrayListExtra(EXTRA_MEDIA_URIS).orEmpty()
         val mediaTypes = intent?.getStringArrayListExtra(EXTRA_MEDIA_TYPES).orEmpty()
 
@@ -228,6 +229,7 @@ class PostUploadService : Service() {
                         media = existingMedia + uploaded,
                         communityId = communityId,
                         communityName = communityName,
+                        requestValidation = requestValidation,
                     )
                 } else {
                     repository.createPost(
@@ -239,6 +241,7 @@ class PostUploadService : Service() {
                         previewBlur = previewBlur,
                         communityId = communityId,
                         communityName = communityName,
+                        requestValidation = requestValidation,
                     ).map { }
                 }
 
@@ -386,6 +389,7 @@ class PostUploadService : Service() {
         const val EXTRA_LINK_URLS = "link_urls"
         const val EXTRA_COMMUNITY_ID = "community_id"
         const val EXTRA_COMMUNITY_NAME = "community_name"
+        const val EXTRA_REQUEST_VALIDATION = "request_validation"
         const val EXTRA_MEDIA_URIS = "media_uris"
         const val EXTRA_MEDIA_TYPES = "media_types"
 

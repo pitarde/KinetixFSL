@@ -63,7 +63,15 @@ fun ModulesScreen(
     onCategoryClick: (SignCategory) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val categories = remember { FslSignData.categories }
+    // Modules an admin has hidden (Content Management → Hide module). Loaded
+    // async; defaults to none so the grid shows in full until it resolves and
+    // on any read failure.
+    val disabledCategoryIds by androidx.compose.runtime.produceState(initialValue = emptySet<String>()) {
+        value = ContentOverridesRepository().disabledCategoryIds()
+    }
+    val categories = remember(disabledCategoryIds) {
+        FslSignData.categories.filter { it.id !in disabledCategoryIds }
+    }
     var searchQuery by remember { mutableStateOf("") }
 
     // Per-category learned counts (e.g. Alphabet 5/28), from real progress.
@@ -73,7 +81,7 @@ fun ModulesScreen(
             .categories.associate { it.id to it.learned }
     }
 
-    val filtered by remember(searchQuery) {
+    val filtered by remember(searchQuery, categories) {
         derivedStateOf {
             if (searchQuery.isBlank()) {
                 categories

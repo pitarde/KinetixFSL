@@ -34,6 +34,8 @@ data class EditPostUiState(
     /** Where the post lives. Blank id means the Home Feed. */
     val selectedCommunityId: String = "",
     val selectedCommunityName: String = "",
+    /** Whether to (re)submit the edited post for admin validation. */
+    val requestValidation: Boolean = false,
 ) {
     val totalMedia: Int get() = existingMedia.size + newMedia.size
     val canAddMore: Boolean get() = totalMedia < MAX_POST_MEDIA
@@ -64,6 +66,8 @@ class EditPostViewModel(
             existingMedia = post.mediaItems,
             selectedCommunityId = post.communityId,
             selectedCommunityName = post.communityName,
+            // Pre-check if the post was already submitted or approved.
+            requestValidation = post.validationStatus.isNotBlank(),
         )
     )
     val uiState: StateFlow<EditPostUiState> = _uiState.asStateFlow()
@@ -87,6 +91,9 @@ class EditPostViewModel(
 
     fun onBodyChange(value: String) =
         _uiState.update { it.copy(body = value, errorMessage = null) }
+
+    fun onToggleValidation(value: Boolean) =
+        _uiState.update { it.copy(requestValidation = value) }
 
     fun onLinkChange(index: Int, value: String) =
         _uiState.update { state ->
@@ -174,6 +181,7 @@ class EditPostViewModel(
             putStringArrayListExtra(PostUploadService.EXTRA_LINK_URLS, ArrayList(cleanLinks))
             putExtra(PostUploadService.EXTRA_COMMUNITY_ID, state.selectedCommunityId)
             putExtra(PostUploadService.EXTRA_COMMUNITY_NAME, state.selectedCommunityName)
+            putExtra(PostUploadService.EXTRA_REQUEST_VALIDATION, state.requestValidation)
 
             // Media already on the post, kept as-is (three parallel arrays).
             putStringArrayListExtra(

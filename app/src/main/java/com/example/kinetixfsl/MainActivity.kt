@@ -61,6 +61,9 @@ class MainActivity : ComponentActivity() {
 
         requestNotificationPermission()
         watchForSignIn()
+        // Live enforcement of admin disable/penalty: kicks the learner out the
+        // moment their accountStatus changes, not just at next sign-in.
+        com.example.kinetixfsl.auth.AccountStatusWatcher.start()
 
         setContent {
             // Reading ThemePreference.mode here re-themes the whole app the

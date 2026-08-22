@@ -109,6 +109,10 @@ internal fun PostAuthorRow(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    if (post.isValidated) {
+                        Spacer(Modifier.width(6.dp))
+                        ValidatedBadge()
+                    }
                 }
                 val byline = "Posted by " + post.authorName.ifBlank { "Unknown" } +
                     (viewsLabel?.let { " · $it" } ?: "")
@@ -158,6 +162,10 @@ internal fun PostAuthorRow(
                 color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.SemiBold,
             )
+            if (post.isValidated) {
+                Spacer(Modifier.width(6.dp))
+                ValidatedBadge()
+            }
         }
         Spacer(Modifier.width(8.dp))
         val meta = listOfNotNull(timeLabel.takeIf { it.isNotBlank() }, viewsLabel)
@@ -173,6 +181,35 @@ internal fun PostAuthorRow(
             Spacer(Modifier.weight(1f))
             trailing()
         }
+    }
+}
+
+/**
+ * The small "Validated" pill shown on a post an admin has approved
+ * (post.validationStatus == "validated"). Uses the app's own check-badge icon.
+ */
+@Composable
+internal fun ValidatedBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = CommunityIcons.Verified,
+            contentDescription = "Validated",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(
+            "Validated",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 

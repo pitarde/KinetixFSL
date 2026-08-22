@@ -261,6 +261,22 @@ fun KinetixNavHost(
         }
     }
 
+    // Live admin enforcement: when an admin disables or time-penalises the
+    // signed-in learner, AccountStatusWatcher emits a message here — sign the
+    // user out, tell them why, and send them back to Login, even mid-session.
+    val blockContext = androidx.compose.ui.platform.LocalContext.current
+    val blockMessage by com.example.kinetixfsl.auth.AccountStatusWatcher.blockMessage
+        .collectAsStateWithLifecycle()
+    LaunchedEffect(blockMessage) {
+        val msg = blockMessage ?: return@LaunchedEffect
+        authRepository.signOut()
+        android.widget.Toast.makeText(blockContext, msg, android.widget.Toast.LENGTH_LONG).show()
+        navController.navigate(Route.LOGIN) {
+            popUpTo(0) { inclusive = true }
+        }
+        com.example.kinetixfsl.auth.AccountStatusWatcher.consume()
+    }
+
     NavHost(
         navController = navController,
         startDestination = Route.SPLASH,

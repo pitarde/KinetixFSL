@@ -118,6 +118,8 @@ fun CommunityScreen(
     // The home-feed post whose 3-dot sheet is open, and one pending delete.
     var actionsPost: Post? by remember { mutableStateOf(null) }
     var pendingDeletePost: Post? by remember { mutableStateOf(null) }
+    var pendingReportPost: Post? by remember { mutableStateOf(null) }
+    val reportRepository = remember { ReportRepository() }
     val currentUid = remember {
         com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
     }
@@ -444,11 +446,7 @@ fun CommunityScreen(
                             actionsPost = null
                         },
                         onReport = {
-                            android.widget.Toast.makeText(
-                                context,
-                                "Post reported. We'll review it soon.",
-                                android.widget.Toast.LENGTH_SHORT,
-                            ).show()
+                            pendingReportPost = target
                             actionsPost = null
                         },
                         onShare = {
@@ -473,6 +471,23 @@ fun CommunityScreen(
                         pendingDeletePost = null
                     },
                     onDismiss = { pendingDeletePost = null },
+                )
+            }
+
+            val reporting = pendingReportPost
+            if (reporting != null) {
+                ReportReasonDialog(
+                    subject = "post",
+                    onSubmit = { reason ->
+                        scope.launch { reportRepository.reportPost(reporting, reason) }
+                        pendingReportPost = null
+                        android.widget.Toast.makeText(
+                            context,
+                            "Thanks — we'll review this post.",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    },
+                    onDismiss = { pendingReportPost = null },
                 )
             }
         }

@@ -98,6 +98,10 @@ fun AccountSettingsDialog(
                     ).show()
                     onDismiss(); onSignOut()
                 }
+                AccountEraser.DeleteOutcome.REAUTH_CANCELLED -> {
+                    // Nothing was touched — no toast needed, just return to the menu.
+                    stage = Stage.MENU
+                }
                 AccountEraser.DeleteOutcome.FAILED -> {
                     Toast.makeText(context, "Couldn't delete the account. Try again.",
                         Toast.LENGTH_LONG).show()
@@ -130,6 +134,7 @@ fun AccountSettingsDialog(
         Stage.CONFIRM_DELETE -> ConfirmDialog(
             title = "Delete your account?",
             message = "This permanently deletes your account and all its data. " +
+                "You may be asked to confirm your Google account first. " +
                 "You'll be signed out and must register again to use the app. " +
                 "This can't be undone.",
             confirmLabel = "Delete account",

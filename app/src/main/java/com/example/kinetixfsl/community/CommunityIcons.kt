@@ -494,4 +494,26 @@ internal object CommunityIcons {
             }
         }.build()
     }
+
+    /** A filled check-in-circle, used for the "Validated" post badge and the
+     *  request-validation toggle. */
+    val Verified: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Verified",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(21f, 12f)
+                arcTo(9f, 9f, 0f, isMoreThanHalf = true, isPositiveArc = true, 3f, 12f)
+                arcTo(9f, 9f, 0f, isMoreThanHalf = true, isPositiveArc = true, 21f, 12f)
+                close()
+            }
+            path(stroke = SolidColor(Color.White), strokeLineWidth = 2.4f) {
+                moveTo(8f, 12f)
+                lineTo(11f, 15f)
+                lineTo(16f, 9f)
+            }
+        }.build()
+    }
 }

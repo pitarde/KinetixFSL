@@ -6,10 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 /**
- * The app's offline-first local database (SQLite, via Room). Replaces the old
- * SharedPreferences+JSON stores; every offline fact — account progress, the
- * activity log, and quiz-game state — now lives in typed, inspectable tables.
- *
+ * The app's offline-first local database (SQLite, via Room).
  * One database holds every account's data, isolated by a `uid` column on each
  * table (the Firebase account id, or "guest" when signed out), so switching
  * accounts never bleeds one learner's progress into another's.

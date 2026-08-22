@@ -406,6 +406,150 @@ internal fun EditCommentDialog(
     )
 }
 
+/**
+ * Asks the reporter why they're reporting something before it's filed, so the
+ * moderator in the admin console has the reporter's own words to act on. A few
+ * quick presets plus a free-text box; Submit is enabled once there's a reason.
+ */
+@Composable
+internal fun ReportReasonDialog(
+    onSubmit: (reason: String) -> Unit,
+    onDismiss: () -> Unit,
+    subject: String = "post",
+) {
+    val presets = listOf(
+        "Spam or misleading",
+        "Harassment or bullying",
+        "Inappropriate content",
+        "Incorrect sign / misinformation",
+        "Other",
+    )
+    var selected by remember { mutableStateOf<String?>(null) }
+    var details by remember { mutableStateOf("") }
+
+    // The final reason is the preset, plus any typed detail. "Other" requires
+    // the text box; every other preset can stand on its own.
+    val reason = buildString {
+        selected?.let { if (it != "Other") append(it) }
+        if (details.isNotBlank()) {
+            if (isNotEmpty()) append(" — ")
+            append(details.trim())
+        }
+    }
+    val canSubmit = reason.isNotBlank()
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Report $subject",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "Tell us what's wrong. Our moderators review every report.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                presets.forEach { preset ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { selected = preset }
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (selected == preset) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (selected == preset) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.onPrimary),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = preset,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    if (details.isEmpty()) {
+                        Text(
+                            text = if (selected == "Other") "Describe the problem" else "Add details (optional)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = details,
+                        onValueChange = { details = it },
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(
+                            MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Text(
+                text = "Submit",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (canSubmit) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable(enabled = canSubmit) { onSubmit(reason) }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        },
+        dismissButton = {
+            Text(
+                text = "Cancel",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .clickable(onClick = onDismiss)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
 @Composable
 private fun ActionRow(
     icon: ImageVector,

@@ -44,6 +44,8 @@ data class CreatePostUiState(
     val selectedCommunityName: String = "",
     /** When true the target is fixed (posting from inside a community). */
     val isCommunityLocked: Boolean = false,
+    /** When true, the post is submitted to the admin validation queue. */
+    val requestValidation: Boolean = false,
 ) {
     val canAddMore: Boolean get() = media.size < MAX_POST_MEDIA
 
@@ -90,6 +92,10 @@ class CreatePostViewModel(
 
     fun onBodyChange(value: String) =
         _uiState.update { it.copy(body = value, errorMessage = null) }
+
+    /** Toggles whether this post is submitted for admin validation. */
+    fun onToggleValidation(value: Boolean) =
+        _uiState.update { it.copy(requestValidation = value) }
 
     /** Edits the link field at [index]. */
     fun onLinkChange(index: Int, value: String) =
@@ -185,6 +191,7 @@ class CreatePostViewModel(
             )
             putExtra(PostUploadService.EXTRA_COMMUNITY_ID, state.selectedCommunityId)
             putExtra(PostUploadService.EXTRA_COMMUNITY_NAME, state.selectedCommunityName)
+            putExtra(PostUploadService.EXTRA_REQUEST_VALIDATION, state.requestValidation)
             if (state.media.isNotEmpty()) {
                 putStringArrayListExtra(
                     PostUploadService.EXTRA_MEDIA_URIS,

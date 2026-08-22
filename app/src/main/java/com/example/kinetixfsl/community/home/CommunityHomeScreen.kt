@@ -46,6 +46,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -152,9 +153,12 @@ fun CommunityHomeScreen(
         while (overlays.size > index) overlays.removeAt(overlays.lastIndex)
     }
 
-    // The feed post whose 3-dot sheet is open, and one pending delete.
+    // The feed post whose 3-dot sheet is open, and one pending delete/report.
     var actionsPost by remember { mutableStateOf<Post?>(null) }
     var pendingDeletePost by remember { mutableStateOf<Post?>(null) }
+    var pendingReportPost by remember { mutableStateOf<Post?>(null) }
+    val reportScope = androidx.compose.runtime.rememberCoroutineScope()
+    val reportRepository = remember { com.example.kinetixfsl.community.ReportRepository() }
     val currentUid = remember {
         com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
     }
@@ -510,11 +514,7 @@ fun CommunityHomeScreen(
                         actionsPost = null
                     },
                     onReport = {
-                        android.widget.Toast.makeText(
-                            context,
-                            "Post reported. We'll review it soon.",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
+                        pendingReportPost = target
                         actionsPost = null
                     },
                     onDismiss = { actionsPost = null },
@@ -531,6 +531,23 @@ fun CommunityHomeScreen(
                     pendingDeletePost = null
                 },
                 onDismiss = { pendingDeletePost = null },
+            )
+        }
+
+        val reporting = pendingReportPost
+        if (reporting != null) {
+            com.example.kinetixfsl.community.ReportReasonDialog(
+                subject = "post",
+                onSubmit = { reason ->
+                    reportScope.launch { reportRepository.reportPost(reporting, reason) }
+                    pendingReportPost = null
+                    android.widget.Toast.makeText(
+                        context,
+                        "Thanks — we'll review this post.",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                },
+                onDismiss = { pendingReportPost = null },
             )
         }
 

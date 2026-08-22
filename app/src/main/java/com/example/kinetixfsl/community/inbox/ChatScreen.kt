@@ -59,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -124,6 +125,9 @@ fun ChatScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    val reportScope = androidx.compose.runtime.rememberCoroutineScope()
+    val reportRepository = remember { com.example.kinetixfsl.community.ReportRepository() }
+    var showReport by remember { mutableStateOf(false) }
 
     BackHandler(onBack = onClose)
 
@@ -299,14 +303,7 @@ fun ChatScreen(
             },
             onReport = {
                 showOptions = false
-                // Deliberately inert: reports belong to a moderation queue on
-                // the admin web app, which doesn't exist yet. Saying so beats a
-                // button that silently does nothing.
-                Toast.makeText(
-                    context,
-                    "Report sent for review. (Coming soon)",
-                    Toast.LENGTH_SHORT,
-                ).show()
+                showReport = true
             },
             onToggleBlock = {
                 showOptions = false
@@ -319,6 +316,29 @@ fun ChatScreen(
                 confirmClear = true
             },
             onDismiss = { showOptions = false },
+        )
+    }
+
+    if (showReport) {
+        com.example.kinetixfsl.community.ReportReasonDialog(
+            subject = "user",
+            onSubmit = { reason ->
+                reportScope.launch {
+                    reportRepository.reportUser(
+                        reportedUserId = recipientId,
+                        reportedUserName = state.otherName,
+                        conversationId = conversationId,
+                        reason = reason,
+                    )
+                }
+                showReport = false
+                Toast.makeText(
+                    context,
+                    "Thanks — we'll review this.",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
+            onDismiss = { showReport = false },
         )
     }
 

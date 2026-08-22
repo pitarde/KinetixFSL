@@ -87,7 +87,19 @@ data class Post(
     val viewCount: Long = 0,
     val score: Long = 0,
     val createdAt: Timestamp? = null,
+    /**
+     * Admin validation state: "" (not submitted), "pending" (in the admin
+     * queue) or "validated" (approved). Drives the "Validated" badge on the
+     * post card and the admin Content Validation queue.
+     */
+    val validationStatus: String = "",
+    val validatedBy: String? = null,
+    val validatedAt: Timestamp? = null,
 ) {
+    /** True once an admin has approved this post. */
+    val isValidated: Boolean get() = validationStatus == "validated"
+    /** True while awaiting admin review. */
+    val isPendingValidation: Boolean get() = validationStatus == "pending"
     /**
      * The media to display, newest scheme first. Posts made before multi-media
      * existed only have [imageUrl]/[videoUrl], so they're adapted here rather

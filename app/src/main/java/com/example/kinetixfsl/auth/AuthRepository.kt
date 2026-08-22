@@ -20,6 +20,9 @@ import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.userProfileChangeRequest
+import com.google.firebase.Timestamp
+import com.google.firebase.firestore.FirebaseFirestore
+import java.text.DateFormat
 import kotlinx.coroutines.tasks.await
 
 /**
@@ -29,6 +32,7 @@ import kotlinx.coroutines.tasks.await
  */
 class AuthRepository(
     private val firebaseAuth: FirebaseAuth = FirebaseAuth.getInstance(),
+    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
 ) {
     val currentUser: FirebaseUser?
         get() = firebaseAuth.currentUser
@@ -43,6 +47,7 @@ class AuthRepository(
     suspend fun signIn(email: String, password: String): AuthResult {
         return try {
             firebaseAuth.signInWithEmailAndPassword(email.trim(), password).await()
+            enforceAccountStatus()?.let { return AuthResult.Error(it) }
             AuthResult.Success
         } catch (e: FirebaseAuthInvalidUserException) {
             AuthResult.Error("No account found with this email.")
@@ -110,11 +115,99 @@ class AuthRepository(
         return try {
             val credential = GoogleAuthProvider.getCredential(idToken, null)
             firebaseAuth.signInWithCredential(credential).await()
+            enforceAccountStatus()?.let { return AuthResult.Error(it) }
             AuthResult.Success
         } catch (e: Exception) {
             AuthResult.Error(e.localizedMessage ?: "Firebase sign-in failed.")
         }
     }
+
+    // ---------------------------------------------------------------------------------
+    // Admin-set account restrictions (disable / time-penalty)
+    // ---------------------------------------------------------------------------------
+
+    /**
+     * Enforces an admin-set restriction immediately after a successful sign-in.
+     *
+     * The admin console writes `accountStatus/{uid}` with `disabled` and/or a
+     * `lockedUntil` timestamp (see the admin app + web/firestore.rules). Since we
+     * stay on the direct Firebase SDK (no Cloud Function to hard-disable the Auth
+     * record), enforcement is client-side: if the signed-in learner is disabled
+     * or still inside a penalty window, we sign them straight back out and return
+     * the reason for the login screen to show. Returns null when the account is
+     * in good standing.
+     *
+     * Fail-open on read errors on purpose: a transient Firestore hiccup must not
+     * lock a legitimate learner out of an app that otherwise works offline.
+     */
+    private suspend fun enforceAccountStatus(): String? {
+        val uid = firebaseAuth.currentUser?.uid ?: return null
+        val snap = runCatching {
+            firestore.collection("accountStatus").document(uid).get().await()
+        }.getOrNull() ?: return null
+        if (!snap.exists()) return null
+
+        val disabled = snap.getBoolean("disabled") == true
+        val lockedUntil = snap.getTimestamp("lockedUntil")
+        val reason = snap.getString("reason")?.takeIf { it.isNotBlank() }
+
+        val now = Timestamp.now()
+        val locked = lockedUntil != null && lockedUntil > now
+
+        if (!disabled && !locked) return null
+
+        // Blocked — undo the session before returning the message.
+        runCatching { signOut() }
+
+        return when {
+            disabled -> buildString {
+                append("Your account has been disabled.")
+                if (reason != null) append(" Reason: $reason.")
+                append(" Contact support if you think this is a mistake.")
+            }
+            else -> buildString {
+                val until = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                    .format(lockedUntil!!.toDate())
+                append("You're temporarily restricted until $until.")
+                if (reason != null) append(" Reason: $reason.")
+            }
+        }
+    }
+
+    /**
+     * Re-proves identity with a fresh Google credential, WITHOUT changing which
+     * account is signed in. This is what [com.example.kinetixfsl.account.AccountEraser]
+     * calls right before deleting the account.
+     *
+     * Firebase requires a "recent" sign-in for sensitive operations like
+     * `FirebaseUser.delete()` — a token that's merely valid (auto-refreshed
+     * silently in the background, as it normally is during everyday app use) is
+     * NOT the same as "recent", and deleting without this step throws
+     * [com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException] almost
+     * every time, because a user rarely deletes their account within minutes of
+     * originally signing in. Reauthenticating immediately before delete makes
+     * the session fresh on purpose, so the delete call actually succeeds instead
+     * of silently leaving the Firebase Auth record behind.
+     */
+    suspend fun reauthenticateWithGoogle(context: Context): AuthResult {
+        val user = firebaseAuth.currentUser ?: return AuthResult.Error("Not signed in.")
+        val idToken = when (val tokenResult = requestGoogleIdToken(context)) {
+            is GoogleTokenResult.Success -> tokenResult.idToken
+            is GoogleTokenResult.Failure -> return AuthResult.Error(tokenResult.message)
+        }
+        return try {
+            val credential = GoogleAuthProvider.getCredential(idToken, null)
+            user.reauthenticate(credential).await()
+            AuthResult.Success
+        } catch (e: Exception) {
+            AuthResult.Error(e.localizedMessage ?: "Couldn't verify your account.")
+        }
+    }
+
+    /** True if this account signed in through Google (vs. email/password). */
+    fun isGoogleAccount(): Boolean =
+        firebaseAuth.currentUser?.providerData
+            ?.any { it.providerId == GoogleAuthProvider.PROVIDER_ID } == true
 
     private suspend fun requestGoogleIdToken(context: Context): GoogleTokenResult {
         return try {

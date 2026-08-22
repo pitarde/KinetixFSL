@@ -13,6 +13,22 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ── Admin authorization ──────────────────────────────────────────────────
+    //
+    // The admin web console (Kinetix-FSL-Admin) authenticates as a normal
+    // Firebase Auth user; what makes it an *admin* is an entry in this
+    // allowlist collection. An allowlist was chosen over Firebase custom claims
+    // because it is self-documenting and manageable from the console itself,
+    // and reads cleanly here with a single exists() — the one extra document
+    // read per admin rule evaluation is negligible at admin volume.
+    //
+    // Bootstrap the FIRST admin by hand in the Firebase console (create
+    // admins/{yourUid}); after that the allowlist governs everything below.
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
     // Fields any signed-in user may change on someone else's post.
     // Voting, commenting and sharing all work by incrementing these.
     function onlyCounterFieldsChanged() {
@@ -79,15 +95,23 @@ service cloud.firestore {
       // community they've joined, or back to the Home Feed — subject to the
       // same membership check as creating one. Anyone signed in may move
       // counters (voting, sharing, commenting).
+      // The author edits their own post; anyone signed in may move counters;
+      // an admin may update any post — needed to set the validation verdict
+      // (validationStatus / validatedBy / validatedAt) from the Content
+      // Validation queue.
       allow update: if request.auth != null
                     && ((resource.data.authorId == request.auth.uid && postCommunityAllowed())
-                        || onlyCounterFieldsChanged());
+                        || onlyCounterFieldsChanged()
+                        || isAdmin());
 
       // The author deletes their own post; the community's creator may also
       // delete any post in their community (used when deleting the community).
+      // An admin may delete any post — the moderation "delete post" action and
+      // the server-side account wipe both rely on this.
       allow delete: if request.auth != null
                     && (resource.data.authorId == request.auth.uid
-                        || isCommunityCreator(database, resource.data.get('communityId', '')));
+                        || isCommunityCreator(database, resource.data.get('communityId', ''))
+                        || isAdmin());
 
       // One vote document per user, named with their uid.
       //
@@ -98,23 +122,25 @@ service cloud.firestore {
       // post's author is granted list separately.
       match /votes/{userId} {
         allow get: if request.auth != null && request.auth.uid == userId;
-        allow list: if isPostAuthor(database, postId);
+        allow list: if isPostAuthor(database, postId) || isAdmin();
         allow create, update: if request.auth != null && request.auth.uid == userId;
         allow delete: if request.auth != null
                       && (request.auth.uid == userId
-                          || isPostAuthor(database, postId));
+                          || isPostAuthor(database, postId)
+                          || isAdmin());
       }
 
       // One share marker per user — this is what keeps the share count
       // to one per account. Never updated.
       match /shares/{userId} {
         allow get: if request.auth != null && request.auth.uid == userId;
-        allow list: if isPostAuthor(database, postId);
+        allow list: if isPostAuthor(database, postId) || isAdmin();
         allow create: if request.auth != null && request.auth.uid == userId;
         allow update: if false;
         allow delete: if request.auth != null
                       && (request.auth.uid == userId
-                          || isPostAuthor(database, postId));
+                          || isPostAuthor(database, postId)
+                          || isAdmin());
       }
 
       match /comments/{commentId} {
@@ -123,10 +149,12 @@ service cloud.firestore {
                       && request.resource.data.authorId == request.auth.uid;
         allow update: if request.auth != null
                       && resource.data.authorId == request.auth.uid;
-        // Comment author, or the post's author cleaning up their post.
+        // Comment author, the post's author cleaning up their post, or an admin
+        // (moderation "delete comment" and the account wipe).
         allow delete: if request.auth != null
                       && (resource.data.authorId == request.auth.uid
-                          || isPostAuthor(database, postId));
+                          || isPostAuthor(database, postId)
+                          || isAdmin());
       }
     }
 
@@ -138,10 +166,16 @@ service cloud.firestore {
       // You may write your own profile. Anyone signed in may move the follower
       // counters, because following someone increments a counter on *their*
       // document — the same pattern as the post counters above.
+      // The owner writes their own profile; anyone signed in may move the
+      // follower counters (see above); an admin may edit any profile — the
+      // account wipe anonymises a deleted learner's name/photo through here.
       allow create, update: if request.auth != null
                             && (request.auth.uid == userId
-                                || onlyFollowCountsChanged());
-      allow delete: if false;
+                                || onlyFollowCountsChanged()
+                                || isAdmin());
+      // Self-delete is still forbidden (the app anonymises instead), but an
+      // admin may hard-delete a learner's profile document.
+      allow delete: if isAdmin();
 
       // Who follows this user. Readable so the followers list works; each
       // follower may only add or remove their own entry.
@@ -181,7 +215,8 @@ service cloud.firestore {
       // Join buttons and the create-post community picker.
       match /joinedCommunities/{communityId} {
         allow read: if request.auth != null && request.auth.uid == userId;
-        allow create, delete: if request.auth != null && request.auth.uid == userId;
+        allow create, delete: if request.auth != null
+                              && (request.auth.uid == userId || isAdmin());
         allow update: if false;
       }
 
@@ -265,7 +300,7 @@ service cloud.firestore {
                             && request.resource.data.diff(resource.data).affectedKeys()
                                  .hasOnly(['fromUserName', 'fromUserPhoto'])));
 
-      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null && (request.auth.uid == userId || isAdmin());
     }
 
     // Collection-group reads over every user's notification items.
@@ -387,15 +422,18 @@ service cloud.firestore {
       // joining increments it on someone else's community document.
       allow update: if request.auth != null
                     && (resource.data.creatorId == request.auth.uid
-                        || onlyMemberCountChanged());
+                        || onlyMemberCountChanged()
+                        || isAdmin());
       allow delete: if request.auth != null
-                    && resource.data.creatorId == request.auth.uid;
+                    && (resource.data.creatorId == request.auth.uid || isAdmin());
 
       // One member marker per user, named with their uid. Anyone may read the
-      // roster; each user only adds or removes their own membership.
+      // roster; each user only adds or removes their own membership; an admin
+      // may clear the roster when wiping a deleted creator's community.
       match /members/{memberId} {
         allow read: if request.auth != null;
-        allow create, delete: if request.auth != null && request.auth.uid == memberId;
+        allow create, delete: if request.auth != null
+                              && (request.auth.uid == memberId || isAdmin());
         allow update: if false;
       }
     }
@@ -405,6 +443,115 @@ service cloud.firestore {
     // collection-group query is matched separately.
     match /{path=**}/comments/{commentId} {
       allow read: if true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Admin console OTP codes — otp_codes/{uid}
+    //
+    // The admin web app's second sign-in factor: after a password check
+    // succeeds, OtpContext writes a hashed 6-digit code here, then reads/
+    // deletes it during verification (see Kinetix-FSL-Admin/src/OtpContext.jsx).
+    // Scoped to the signed-in user's own uid — nobody else can plant or read
+    // another account's code.
+    // -----------------------------------------------------------------------
+    match /otp_codes/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // -----------------------------------------------------------------------
+    // Learner progress — progress/{uid}
+    //
+    // A DEDICATED, PRIVATE collection (not the world-readable users profile):
+    // the mobile app mirrors each learner's XP/streak/detection analytics here
+    // (ProgressSyncWorker). Only the learner may read or write their own doc;
+    // the admin console may read every learner's doc (this is what the whole
+    // four-level analytics module is computed from) and delete one during an
+    // account wipe. The admin never writes a learner's progress.
+    // -----------------------------------------------------------------------
+    match /progress/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow create, update: if request.auth != null && request.auth.uid == uid;
+      allow delete: if request.auth != null && (request.auth.uid == uid || isAdmin());
+    }
+
+    // -----------------------------------------------------------------------
+    // Admin allowlist — admins/{uid}
+    //
+    // Presence of a document here is what grants admin power (see isAdmin()).
+    // A user may read their OWN entry (the console checks "am I an admin?");
+    // admins may read the whole list (to manage it in-console later). No client
+    // write path exists — entries are created in the Firebase console, so the
+    // allowlist can never be edited by a compromised client.
+    // -----------------------------------------------------------------------
+    match /admins/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow write: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Account moderation state — accountStatus/{uid}
+    //
+    // Set by an admin (disable / time-penalty / re-enable); read by the learner
+    // so the mobile app can enforce it at sign-in (AuthRepository refuses the
+    // session and signs out with the reason when `disabled` is true or
+    // `lockedUntil` is in the future). Owner-readable so that enforcement can
+    // happen client-side; admin-writable only.
+    // -----------------------------------------------------------------------
+    match /accountStatus/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // -----------------------------------------------------------------------
+    // Community reports — reports/{reportId}
+    //
+    // Any signed-in user files a report against a post/comment/chat, attributed
+    // to themselves and always arriving `open`. Only admins read, resolve or
+    // dismiss them — a reporter can't read the moderation queue back.
+    // -----------------------------------------------------------------------
+    match /reports/{reportId} {
+      allow create: if request.auth != null
+                    && request.resource.data.reporterId == request.auth.uid
+                    && request.resource.data.status == 'open';
+      allow read, update, delete: if isAdmin();
+    }
+
+    // -----------------------------------------------------------------------
+    // Admin audit log — auditLog/{entryId}
+    //
+    // Append-only accountability trail. An admin may read the whole log and
+    // append entries attributed to themselves; NOBODY may edit or delete an
+    // entry, so the record of who disabled/deleted/penalised whom can't be
+    // rewritten after the fact.
+    // -----------------------------------------------------------------------
+    match /auditLog/{entryId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.adminId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Broadcasts / announcements — broadcasts/{id}
+    //
+    // Composed by an admin and fanned out to learners' notification inboxes.
+    // Readable by any signed-in user (an in-app announcements list can read it
+    // directly); only admins may write.
+    // -----------------------------------------------------------------------
+    match /broadcasts/{id} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // -----------------------------------------------------------------------
+    // Content overrides — contentOverrides/{categoryId}
+    //
+    // Admin-managed enable/disable + ordering flags layered over the app's
+    // built-in FSL sign catalog (FslSignData). World-readable so the app can
+    // honour a disabled module without a privileged read; admin-writable only.
+    // -----------------------------------------------------------------------
+    match /contentOverrides/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     // Nothing else is reachable.

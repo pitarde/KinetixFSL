@@ -249,6 +249,12 @@ fun CreatePostScreen(
             )
         }
 
+        // ---- Request admin validation toggle ----
+        ValidationToggleRow(
+            checked = state.requestValidation,
+            onToggle = { viewModel.onToggleValidation(it) },
+        )
+
         // ---- Content area (scrollable) ----
         Column(
             modifier = Modifier
@@ -504,6 +510,52 @@ private fun CommunityPickerRow(
  * One editable link, in a bordered pill with an "x" to remove it. Shared by the
  * create and edit composers so a link field looks the same in both.
  */
+/**
+ * The "Request admin validation" toggle shown on the create/edit composers.
+ * When on, the post is submitted to the admin Content Validation queue and, once
+ * approved, shows a "Validated" badge to everyone.
+ */
+@Composable
+internal fun ValidationToggleRow(
+    checked: Boolean,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onToggle(!checked) }
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = CommunityIcons.Verified,
+            contentDescription = null,
+            tint = if (checked) MaterialTheme.colorScheme.primary
+                   else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Request admin validation",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "Get this post reviewed and marked Validated",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        androidx.compose.material3.Switch(
+            checked = checked,
+            onCheckedChange = onToggle,
+        )
+    }
+}
+
 @Composable
 internal fun LinkFieldRow(
     value: String,

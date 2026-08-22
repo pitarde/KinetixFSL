@@ -28,6 +28,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -102,6 +104,9 @@ fun PostDetailScreen(
     // The top-bar 3-dot menu and its delete confirmation.
     var isMenuOpen by remember { mutableStateOf(false) }
     var isConfirmingDelete by remember { mutableStateOf(false) }
+    var isReporting by remember { mutableStateOf(false) }
+    val reportScope = rememberCoroutineScope()
+    val reportRepository = remember { ReportRepository() }
     val isOwnPost = remember(post.authorId) {
         post.authorId.isNotBlank() &&
             post.authorId == com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
@@ -393,12 +398,8 @@ fun PostDetailScreen(
                     isMenuOpen = false
                 },
                 onReport = {
-                    android.widget.Toast.makeText(
-                        context,
-                        "Post reported. We'll review it soon.",
-                        android.widget.Toast.LENGTH_SHORT,
-                    ).show()
                     isMenuOpen = false
+                    isReporting = true
                 },
                 onShare = {
                     onShare()
@@ -426,6 +427,22 @@ fun PostDetailScreen(
                 onDelete?.invoke()
             },
             onDismiss = { isConfirmingDelete = false },
+        )
+    }
+
+    if (isReporting) {
+        ReportReasonDialog(
+            subject = "post",
+            onSubmit = { reason ->
+                reportScope.launch { reportRepository.reportPost(post, reason) }
+                isReporting = false
+                android.widget.Toast.makeText(
+                    context,
+                    "Thanks — we'll review this post.",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            },
+            onDismiss = { isReporting = false },
         )
     }
 }

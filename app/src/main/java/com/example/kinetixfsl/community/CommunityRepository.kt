@@ -782,6 +782,9 @@ class CommunityRepository(
         /** Where the post lives. Blank publishes to the Home Feed. */
         communityId: String = "",
         communityName: String = "",
+        /** True re-submits the (edited) post for admin validation as "pending";
+         *  false clears any validation state, since the content changed. */
+        requestValidation: Boolean = false,
     ): Result<Unit> = try {
         val cleanLinks = links.map { it.trim() }.filter { it.isNotBlank() }
         // Legacy single-media fields are rewritten too, so the share page and
@@ -800,6 +803,11 @@ class CommunityRepository(
                 "communityId" to communityId,
                 "communityName" to communityName,
                 "editedAt" to Timestamp.now(),
+                // Editing content invalidates a prior approval: re-queue if the
+                // author still wants validation, otherwise clear it.
+                "validationStatus" to if (requestValidation) "pending" else "",
+                "validatedBy" to null,
+                "validatedAt" to null,
             )
         ).await()
         Result.success(Unit)
@@ -823,6 +831,8 @@ class CommunityRepository(
         /** Blank publishes to the Home Feed; otherwise the target community. */
         communityId: String = "",
         communityName: String = "",
+        /** When true, the post enters the admin validation queue as "pending". */
+        requestValidation: Boolean = false,
     ): Result<String> {
         val user = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
 
@@ -863,6 +873,8 @@ class CommunityRepository(
             "viewCount" to 0L,
             "score" to 0L,
             "createdAt" to Timestamp.now(),
+            // "" = not submitted, "pending" = awaiting admin, "validated" = approved.
+            "validationStatus" to if (requestValidation) "pending" else "",
         )
         return try {
             val ref = firestore.collection(POSTS).add(data).await()
