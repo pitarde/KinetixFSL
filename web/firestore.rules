@@ -214,7 +214,9 @@ service cloud.firestore {
       // The communities this user has joined. Private to them — it drives the
       // Join buttons and the create-post community picker.
       match /joinedCommunities/{communityId} {
-        allow read: if request.auth != null && request.auth.uid == userId;
+        // Owner reads their own; admin may read too, so the account-deletion
+        // sweep can list and clear these.
+        allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
         allow create, delete: if request.auth != null
                               && (request.auth.uid == userId || isAdmin());
         allow update: if false;
@@ -265,6 +267,16 @@ service cloud.firestore {
       }
     }
 
+    // Admin sweep of EVERYTHING under a user's document. The account-deletion
+    // action has to list and clear every subcollection (recentCommunities,
+    // followers, following, hiddenPosts, blocked, blockedBy, devices, …); this
+    // one recursive grant lets an admin read+delete them all, rather than a
+    // per-subcollection rule. It only widens access for admins — regular users
+    // are still bound by the specific rules above.
+    match /users/{userId}/{document=**} {
+      allow read, delete: if isAdmin();
+    }
+
     // -----------------------------------------------------------------------
     // Notifications — notifications/{userId}/items/{itemId}
     //
@@ -273,7 +285,10 @@ service cloud.firestore {
     // them read, or delete them.
     // -----------------------------------------------------------------------
     match /notifications/{userId}/items/{itemId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
+      // The owner reads their own inbox; an admin may also read it, which is
+      // what lets the account-deletion sweep LIST these before deleting them
+      // (deleting without list permission fails with "insufficient permissions").
+      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
 
       // A notification must be attributed to whoever is writing it, and must
       // arrive unread. Without the first clause anyone could forge a message

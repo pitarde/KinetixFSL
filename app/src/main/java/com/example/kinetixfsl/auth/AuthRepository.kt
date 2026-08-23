@@ -142,17 +142,38 @@ class AuthRepository(
      */
     private suspend fun enforceAccountStatus(): String? {
         val uid = firebaseAuth.currentUser?.uid ?: return null
+        // Read from the SERVER, not the offline cache: a just-lifted disable
+        // could still sit in the device cache as `disabled:true` and wrongly
+        // block a legitimate sign-in. If the server is unreachable this throws
+        // and we fail open (below), which is the safe default for a login.
         val snap = runCatching {
-            firestore.collection("accountStatus").document(uid).get().await()
+            firestore.collection("accountStatus").document(uid)
+                .get(com.google.firebase.firestore.Source.SERVER).await()
         }.getOrNull() ?: return null
         if (!snap.exists()) return null
 
         val disabled = snap.getBoolean("disabled") == true
         val lockedUntil = snap.getTimestamp("lockedUntil")
         val reason = snap.getString("reason")?.takeIf { it.isNotBlank() }
+        val purgeAuth = snap.getBoolean("purgeAuth") == true
 
         val now = Timestamp.now()
         val locked = lockedUntil != null && lockedUntil > now
+
+        // Admin deleted this account: remove the Firebase Auth record itself.
+        // A user may always delete their OWN account (this is the same free path
+        // the in-app Settings "Delete account" uses — no Admin SDK needed), and
+        // the session is fresh right after sign-in, so no reauthentication is
+        // required. After this the email is free to register again from scratch.
+        if (purgeAuth) {
+            val deleted = runCatching { firebaseAuth.currentUser?.delete()?.await() }.isSuccess
+            if (!deleted) runCatching { signOut() } // couldn't delete now — retries next sign-in
+            return buildString {
+                append("Your account has been deleted by an administrator.")
+                if (reason != null) append(" Reason: $reason.")
+                append(" As a penalty, everything was removed. You can sign up again to start over.")
+            }
+        }
 
         if (!disabled && !locked) return null
 

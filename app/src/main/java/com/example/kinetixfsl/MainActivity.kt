@@ -159,6 +159,13 @@ class MainActivity : ComponentActivity() {
                 runCatching { CommunityRepository().ensureUserProfile() }
                 runCatching { FcmTokenStore.register() }
                 runCatching { AccountNotifier.check(applicationContext) }
+                // If an admin wiped this account's data, clear the on-device
+                // copy first so it doesn't just re-sync back. Must run before
+                // the cloud restore below.
+                runCatching {
+                    com.example.kinetixfsl.progress.ProgressSync
+                        .applyRemoteWipeIfNeeded(applicationContext)
+                }
                 // On a fresh install / new device, pull this account's progress
                 // back from the cloud. No-op if local progress already exists,
                 // so it never clobbers on-device data.

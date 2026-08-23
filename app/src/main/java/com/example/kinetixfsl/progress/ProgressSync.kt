@@ -122,4 +122,43 @@ object ProgressSync {
         Log.d(TAG, "Restored progress from cloud for $id")
         return true
     }
+
+    /**
+     * Honours an admin "delete account data" action on THIS device.
+     *
+     * The admin console wipes the account's cloud data and stamps
+     * `accountStatus/{uid}.wipedAt`. But the learner's own phone still holds a
+     * local Room copy that would otherwise re-sync the deleted progress straight
+     * back. On each sign-in we compare that timestamp to the last one we've
+     * applied locally; if the account was wiped more recently, we clear the
+     * on-device stores once so the reset actually holds here too.
+     *
+     * Must run BEFORE [restoreFromCloudIfLocalEmpty] so the restore sees empty
+     * local data (and the cloud is empty too, so nothing comes back).
+     */
+    suspend fun applyRemoteWipeIfNeeded(context: Context): Boolean {
+        val id = uid() ?: return false
+        val wipedAt = withContext(Dispatchers.IO) {
+            runCatching {
+                Tasks.await(db().collection("accountStatus").document(id).get())
+                    .getTimestamp("wipedAt")
+            }.getOrNull()
+        } ?: return false
+
+        val wipedMs = wipedAt.toDate().time
+        val prefs = context.applicationContext
+            .getSharedPreferences("kinetix_wipe", Context.MODE_PRIVATE)
+        if (wipedMs <= prefs.getLong("handled_$id", 0L)) return false
+
+        runCatching {
+            val local = com.example.kinetixfsl.data.local.KinetixDatabase.get(context)
+            local.progressDao().wipe(id)
+            local.activityDao().wipe(id)
+            local.quizDao().wipe(id)
+        }.onFailure { Log.w(TAG, "local wipe (remote-triggered) failed", it) }
+
+        prefs.edit().putLong("handled_$id", wipedMs).apply()
+        Log.d(TAG, "Applied admin data wipe locally for $id")
+        return true
+    }
 }
