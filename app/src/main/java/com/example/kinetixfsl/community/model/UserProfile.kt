@@ -15,6 +15,14 @@ data class UserProfile(
     val avatarUrl: String? = null,
     /** Wide cover image shown behind the profile card, set from the Edit sheet. */
     val bannerUrl: String? = null,
+    /**
+     * The avatar/banner URLs a swap in progress has just replaced. Written
+     * alongside the new URL and cleared once every denormalised copy has moved
+     * over; the upload Worker treats them as still-owned so the old file can be
+     * freed last. Not shown anywhere — purely bookkeeping for the swap.
+     */
+    val avatarUrlPrev: String? = null,
+    val bannerUrlPrev: String? = null,
     val followerCount: Long = 0,
     val followingCount: Long = 0,
     /**

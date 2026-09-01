@@ -1,6 +1,8 @@
 package com.example.kinetixfsl.community
 
 import com.example.kinetixfsl.community.model.Community
+import com.example.kinetixfsl.community.model.storageKeyOf
+import com.example.kinetixfsl.community.upload.R2MediaUploader
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -157,11 +159,38 @@ class CommunityDirectoryRepository(
                     ).await()
             } catch (_: Exception) { /* dangling markers are harmless */ }
 
+            // R2 before the document goes: the Worker verifies the avatar/banner
+            // keys against communities/{id} before deleting them, so it has to
+            // still exist. Best-effort — orphaned images must never block the
+            // community delete the user asked for.
+            deleteCommunityMedia(communityId)
+
             communityRef.delete().await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * Deletes a community's avatar and banner from Cloudflare R2.
+     *
+     * Reads the document for its two image URLs, turns them into bucket keys and
+     * asks the Worker to remove them. Best-effort: any failure only orphans
+     * those files and must never stop the community deletion. Call while the
+     * document still exists — the Worker checks the keys against it.
+     */
+    suspend fun deleteCommunityMedia(communityId: String) {
+        try {
+            val snap = firestore.collection(COMMUNITIES).document(communityId).get().await()
+            val keys = listOfNotNull(
+                storageKeyOf(snap.getString("avatarUrl")),
+                storageKeyOf(snap.getString("bannerUrl")),
+            ).distinct()
+            if (keys.isNotEmpty()) {
+                R2MediaUploader.deleteCommunityObjects(communityId, keys)
+            }
+        } catch (_: Exception) { /* orphaned media is harmless — see the doc */ }
     }
 
     /** Fetches full community docs for a set of ids — backs the profile's
@@ -173,6 +202,39 @@ class CommunityDirectoryRepository(
             } catch (_: Exception) {
                 null
             }
+        }
+    }
+
+    /**
+     * Drops from the signed-in user's joined list any of [candidateIds] whose
+     * community no longer exists.
+     *
+     * A community the user joined can be deleted by its creator — or vanish
+     * with the creator's whole account — and nothing then reaches into every
+     * member's mirrored list to clean it up. The stale id keeps inflating the
+     * "My Communities" count on the profile. This clears it from both places
+     * the user is allowed to write: the private `joinedCommunities` marker and
+     * the public `joinedCommunityIds` array. Only a definite "doesn't exist"
+     * prunes — a read that merely failed leaves the entry for next time.
+     * Best-effort throughout.
+     */
+    suspend fun pruneMissingJoinedCommunities(candidateIds: List<String>) {
+        val me = auth.currentUser?.uid ?: return
+        val myProfileRef = firestore.collection(USERS).document(me)
+        for (id in candidateIds.distinct()) {
+            val gone = try {
+                !firestore.collection(COMMUNITIES).document(id).get().await().exists()
+            } catch (_: Exception) {
+                false // A read failure is not proof it's gone.
+            }
+            if (!gone) continue
+            try {
+                myProfileRef.collection(JOINED).document(id).delete().await()
+                myProfileRef.set(
+                    mapOf("joinedCommunityIds" to FieldValue.arrayRemove(id)),
+                    SetOptions.merge(),
+                ).await()
+            } catch (_: Exception) { /* best-effort */ }
         }
     }
 
@@ -278,22 +340,62 @@ class CommunityDirectoryRepository(
      * Updates the community's profile picture and/or banner. Only the fields
      * passed non-null are written, so changing one leaves the other alone.
      * Admin-only, enforced by rules (only the creator may edit the document).
+     *
+     * Ordering matters, so a swap never shows a broken image. The document is
+     * repointed at the new file FIRST — every screen reads the community's
+     * avatar/banner straight off this document (or a live listener on it), so
+     * they all switch over at once. The replaced URL is kept in
+     * `avatarUrlPrev` / `bannerUrlPrev` so the upload Worker still authorises
+     * deleting the old file, which happens next; then the `*Prev` markers are
+     * cleared. Nothing is denormalised elsewhere, so no fan-out is needed.
+     * Best-effort cleanup — an orphan file never fails the save.
      */
     suspend fun updateCommunityImages(
         communityId: String,
         avatarUrl: String? = null,
         bannerUrl: String? = null,
     ): Result<Unit> = try {
-        val fields = buildMap {
-            avatarUrl?.let { put("avatarUrl", it) }
-            bannerUrl?.let { put("bannerUrl", it) }
+        if (avatarUrl == null && bannerUrl == null) {
+            Result.success(Unit)
+        } else {
+            val ref = firestore.collection(COMMUNITIES).document(communityId)
+            val current = runCatching { ref.get().await() }.getOrNull()
+
+            val oldAvatar = if (avatarUrl != null) {
+                current?.getString("avatarUrl")?.takeIf { it.isNotBlank() && it != avatarUrl }
+            } else null
+            val oldBanner = if (bannerUrl != null) {
+                current?.getString("bannerUrl")?.takeIf { it.isNotBlank() && it != bannerUrl }
+            } else null
+
+            // 1) Repoint the document — readers flip to the new file immediately.
+            val fields = mutableMapOf<String, Any?>()
+            if (avatarUrl != null) {
+                fields["avatarUrl"] = avatarUrl
+                if (oldAvatar != null) fields["avatarUrlPrev"] = oldAvatar
+            }
+            if (bannerUrl != null) {
+                fields["bannerUrl"] = bannerUrl
+                if (oldBanner != null) fields["bannerUrlPrev"] = oldBanner
+            }
+            ref.set(fields, SetOptions.merge()).await()
+
+            // 2) Old file is unreferenced now — free it (authorised via *Prev).
+            val staleKeys = listOfNotNull(storageKeyOf(oldAvatar), storageKeyOf(oldBanner))
+            if (staleKeys.isNotEmpty()) {
+                runCatching { R2MediaUploader.deleteCommunityObjects(communityId, staleKeys) }
+            }
+
+            // 3) Drop the swap bookkeeping.
+            val clear = mutableMapOf<String, Any?>()
+            if (oldAvatar != null) clear["avatarUrlPrev"] = FieldValue.delete()
+            if (oldBanner != null) clear["bannerUrlPrev"] = FieldValue.delete()
+            if (clear.isNotEmpty()) {
+                runCatching { ref.set(clear, SetOptions.merge()).await() }
+            }
+
+            Result.success(Unit)
         }
-        if (fields.isNotEmpty()) {
-            firestore.collection(COMMUNITIES).document(communityId)
-                .set(fields, SetOptions.merge())
-                .await()
-        }
-        Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
     }

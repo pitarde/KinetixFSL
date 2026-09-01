@@ -84,7 +84,10 @@ class KinetixMessagingService : FirebaseMessagingService() {
         )
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            // A monochrome alpha-mask icon — a full-colour launcher icon here
+            // renders as a white square/blob in the status bar on standard
+            // Android (see ic_stat_kinetix).
+            .setSmallIcon(R.drawable.ic_stat_kinetix)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))

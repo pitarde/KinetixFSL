@@ -82,7 +82,6 @@ fun ProfileScreen(
             lessonsCompleted = progress.quizLevelsCleared,
         )
     }
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showSettings by remember { mutableStateOf(false) }
 
     if (showSettings) {
@@ -92,10 +91,40 @@ fun ProfileScreen(
         )
     }
 
+    ProfileContent(
+        name = name,
+        summary = summary,
+        tier = progress.rank,
+        achievements = progress.achievements,
+        analytics = analytics,
+        onSettings = { showSettings = true },
+        onSignOut = onSignOut,
+        modifier = modifier,
+    )
+}
+
+/**
+ * The pure, state-free rendering of the Profile screen. Everything it needs is
+ * passed in, so it renders unchanged in an `@Preview` (see the bottom of this
+ * file) without a ViewModel, Context, or the local progress stores.
+ */
+@Composable
+private fun ProfileContent(
+    name: String,
+    summary: ProfileSummary,
+    tier: RankTier,
+    achievements: List<AchievementView>,
+    analytics: AnalyticsData,
+    onSettings: () -> Unit,
+    onSignOut: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(profileBackground())
+            .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp),
     ) {
@@ -104,8 +133,8 @@ fun ProfileScreen(
         ProfileHeader(
             name = name,
             summary = summary,
-            tier = progress.rank,
-            onSettings = { showSettings = true },
+            tier = tier,
+            onSettings = onSettings,
         )
 
         Spacer(Modifier.height(18.dp))
@@ -114,7 +143,7 @@ fun ProfileScreen(
 
         Spacer(Modifier.height(18.dp))
 
-        AchievementsGrid(progress.achievements)
+        AchievementsGrid(achievements)
 
         Spacer(Modifier.height(22.dp))
 
@@ -627,12 +656,61 @@ private fun formatMinutes(minutes: Int): String {
 }
 
 // ── Previews ────────────────────────────────────────────────────────
+//
+// These render the state-free [ProfileContent] with hard-coded sample data, so
+// the whole screen shows up in the Android Studio preview pane (Split / Design
+// view) exactly like the Login screen does — no emulator, ViewModel, or local
+// stores needed. Use the "Profile – Light" preview to tune the light-mode design.
+
+private val PreviewSummary = ProfileSummary(
+    rankTitle = "Skilled Signer",
+    level = 10,
+    levelProgress = 0.96f,
+    streakDays = 1,
+    signsLearned = 47,
+    studyMinutes = 11,
+    lessonsCompleted = 0,
+)
+
+private val PreviewAchievements: List<AchievementView> =
+    com.example.kinetixfsl.progress.Achievement.entries.mapIndexed { i, a ->
+        AchievementView(achievement = a, unlocked = i % 2 == 0)
+    }
+
+/** A full [AnalyticsData] snapshot for previews, assembled from [SampleProfile]. */
+private val PreviewAnalytics = AnalyticsData(
+    weeklyBars = SampleProfile.weeklyBars,
+    categoryMastery = SampleProfile.categoryMastery,
+    heatmap = SampleProfile.heatmap,
+    studyMinutes = PreviewSummary.studyMinutes,
+    confusionPairs = SampleProfile.confusionPairs,
+    dropOffs = SampleProfile.dropOffs,
+    errorBreakdown = SampleProfile.errorBreakdown,
+    forecastActual = SampleProfile.forecastActual,
+    forecastProjected = SampleProfile.forecastProjected,
+    streakRiskPercent = SampleProfile.streakRiskPercent,
+    dropOffWindow = SampleProfile.dropOffWindow,
+    decayWatch = SampleProfile.decayWatch,
+    recommendedQueue = SampleProfile.recommendedQueue,
+    fixWeakSpotStat = SampleProfile.fixWeakSpotStat,
+    fixWeakSpotCta = SampleProfile.fixWeakSpotCta,
+    bestTimeInsight = SampleProfile.bestTimeInsight,
+    adaptiveLessons = SampleProfile.adaptiveLessons,
+)
 
 @Preview(showBackground = true, showSystemUi = true, name = "Profile – Light")
 @Composable
 private fun ProfileScreenPreviewLight() {
     KinetixFSLTheme(darkTheme = false) {
-        ProfileScreen(onSignOut = {})
+        ProfileContent(
+            name = "Ken",
+            summary = PreviewSummary,
+            tier = RankTier.SKILLED,
+            achievements = PreviewAchievements,
+            analytics = PreviewAnalytics,
+            onSettings = {},
+            onSignOut = {},
+        )
     }
 }
 
@@ -640,6 +718,14 @@ private fun ProfileScreenPreviewLight() {
 @Composable
 private fun ProfileScreenPreviewDark() {
     KinetixFSLTheme(darkTheme = true) {
-        ProfileScreen(onSignOut = {})
+        ProfileContent(
+            name = "Ken",
+            summary = PreviewSummary,
+            tier = RankTier.SKILLED,
+            achievements = PreviewAchievements,
+            analytics = PreviewAnalytics,
+            onSettings = {},
+            onSignOut = {},
+        )
     }
 }

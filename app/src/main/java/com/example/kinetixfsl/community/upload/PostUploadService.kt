@@ -281,10 +281,15 @@ class PostUploadService : Service() {
         percent: Int = -1,
     ): Notification {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_kinetix)
+            .setColor(BRAND_COLOR)
             .setContentTitle("KinetixFSL")
             .setOngoing(true)
             .setSilent(true)
+            // Progress ticks re-post this notification many times; without this
+            // some OEM shades re-animate or re-sort the row on every update,
+            // which reads as the notification "flickering" or resetting.
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
         if (percent >= 0) {
@@ -350,7 +355,8 @@ class PostUploadService : Service() {
     private fun showSuccessNotification(isEdit: Boolean = false) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_kinetix)
+            .setColor(BRAND_COLOR)
             .setContentTitle("KinetixFSL")
             .setContentText(if (isEdit) "Post updated!" else "Post uploaded!")
             .setOngoing(false)
@@ -365,7 +371,8 @@ class PostUploadService : Service() {
     private fun showFailedNotification(message: String) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_kinetix)
+            .setColor(BRAND_COLOR)
             .setContentTitle("Upload failed")
             .setContentText(message)
             .setOngoing(false)
@@ -380,6 +387,9 @@ class PostUploadService : Service() {
     companion object {
         const val CHANNEL_ID = "kinetix_upload"
         const val NOTIFICATION_ID = 9001
+
+        /** Brand indigo — tints the small icon in the notification shade. */
+        private const val BRAND_COLOR = 0xFF3C3489.toInt()
 
         /** Minimum gap between progress notifications, in ms. */
         private const val NOTIFY_THROTTLE_MS = 400L

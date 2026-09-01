@@ -480,6 +480,33 @@ private fun NotificationListContent(
     onOpenPost: (String) -> Unit,
     onOpenProfile: (String) -> Unit,
 ) {
+    // The notification a tap opened for full reading, or null.
+    var detail by remember { mutableStateOf<NotificationItem?>(null) }
+    // The notification a delete is asking to confirm, or null.
+    var pendingDelete by remember { mutableStateOf<NotificationItem?>(null) }
+    // "Clear all" also confirms — it wipes the whole list for good.
+    var confirmClearAll by remember { mutableStateOf(false) }
+
+    /** Follows a notification to whatever it points at, if anywhere. */
+    fun openTarget(item: NotificationItem) {
+        when (item.kind) {
+            NotificationType.MESSAGE ->
+                onOpenConversation(item.targetId, item.fromUserId)
+
+            NotificationType.FOLLOW ->
+                onOpenProfile(item.targetId.ifBlank { item.fromUserId })
+
+            NotificationType.LIKE,
+            NotificationType.COMMENT,
+            NotificationType.MENTION,
+            NotificationType.ANNOUNCEMENT,
+            -> if (item.targetId.isNotBlank()) onOpenPost(item.targetId)
+
+            // Account notices have nowhere to go.
+            NotificationType.SYSTEM -> Unit
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         if (state.notifications.isNotEmpty()) {
             Row(
@@ -495,7 +522,7 @@ private fun NotificationListContent(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .clickable(onClick = onClearAll)
+                        .clickable { confirmClearAll = true }
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             }
@@ -515,30 +542,18 @@ private fun NotificationListContent(
                     NotificationRow(
                         item = item,
                         onClick = {
-                            // Read first, navigate second. A tap is the user
-                            // telling us they've seen this row, whether or not
-                            // it has anywhere to take them — which is the only
-                            // way an account notice ever gets marked read.
+                            // A tap marks the row read and opens the full-text
+                            // popup — where the user can read it all and choose
+                            // to open it or delete it. Marking read whether or
+                            // not it's navigable is the only way an account
+                            // notice ever clears the badge.
                             onMarkRead(item.id)
-
-                            when (item.kind) {
-                                NotificationType.MESSAGE ->
-                                    onOpenConversation(item.targetId, item.fromUserId)
-
-                                NotificationType.FOLLOW ->
-                                    onOpenProfile(item.targetId.ifBlank { item.fromUserId })
-
-                                NotificationType.LIKE,
-                                NotificationType.COMMENT,
-                                NotificationType.MENTION,
-                                NotificationType.ANNOUNCEMENT,
-                                -> if (item.targetId.isNotBlank()) onOpenPost(item.targetId)
-
-                                // Account notices have nowhere to go.
-                                NotificationType.SYSTEM -> Unit
-                            }
+                            detail = item
                         },
-                        onDismiss = { onDelete(item.id) },
+                        // The row's X asks to delete — routed through the same
+                        // confirm as the popup's Delete, so nothing goes for
+                        // good on a single stray tap.
+                        onDismiss = { pendingDelete = item },
                     )
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant,
@@ -548,6 +563,123 @@ private fun NotificationListContent(
             }
         }
     }
+
+    // Full-text popup for the tapped notification.
+    detail?.let { item ->
+        NotificationDetailDialog(
+            item = item,
+            canOpen = item.isNavigable,
+            onOpen = {
+                val target = item
+                detail = null
+                openTarget(target)
+            },
+            onDelete = {
+                pendingDelete = item
+                detail = null
+            },
+            onDismiss = { detail = null },
+        )
+    }
+
+    // "Do you want to delete this notification permanently?" — one row.
+    pendingDelete?.let { item ->
+        ConfirmDialog(
+            title = "Delete notification?",
+            body = "Do you want to delete this notification permanently?",
+            confirmLabel = "Delete",
+            onConfirm = {
+                onDelete(item.id)
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        )
+    }
+
+    // "Clear all" — the whole list, for good.
+    if (confirmClearAll) {
+        ConfirmDialog(
+            title = "Clear all notifications?",
+            body = "This permanently deletes every notification in your inbox. " +
+                "It can't be undone.",
+            confirmLabel = "Clear all",
+            onConfirm = {
+                onClearAll()
+                confirmClearAll = false
+            },
+            onDismiss = { confirmClearAll = false },
+        )
+    }
+}
+
+/**
+ * The full-text popup a tapped notification opens — so a long message that the
+ * row truncates to three lines can be read in full — with a Delete action and,
+ * when the notification points somewhere, an Open action.
+ */
+@Composable
+private fun NotificationDetailDialog(
+    item: NotificationItem,
+    canOpen: Boolean,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = {
+            Text(
+                text = item.fromUserName.ifBlank { "Kinetix" },
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    text = item.message.ifBlank { "(no details)" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = item.createdAt.inboxTime(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onDelete) {
+                Text(
+                    text = "Delete",
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        },
+        dismissButton = {
+            Row {
+                if (canOpen) {
+                    androidx.compose.material3.TextButton(onClick = onOpen) {
+                        Text(
+                            text = "Open",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                androidx.compose.material3.TextButton(onClick = onDismiss) {
+                    Text(
+                        text = "Close",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+    )
 }
 
 /**

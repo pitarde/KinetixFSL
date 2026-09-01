@@ -12,7 +12,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -46,6 +48,22 @@ class CommunityFeedViewModel(
 
     private val currentUid: String? =
         com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+
+    /**
+     * The signed-in user's own avatar, live off `users/{uid}`. The top bar's
+     * profile button renders this, so changing your picture updates it there
+     * the instant the write lands — no reopening the feed.
+     */
+    val myAvatarUrl: StateFlow<String?> =
+        (currentUid?.let { repository.observeUserProfile(it) } ?: flowOf(null))
+            .map { it?.avatarUrl }
+            .catch { emit(null) }
+            .stateIn(
+                viewModelScope,
+                kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+                com.google.firebase.auth.FirebaseAuth.getInstance()
+                    .currentUser?.photoUrl?.toString(),
+            )
 
     /**
      * Community id → its profile picture URL, for the community header a

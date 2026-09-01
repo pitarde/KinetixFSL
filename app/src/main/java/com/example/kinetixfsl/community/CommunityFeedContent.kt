@@ -182,15 +182,37 @@ fun CommunityFeedContent(
      * Previously every partially-visible post counted as active, so two or
      * three videos loaded at once and fought over the connection. Exactly one
      * is active now, and it changes as the centre of the screen moves.
+     *
+     * Exception: when two or more posts are (near) fully on screen at once —
+     * e.g. two short videos that both fit at the top of the feed — the centre
+     * of the viewport falls in the gap between them and the lower one would
+     * win, leaving the top video sitting there unplayed. Facebook-style, the
+     * post the user reads first is the topmost, so a fully-visible post higher
+     * up takes focus instead. Mid-scroll, when posts are clipped by the
+     * viewport edges, this never triggers and the "nearest the centre" rule
+     * still drives the hand-off from one video to the next.
      */
     val activeMediaId by remember {
         derivedStateOf {
             val info = listState.layoutInfo
-            val centre = (info.viewportStartOffset + info.viewportEndOffset) / 2
-            info.visibleItemsInfo
-                .filter { it.key is String }
-                .minByOrNull { abs((it.offset + it.size / 2) - centre) }
-                ?.key as? String
+            val viewportStart = info.viewportStartOffset
+            val viewportEnd = info.viewportEndOffset
+            val centre = (viewportStart + viewportEnd) / 2
+            val mediaItems = info.visibleItemsInfo.filter { it.key is String }
+
+            val nearlyFullyVisible = mediaItems.filter { item ->
+                if (item.size <= 0) return@filter false
+                val shownTop = maxOf(item.offset, viewportStart)
+                val shownBottom = minOf(item.offset + item.size, viewportEnd)
+                (shownBottom - shownTop).toFloat() / item.size >= 0.9f
+            }
+
+            val chosen = if (nearlyFullyVisible.size >= 2) {
+                nearlyFullyVisible.minByOrNull { it.offset }
+            } else {
+                mediaItems.minByOrNull { abs((it.offset + it.size / 2) - centre) }
+            }
+            chosen?.key as? String
         }
     }
 

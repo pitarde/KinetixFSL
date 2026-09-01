@@ -84,6 +84,19 @@ data class NotificationItem(
     val createdAt: Timestamp? = null,
 ) {
     val kind: NotificationType get() = NotificationType.from(type)
+
+    /**
+     * Whether tapping this notification has somewhere to go — a post, a profile
+     * or a conversation. System/account notices don't, and a post/comment
+     * notice with a blank [targetId] has nothing to open either. Drives whether
+     * the detail popup offers an "Open" action.
+     */
+    val isNavigable: Boolean
+        get() = when (kind) {
+            NotificationType.SYSTEM -> false
+            NotificationType.FOLLOW -> targetId.isNotBlank() || fromUserId.isNotBlank()
+            else -> targetId.isNotBlank()
+        }
 }
 
 /**

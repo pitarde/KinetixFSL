@@ -146,11 +146,22 @@ data class Post(
 
 /**
  * Turns a public media URL into its bucket key.
- * "https://host/images/123-abc.webp" -> "images/123-abc.webp"
+ * "https://host/images/123-abc.webp"   -> "images/123-abc.webp"
+ * "https://host/f/images/123-abc.webp" -> "images/123-abc.webp"
+ *
+ * Media is served through the Worker under its media path ("/f/"), so newer
+ * URLs carry an `f/` segment that is **not** part of the real R2 key — the
+ * bucket only holds `images/` and `videos/`. It has to be stripped, or every
+ * delete silently targets a key like `f/images/…` that doesn't exist and
+ * nothing is ever freed. Older `pub-*.r2.dev/images/…` URLs have no prefix and
+ * pass through unchanged. Must stay in lockstep with the Worker's `keyFromUrl`.
  */
 fun storageKeyOf(url: String?): String? {
     if (url.isNullOrBlank()) return null
-    return runCatching {
-        android.net.Uri.parse(url).path?.trimStart('/')
-    }.getOrNull()?.takeIf { it.isNotBlank() }
+    val path = runCatching { android.net.Uri.parse(url).path }
+        .getOrNull()
+        ?.trimStart('/')
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+    return path.removePrefix("f/")
 }

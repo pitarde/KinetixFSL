@@ -31,6 +31,14 @@ data class Community(
     /** A wide banner shown behind the header, Reddit-style. Null shows a plain
      *  colored strip. */
     val bannerUrl: String? = null,
+    /**
+     * Previous avatar/banner URLs during an in-progress image swap — written
+     * with the new URL, cleared once the swap finishes. The upload Worker keeps
+     * treating them as owned so the old file can be deleted after everything
+     * else already points at the new one. Not rendered anywhere.
+     */
+    val avatarUrlPrev: String? = null,
+    val bannerUrlPrev: String? = null,
     /** Shown under the name on the home screen. Placeholder until we track it. */
     val contributionsPerWeek: Long = 0,
     val memberCount: Long = 0,

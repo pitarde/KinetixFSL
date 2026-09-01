@@ -73,6 +73,22 @@ service cloud.firestore {
            == request.auth.uid;
     }
 
+    // True when the signed-in user created the community the post at [postId]
+    // belongs to. Lets that creator clear a member's votes/shares/comments when
+    // deleting the whole community, so nothing is left orphaned under a post
+    // they didn't author. Guarded with exists() so a post already gone (or with
+    // no community) is simply false rather than an evaluation error. Costs two
+    // document reads (the post, then its community) — only paid on the delete
+    // path, and only after the cheaper author check has already failed.
+    function isPostCommunityCreator(database, postId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/posts/$(postId))
+        && isCommunityCreator(
+             database,
+             get(/databases/$(database)/documents/posts/$(postId)).data.get('communityId', ''),
+           );
+    }
+
     // A post either targets no community, or the author must have joined the one
     // it targets — so a community's feed can only ever hold its members' posts.
     function postCommunityAllowed() {
@@ -122,11 +138,14 @@ service cloud.firestore {
       // post's author is granted list separately.
       match /votes/{userId} {
         allow get: if request.auth != null && request.auth.uid == userId;
-        allow list: if isPostAuthor(database, postId) || isAdmin();
+        allow list: if isPostAuthor(database, postId)
+                    || isPostCommunityCreator(database, postId)
+                    || isAdmin();
         allow create, update: if request.auth != null && request.auth.uid == userId;
         allow delete: if request.auth != null
                       && (request.auth.uid == userId
                           || isPostAuthor(database, postId)
+                          || isPostCommunityCreator(database, postId)
                           || isAdmin());
       }
 
@@ -134,12 +153,15 @@ service cloud.firestore {
       // to one per account. Never updated.
       match /shares/{userId} {
         allow get: if request.auth != null && request.auth.uid == userId;
-        allow list: if isPostAuthor(database, postId) || isAdmin();
+        allow list: if isPostAuthor(database, postId)
+                    || isPostCommunityCreator(database, postId)
+                    || isAdmin();
         allow create: if request.auth != null && request.auth.uid == userId;
         allow update: if false;
         allow delete: if request.auth != null
                       && (request.auth.uid == userId
                           || isPostAuthor(database, postId)
+                          || isPostCommunityCreator(database, postId)
                           || isAdmin());
       }
 
@@ -149,11 +171,14 @@ service cloud.firestore {
                       && request.resource.data.authorId == request.auth.uid;
         allow update: if request.auth != null
                       && resource.data.authorId == request.auth.uid;
-        // Comment author, the post's author cleaning up their post, or an admin
-        // (moderation "delete comment" and the account wipe).
+        // Comment author, the post's author cleaning up their post, the
+        // community's creator clearing a member's post when deleting the whole
+        // community, or an admin (moderation "delete comment" and the account
+        // wipe).
         allow delete: if request.auth != null
                       && (resource.data.authorId == request.auth.uid
                           || isPostAuthor(database, postId)
+                          || isPostCommunityCreator(database, postId)
                           || isAdmin());
       }
     }
@@ -173,9 +198,13 @@ service cloud.firestore {
                             && (request.auth.uid == userId
                                 || onlyFollowCountsChanged()
                                 || isAdmin());
-      // Self-delete is still forbidden (the app anonymises instead), but an
-      // admin may hard-delete a learner's profile document.
-      allow delete: if isAdmin();
+      // The owner may hard-delete their own profile document — the
+      // account-deletion flow wipes it outright so a deleted account leaves no
+      // "Anonymous" record behind and a later sign-in starts clean. Admins may
+      // delete any profile (moderation). If a client can't complete the delete,
+      // the app still falls back to anonymising the identifying fields.
+      allow delete: if isAdmin()
+                    || (request.auth != null && request.auth.uid == userId);
 
       // Who follows this user. Readable so the followers list works; each
       // follower may only add or remove their own entry.
@@ -187,8 +216,13 @@ service cloud.firestore {
       // stale avatar forever.
       match /followers/{followerId} {
         allow read: if request.auth != null;
-        allow create, delete: if request.auth != null
-                              && request.auth.uid == followerId;
+        allow create: if request.auth != null && request.auth.uid == followerId;
+        // A follower removes their own entry; the profile's owner may also clear
+        // their followers when deleting their account, so orphaned follower
+        // markers don't keep a deleted profile showing as a ghost document.
+        allow delete: if request.auth != null
+                      && (request.auth.uid == followerId
+                          || request.auth.uid == userId);
         allow update: if request.auth != null
                       && request.auth.uid == followerId
                       && request.resource.data.diff(resource.data).affectedKeys()
@@ -204,7 +238,12 @@ service cloud.firestore {
       // the rule can still evaluate the diff server-side.
       match /following/{targetId} {
         allow read: if request.auth != null && request.auth.uid == userId;
-        allow create, delete: if request.auth != null && request.auth.uid == userId;
+        allow create: if request.auth != null && request.auth.uid == userId;
+        // The owner unfollows; the *followed* person may also remove this entry
+        // — so when an account is deleted it can take itself out of everyone's
+        // following list, leaving no dangling connection to a gone account.
+        allow delete: if request.auth != null
+                      && (request.auth.uid == userId || request.auth.uid == targetId);
         allow update: if request.auth != null
                       && request.auth.uid == targetId
                       && request.resource.data.diff(resource.data).affectedKeys()
@@ -254,7 +293,12 @@ service cloud.firestore {
       // block from a third party.
       match /blockedBy/{blockerId} {
         allow read: if request.auth != null && request.auth.uid == userId;
-        allow create, delete: if request.auth != null && request.auth.uid == blockerId;
+        allow create: if request.auth != null && request.auth.uid == blockerId;
+        // The blocker removes their own marker; the profile's owner may also
+        // clear these when deleting their account, so they don't linger as a
+        // ghost subcollection under a deleted user.
+        allow delete: if request.auth != null
+                      && (request.auth.uid == blockerId || request.auth.uid == userId);
         allow update: if false;
       }
 
@@ -447,8 +491,16 @@ service cloud.firestore {
       // may clear the roster when wiping a deleted creator's community.
       match /members/{memberId} {
         allow read: if request.auth != null;
-        allow create, delete: if request.auth != null
-                              && (request.auth.uid == memberId || isAdmin());
+        allow create: if request.auth != null
+                      && (request.auth.uid == memberId || isAdmin());
+        // A user removes their own membership; the community's creator may also
+        // remove any member — needed to clear the roster when the community (or
+        // the creator's whole account) is deleted, so orphaned member markers
+        // don't keep a deleted community showing as a ghost document.
+        allow delete: if request.auth != null
+                      && (request.auth.uid == memberId
+                          || isCommunityCreator(database, communityId)
+                          || isAdmin());
         allow update: if false;
       }
     }
@@ -458,6 +510,17 @@ service cloud.firestore {
     // collection-group query is matched separately.
     match /{path=**}/comments/{commentId} {
       allow read: if true;
+    }
+
+    // Collection-group read over a user's own votes, across every post. The
+    // account-deletion sweep uses it to find and remove every vote the departing
+    // user cast (and correct each post's counts). The `userId == me` condition
+    // is what makes it safe: Firestore only accepts a query it can prove matches
+    // the rule, so a query without `where userId == <me>` is rejected rather than
+    // exposing other people's votes.
+    match /{path=**}/votes/{voteId} {
+      allow read: if request.auth != null
+                  && resource.data.userId == request.auth.uid;
     }
 
     // -----------------------------------------------------------------------

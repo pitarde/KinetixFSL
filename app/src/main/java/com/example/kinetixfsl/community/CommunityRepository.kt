@@ -170,25 +170,62 @@ class CommunityRepository(
     }
 
     /**
-     * Saves the signed-in user's profile picture and/or cover banner to
-     * `users/{uid}`. Only the fields passed are written, merged so counters and
-     * other details are never clobbered. Mirrors [updateCommunityImages] for the
-     * community; the profile Edit sheet uses it.
+     * The URLs a just-completed [updateUserImages] call replaced, so the caller
+     * can free the old files from R2 after every denormalised copy has moved to
+     * the new ones. Pass it straight to [finishUserImageSwap].
+     */
+    data class ProfileImageSwap(
+        val userId: String,
+        val oldAvatarUrl: String? = null,
+        val oldBannerUrl: String? = null,
+    ) {
+        val hasStaleFiles: Boolean
+            get() = !oldAvatarUrl.isNullOrBlank() || !oldBannerUrl.isNullOrBlank()
+    }
+
+    /**
+     * Points `users/{uid}` (and Firebase Auth) at a newly uploaded avatar and/or
+     * banner. Only the fields passed are written, merged so nothing else is
+     * clobbered. The profile Edit sheet uses it.
+     *
+     * This does NOT delete the file being replaced. The old URL is stashed in
+     * `avatarUrlPrev` / `bannerUrlPrev` and returned in [ProfileImageSwap]; the
+     * caller runs [propagateAvatarUrl] to move every denormalised copy onto the
+     * new URL and THEN calls [finishUserImageSwap], which frees the old file and
+     * clears the `*Prev` bookkeeping. Ordered this way there's never a moment
+     * where something on screen points at a file that's already gone — the whole
+     * reason an avatar change used to flash broken images across the feed.
      */
     suspend fun updateUserImages(
         avatarUrl: String? = null,
         bannerUrl: String? = null,
-    ): Result<Unit> {
+    ): Result<ProfileImageSwap> {
         val user = auth.currentUser
             ?: return Result.failure(Exception("You're not signed in."))
-        val fields = mutableMapOf<String, Any?>()
-        avatarUrl?.let { fields["avatarUrl"] = it }
-        bannerUrl?.let { fields["bannerUrl"] = it }
-        if (fields.isEmpty()) return Result.success(Unit)
+        if (avatarUrl == null && bannerUrl == null) {
+            return Result.success(ProfileImageSwap(user.uid))
+        }
         return try {
-            firestore.collection(USERS).document(user.uid)
-                .set(fields, SetOptions.merge())
-                .await()
+            val ref = firestore.collection(USERS).document(user.uid)
+            val current = runCatching { ref.get().await() }.getOrNull()
+
+            val oldAvatar = if (avatarUrl != null) {
+                current?.getString("avatarUrl")?.takeIf { it.isNotBlank() && it != avatarUrl }
+            } else null
+            val oldBanner = if (bannerUrl != null) {
+                current?.getString("bannerUrl")?.takeIf { it.isNotBlank() && it != bannerUrl }
+            } else null
+
+            val fields = mutableMapOf<String, Any?>()
+            if (avatarUrl != null) {
+                fields["avatarUrl"] = avatarUrl
+                if (oldAvatar != null) fields["avatarUrlPrev"] = oldAvatar
+            }
+            if (bannerUrl != null) {
+                fields["bannerUrl"] = bannerUrl
+                if (oldBanner != null) fields["bannerUrlPrev"] = oldBanner
+            }
+            ref.set(fields, SetOptions.merge()).await()
 
             // Firebase Auth has to move too, exactly as a rename moves both.
             // Every post, comment, community and follow edge stamps its author
@@ -204,9 +241,35 @@ class CommunityRepository(
                 ).await()
             }
 
-            Result.success(Unit)
+            return Result.success(
+                ProfileImageSwap(user.uid, oldAvatar, oldBanner),
+            )
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Frees the files an image swap replaced and clears the `*Prev` markers.
+     * Call only after [propagateAvatarUrl] has finished, so nothing still
+     * references the old files. Best-effort throughout — a failure just leaves
+     * an orphan file and a harmless stale `*Prev` field for next time.
+     */
+    suspend fun finishUserImageSwap(swap: ProfileImageSwap) {
+        if (!swap.hasStaleFiles) return
+        val keys = listOfNotNull(
+            storageKeyOf(swap.oldAvatarUrl),
+            storageKeyOf(swap.oldBannerUrl),
+        )
+        if (keys.isNotEmpty()) {
+            runCatching { R2MediaUploader.deleteProfileObjects(swap.userId, keys) }
+        }
+        val clear = mutableMapOf<String, Any?>()
+        if (!swap.oldAvatarUrl.isNullOrBlank()) clear["avatarUrlPrev"] = FieldValue.delete()
+        if (!swap.oldBannerUrl.isNullOrBlank()) clear["bannerUrlPrev"] = FieldValue.delete()
+        runCatching {
+            firestore.collection(USERS).document(swap.userId)
+                .set(clear, SetOptions.merge()).await()
         }
     }
 
@@ -700,6 +763,32 @@ class CommunityRepository(
     }
 
     /**
+     * Snaps a post's `commentCount` back to the number of comment documents it
+     * actually has.
+     *
+     * The stored counter is denormalised — every add/delete moves it by one —
+     * so it drifts whenever a decrement is lost: an account-deletion sweep that
+     * removed a departing user's comments but couldn't correct the tally, an
+     * interrupted delete, an offline write that never landed. The comment thread
+     * screen calls this each time it loads, passing the real count it just read,
+     * so any post whose number is wrong is quietly fixed the first time someone
+     * opens its comments.
+     *
+     * Writes only on a mismatch (so opening a healthy thread costs nothing), and
+     * only the one counter field, which the rules let any signed-in user move.
+     * Best-effort: a failure just leaves the stale number for next time.
+     */
+    suspend fun reconcileCommentCount(postId: String, actualCount: Int) {
+        try {
+            val postRef = firestore.collection(POSTS).document(postId)
+            val stored = postRef.get().await().getLong("commentCount") ?: 0L
+            if (stored != actualCount.toLong()) {
+                postRef.update("commentCount", actualCount.toLong()).await()
+            }
+        } catch (_: Exception) { /* best-effort */ }
+    }
+
+    /**
      * Removes a post and the files it owns in storage. Only the author is
      * allowed to, enforced by rules.
      *
@@ -931,7 +1020,10 @@ class CommunityRepository(
                         null
                     }
                     existing != null -> {
-                        tx.set(voteRef, hashMapOf("direction" to direction))
+                        // userId is stored (not just used as the doc id) so the
+                        // account-deletion sweep can find every vote a user cast
+                        // via a collectionGroup query. See AccountEraser.
+                        tx.set(voteRef, hashMapOf("direction" to direction, "userId" to uid))
                         val incField = if (direction == "up") "upvoteCount" else "downvoteCount"
                         val decField = if (direction == "up") "downvoteCount" else "upvoteCount"
                         val scoreDelta = if (direction == "up") 2L else -2L
@@ -941,7 +1033,7 @@ class CommunityRepository(
                         direction
                     }
                     else -> {
-                        tx.set(voteRef, hashMapOf("direction" to direction))
+                        tx.set(voteRef, hashMapOf("direction" to direction, "userId" to uid))
                         val countField = if (direction == "up") "upvoteCount" else "downvoteCount"
                         val scoreDelta = if (direction == "up") 1L else -1L
                         tx.update(postRef, countField, FieldValue.increment(1))

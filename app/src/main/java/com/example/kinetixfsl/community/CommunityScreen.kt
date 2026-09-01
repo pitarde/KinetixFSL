@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -46,6 +47,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -517,6 +519,17 @@ private fun CommunityScaffold(
     // The search icon toggles the feed's inline search bar rather than it
     // always showing — cleaner default state, matching the reference design.
     var searchActive by remember { mutableStateOf(false) }
+
+    // The signed-in user's own avatar for the top-bar profile button, live so a
+    // picture change shows here at once. Name is only the fallback initial when
+    // there's no photo, so Auth's static copy is fine for it.
+    val myAvatarUrl by feedViewModel.myAvatarUrl.collectAsStateWithLifecycle()
+    val myName = remember {
+        val user = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+        user?.displayName?.takeIf { it.isNotBlank() }
+            ?: user?.email?.substringBefore('@') ?: "You"
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -534,6 +547,8 @@ private fun CommunityScaffold(
             },
             onCreateClick = onCreateClick,
             onProfileClick = onProfileClick,
+            profileAvatarUrl = myAvatarUrl,
+            profileName = myName,
         )
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -572,6 +587,8 @@ private fun CommunityTopBar(
     onSearchClick: () -> Unit,
     onCreateClick: () -> Unit,
     onProfileClick: () -> Unit,
+    profileAvatarUrl: String?,
+    profileName: String,
 ) {
     // The whole bar eases in on first show, matching the other community screens.
     var shown by remember { mutableStateOf(false) }
@@ -631,12 +648,15 @@ private fun CommunityTopBar(
                 .clickable(onClick = onCreateClick),
         )
         Spacer(Modifier.width(18.dp))
-        Icon(
-            imageVector = CommunityIcons.Profile,
-            contentDescription = "Your profile",
-            tint = MaterialTheme.colorScheme.onSurface,
+        // The user's own profile photo, not a generic glyph — and it's driven
+        // by a live `users/{uid}` listener, so changing the picture updates it
+        // here immediately. Falls back to the initial when there's no photo.
+        Avatar(
+            avatarUrl = profileAvatarUrl,
+            name = profileName,
+            size = 30.dp,
             modifier = Modifier
-                .size(30.dp)
+                .clip(CircleShape)
                 .clickable(onClick = onProfileClick),
         )
     }

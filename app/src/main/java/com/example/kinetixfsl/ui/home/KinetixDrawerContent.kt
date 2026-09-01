@@ -167,7 +167,13 @@ private fun RecentlyVisitedSection(
     onSeeAll: () -> Unit,
 ) {
     val repository = remember { RecentCommunitiesRepository() }
-    val recents by repository.observe().collectAsStateWithLifecycle(initialValue = emptyList())
+    // Hold the flow across recompositions. Without this, `observe()` builds a
+    // fresh flow every recomposition, so collectAsStateWithLifecycle keeps
+    // re-subscribing — and each new subscription re-emits the stale marker copy
+    // before its live listeners catch up, which read as a fast blink between the
+    // old and new community picture right after an edit.
+    val recentsFlow = remember(repository) { repository.observe() }
+    val recents by recentsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     if (recents.isEmpty()) return
 
@@ -231,7 +237,10 @@ private fun RecentlyVisitedFullView(
 ) {
     val repository = remember { RecentCommunitiesRepository() }
     val scope = rememberCoroutineScope()
-    val recents by repository.observe().collectAsStateWithLifecycle(initialValue = emptyList())
+    // Remembered so recomposition doesn't rebuild the flow and force a
+    // re-subscribe — see the note in RecentlyVisitedSection.
+    val recentsFlow = remember(repository) { repository.observe() }
+    val recents by recentsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     // Phone back returns to the menu rather than closing the drawer, matching
     // the on-screen back arrow.

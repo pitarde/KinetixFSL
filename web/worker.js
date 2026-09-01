@@ -77,11 +77,28 @@ export default {
       const resourceType = formData.get("resource_type") || "image";
       const folder = resourceType === "video" ? "videos" : "images";
 
+      // --- Per-user folder, so R2 isn't one flat images/ and videos/ ----
+      // shared by every account. The app sends the signed-in uploader's uid
+      // with every request (R2MediaUploader.currentUid()); this is purely
+      // organisational, not an access check — the upload endpoint has never
+      // verified identity, so a spoofed uid only means an object lands under
+      // the wrong-looking folder name, exactly as safe (or not) as today's
+      // wide-open endpoint. Validated against Firebase's uid shape so a
+      // malformed or hostile value can't be used to escape the "images"/
+      // "videos" prefix (e.g. "../../secrets") — it just falls back to the
+      // flat layout instead.
+      const rawUid = formData.get("uid");
+      const uid = typeof rawUid === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(rawUid)
+        ? rawUid
+        : null;
+
       // --- Generate a unique filename ----------------------------------
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(2, 10);
       const ext = getExtension(file.name, file.type);
-      const key = `${folder}/${timestamp}-${random}${ext}`;
+      const key = uid
+        ? `${uid}/${folder}/${timestamp}-${random}${ext}`
+        : `${folder}/${timestamp}-${random}${ext}`;
 
       // --- Upload to R2 ------------------------------------------------
       await env.KINETIX_BUCKET.put(key, file.stream(), {
@@ -116,11 +133,18 @@ export default {
  * POST /delete-media
  *   headers: x-kinetix-key: <DELETE_SECRET>
  *   body:    { "postId": "...", "keys": ["images/123-abc.webp", ...] }
+ *     — or — { "userId": "...", "keys": [...] }        (profile avatar/banner)
+ *     — or — { "communityId": "...", "keys": [...] }   (community avatar/banner)
  *
- * Called by the app just *before* it removes the post document, so the post
- * is still readable here and every key can be checked against it. A key that
- * doesn't appear in that post's own URLs is refused — so even with the shared
+ * Called by the app just *before* it removes the owning document, so it's still
+ * readable here and every key can be checked against it. A key that doesn't
+ * appear in that document's own URLs is refused — so even with the shared
  * secret, this endpoint can't be turned into "delete anything in the bucket".
+ *
+ * `postId` authorises a post's media (all image versions, video, comment
+ * images); `userId` authorises that user's profile avatar and banner; and
+ * `communityId` authorises a community's avatar and banner — the deletion
+ * sweeps use them so a wiped account or community leaves nothing in R2.
  *
  * SECURITY NOTE: the shared secret ships inside the APK and can be extracted
  * by anyone willing to unpack it. The ownership check above is what limits the
@@ -142,26 +166,61 @@ async function handleDeleteMedia(request, env) {
   }
 
   const postId = payload && payload.postId;
+  const userId = payload && payload.userId;
+  const communityId = payload && payload.communityId;
   const keys = (payload && payload.keys) || [];
-  if (!postId || !Array.isArray(keys) || keys.length === 0) {
-    return jsonResponse(400, { error: "postId and keys are required" });
+  if (
+    (!postId && !userId && !communityId) ||
+    !Array.isArray(keys) ||
+    keys.length === 0
+  ) {
+    return jsonResponse(400, {
+      error: "postId (or userId, or communityId) and keys are required",
+    });
   }
 
-  // Collect every URL the post references, so we can confirm ownership.
-  const post = await fetchPost(postId, env);
-  if (!post) {
-    return jsonResponse(404, { error: "Post not found" });
+  // Collect every URL the owning document references, so each key can be
+  // confirmed against it before anything is deleted.
+  let ownedUrls;
+  if (postId) {
+    const post = await fetchPost(postId, env);
+    if (!post) {
+      return jsonResponse(404, { error: "Post not found" });
+    }
+    // Images attached to comments belong to the post too, and go with it when
+    // it's deleted — so they have to count as owned or they'd be refused.
+    const commentUrls = await fetchCommentImageUrls(postId, env);
+    ownedUrls = collectPostUrls(post).concat(commentUrls);
+  } else if (userId) {
+    const user = await fetchUser(userId, env);
+    if (!user) {
+      return jsonResponse(404, { error: "User not found" });
+    }
+    // A profile owns its current avatar and banner — plus the ones a swap in
+    // progress has just replaced (avatarUrlPrev / bannerUrlPrev), so the old
+    // file can be freed once everything else already points at the new one.
+    ownedUrls = [
+      user.avatarUrl,
+      user.bannerUrl,
+      user.avatarUrlPrev,
+      user.bannerUrlPrev,
+    ].filter((u) => typeof u === "string" && u.length > 0);
+  } else {
+    const community = await fetchCommunity(communityId, env);
+    if (!community) {
+      return jsonResponse(404, { error: "Community not found" });
+    }
+    // A community owns its current avatar and banner — plus the ones a swap in
+    // progress just replaced, same as the profile path above.
+    ownedUrls = [
+      community.avatarUrl,
+      community.bannerUrl,
+      community.avatarUrlPrev,
+      community.bannerUrlPrev,
+    ].filter((u) => typeof u === "string" && u.length > 0);
   }
-  // Images attached to comments belong to the post too, and go with it when
-  // it's deleted — so they have to count as owned or they'd be refused.
-  const commentUrls = await fetchCommentImageUrls(postId, env);
 
-  const owned = new Set(
-    collectPostUrls(post)
-      .concat(commentUrls)
-      .map(keyFromUrl)
-      .filter(Boolean),
-  );
+  const owned = new Set(ownedUrls.map(keyFromUrl).filter(Boolean));
 
   const deleted = [];
   const refused = [];
@@ -234,10 +293,19 @@ function collectPostUrls(post) {
   return urls.filter((u) => typeof u === "string" && u.length > 0);
 }
 
-/** "https://host/images/123-abc.webp" -> "images/123-abc.webp" */
+/**
+ * "https://host/images/123-abc.webp"   -> "images/123-abc.webp"
+ * "https://host/f/images/123-abc.webp" -> "images/123-abc.webp"
+ *
+ * Media is served through this Worker under MEDIA_PATH ("/f/"), so a stored URL
+ * carries an `f/` segment that is NOT part of the object's real bucket key —
+ * strip it, or a delete targets `f/images/…`, which doesn't exist, and the file
+ * is never freed. Legacy `pub-*.r2.dev/images/…` URLs have no prefix and pass
+ * through unchanged. Must stay in lockstep with the app's `storageKeyOf`.
+ */
 function keyFromUrl(url) {
   try {
-    return new URL(url).pathname.replace(/^\/+/, "");
+    return new URL(url).pathname.replace(/^\/+/, "").replace(/^f\//, "");
   } catch (_) {
     return null;
   }
@@ -1064,6 +1132,10 @@ async function fetchCommunity(communityId, env) {
     memberCount: readInt(f.memberCount),
     avatarUrl: readString(f.avatarUrl),
     bannerUrl: readString(f.bannerUrl),
+    // See fetchUser — the previous avatar/banner URLs during an in-progress
+    // image swap, kept deletable until every copy has moved to the new file.
+    avatarUrlPrev: readString(f.avatarUrlPrev),
+    bannerUrlPrev: readString(f.bannerUrlPrev),
   };
 }
 
@@ -1197,6 +1269,16 @@ async function fetchUser(userId, env) {
   return {
     displayName: readString(f.displayName) || "Anonymous",
     avatarUrl: readString(f.avatarUrl),
+    // Needed by /delete-media's userId path so account deletion can free the
+    // profile banner from R2, not only the avatar.
+    bannerUrl: readString(f.bannerUrl),
+    // The URLs a still-in-progress avatar/banner swap just replaced. The client
+    // keeps them here only until it has re-pointed every denormalised copy at
+    // the new file; while they're present the old file is still deletable, so
+    // the swap can update everything first and free the old file last — no
+    // window where a live reference points at a file that's already gone.
+    avatarUrlPrev: readString(f.avatarUrlPrev),
+    bannerUrlPrev: readString(f.bannerUrlPrev),
     followerCount: readInt(f.followerCount),
     followingCount: readInt(f.followingCount),
   };

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -43,6 +44,16 @@ object R2MediaUploader {
 
     /** Copy buffer for streamed uploads. 64 KB keeps the socket well fed. */
     private const val STREAM_BUFFER_SIZE = 64 * 1024
+
+    /**
+     * Whoever is signed in right now — sent with every upload so the Worker can
+     * file the object under that person's own folder in R2 (`{uid}/images/…`,
+     * `{uid}/videos/…`) instead of dumping every user's files into one flat
+     * `images/` and `videos/`. Purely organisational: a Worker that predates
+     * this just ignores the field and uploads flatly, same as the existing
+     * `folder` field.
+     */
+    private fun currentUid(): String? = FirebaseAuth.getInstance().currentUser?.uid
 
     sealed interface UploadResult {
         data class Success(val secureUrl: String) : UploadResult
@@ -103,32 +114,65 @@ object R2MediaUploader {
      * harmless, and must never stop the post itself from being deleted.
      */
     suspend fun deleteObjects(postId: String, keys: List<String>): Boolean =
-        withContext(Dispatchers.IO) {
-            if (keys.isEmpty()) return@withContext true
+        deleteMedia("postId", postId, keys)
 
-            try {
-                val payload = JSONObject().apply {
-                    put("postId", postId)
-                    put("keys", JSONArray(keys))
-                }.toString().toByteArray()
+    /**
+     * Removes a user's profile avatar and banner from the bucket.
+     *
+     * Same contract as [deleteObjects], but the Worker verifies each key against
+     * `users/{userId}`'s own avatar/banner rather than a post. Used by the
+     * account-deletion sweep so a wiped account leaves no profile media behind.
+     * Must run while the user document still exists.
+     */
+    suspend fun deleteProfileObjects(userId: String, keys: List<String>): Boolean =
+        deleteMedia("userId", userId, keys)
 
-                val connection = (URL("$WORKER_URL/delete-media").openConnection()
-                        as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("x-kinetix-key", DELETE_SECRET)
-                    connectTimeout = 15_000
-                    readTimeout = 30_000
-                    setFixedLengthStreamingMode(payload.size)
-                }
+    /**
+     * Removes a community's avatar and banner from the bucket.
+     *
+     * Same contract as [deleteObjects], but the Worker verifies each key against
+     * `communities/{communityId}`'s own avatar/banner. Used when a community is
+     * deleted — directly, or as part of an account wipe — so no community media
+     * is left behind. Must run while the community document still exists.
+     */
+    suspend fun deleteCommunityObjects(communityId: String, keys: List<String>): Boolean =
+        deleteMedia("communityId", communityId, keys)
 
-                connection.outputStream.use { it.write(payload) }
-                connection.responseCode in 200..299
-            } catch (_: Exception) {
-                false
+    /**
+     * The shared /delete-media call. [ownerField] is "postId", "userId" or
+     * "communityId" — the Worker uses it to decide which document's URLs a key
+     * must match before it will delete it.
+     */
+    private suspend fun deleteMedia(
+        ownerField: String,
+        ownerId: String,
+        keys: List<String>,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (keys.isEmpty()) return@withContext true
+
+        try {
+            val payload = JSONObject().apply {
+                put(ownerField, ownerId)
+                put("keys", JSONArray(keys))
+            }.toString().toByteArray()
+
+            val connection = (URL("$WORKER_URL/delete-media").openConnection()
+                    as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("x-kinetix-key", DELETE_SECRET)
+                connectTimeout = 15_000
+                readTimeout = 30_000
+                setFixedLengthStreamingMode(payload.size)
             }
+
+            connection.outputStream.use { it.write(payload) }
+            connection.responseCode in 200..299
+        } catch (_: Exception) {
+            false
         }
+    }
 
     /**
      * Uploads bytes we generated ourselves rather than a file the user picked —
@@ -187,6 +231,12 @@ object R2MediaUploader {
             append("--$BOUNDARY\r\n")
             append("Content-Disposition: form-data; name=\"resource_type\"\r\n\r\n")
             append("$resourceType\r\n")
+            // uid field, for per-user folders in R2 — see performUpload.
+            currentUid()?.let { uid ->
+                append("--$BOUNDARY\r\n")
+                append("Content-Disposition: form-data; name=\"uid\"\r\n\r\n")
+                append("$uid\r\n")
+            }
             append("--$BOUNDARY\r\n")
             append("Content-Disposition: form-data; name=\"file\"; filename=\"${file.name}\"\r\n")
             append("Content-Type: $mimeType\r\n\r\n")
@@ -267,6 +317,13 @@ object R2MediaUploader {
                 out.write("--$BOUNDARY\r\n".toByteArray())
                 out.write("Content-Disposition: form-data; name=\"folder\"\r\n\r\n".toByteArray())
                 out.write("$folder\r\n".toByteArray())
+            }
+
+            // --- uid field, for per-user folders in R2 ---
+            currentUid()?.let { uid ->
+                out.write("--$BOUNDARY\r\n".toByteArray())
+                out.write("Content-Disposition: form-data; name=\"uid\"\r\n\r\n".toByteArray())
+                out.write("$uid\r\n".toByteArray())
             }
 
             // --- file field ---

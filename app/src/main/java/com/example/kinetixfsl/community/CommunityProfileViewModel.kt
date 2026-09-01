@@ -40,6 +40,9 @@ data class CommunityProfileUiState(
      */
     val commentsError: String? = null,
     val followerCount: Long = 0,
+    /** How many accounts this user follows — shown on the own-profile stat pill
+     *  in place of the useless "Active now" a user always sees on themselves. */
+    val followingCount: Long = 0,
     val accountAge: String = "—",
     val activeTime: String = "—",
     /** False when viewing somebody else — swaps Edit for Message + Follow. */
@@ -148,7 +151,20 @@ class CommunityProfileViewModel(
         }
         viewModelScope.launch {
             val communities = directory.getCommunitiesByIds(ids)
-            _uiState.update { it.copy(myCommunities = communities) }
+            // Snap the pill to what actually resolved — a community deleted out
+            // from under a member leaves its id in the mirrored list, so the raw
+            // `ids.size` above over-counts.
+            _uiState.update {
+                it.copy(myCommunities = communities, myCommunityCount = communities.size)
+            }
+            // On our own profile, clear those dead ids from the list we're
+            // allowed to write, so the count doesn't need correcting again.
+            if (isOwn) {
+                val missing = ids.toSet() - communities.map { c -> c.id }.toSet()
+                if (missing.isNotEmpty()) {
+                    directory.pruneMissingJoinedCommunities(missing.toList())
+                }
+            }
         }
     }
 
@@ -170,6 +186,7 @@ class CommunityProfileViewModel(
                 _uiState.update { state ->
                     state.copy(
                         followerCount = profile?.followerCount ?: 0,
+                        followingCount = profile?.followingCount ?: 0,
                         // Another user's name, age and presence can only come
                         // from their document — their Auth record isn't readable.
                         displayName = if (isOwn) {
@@ -477,7 +494,7 @@ class CommunityProfileViewModel(
                     } else {
                         repository.updateUserImages(bannerUrl = result.secureUrl)
                     }
-                    save.onSuccess {
+                    save.onSuccess { swap ->
                         // Reflect immediately; the doc listener will also catch up.
                         _uiState.update { state ->
                             if (which == Uploading.AVATAR) {
@@ -486,16 +503,18 @@ class CommunityProfileViewModel(
                                 state.copy(bannerUrl = result.secureUrl)
                             }
                         }
-                        // Auth's own photo is updated inside updateUserImages,
-                        // which is what makes *future* posts carry the new
-                        // avatar. This second step fixes the ones already
-                        // written: every post, comment, chat thread,
-                        // notification and community keeps its own copy, and
-                        // none of them update themselves.
-                        if (which == Uploading.AVATAR) {
-                            auth.currentUser?.uid?.let { uid ->
-                                launch { repository.propagateAvatarUrl(uid, result.secureUrl) }
+                        // The profile doc and Auth already point at the new file.
+                        // In the background: move every denormalised copy of the
+                        // avatar (posts, comments, communities, chat threads,
+                        // notifications, follow edges) onto the new URL, and only
+                        // THEN free the old file from R2 and clear the swap
+                        // markers — so nothing on screen ever points at a file
+                        // that's already been deleted.
+                        launch {
+                            if (which == Uploading.AVATAR) {
+                                repository.propagateAvatarUrl(swap.userId, result.secureUrl)
                             }
+                            repository.finishUserImageSwap(swap)
                         }
                     }.onFailure { error ->
                         _uiState.update {

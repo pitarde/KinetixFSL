@@ -217,6 +217,8 @@ fun CommunityProfileScreen(
                 communityCount = state.myCommunityCount,
                 accountAge = state.accountAge,
                 activeTime = state.activeTime,
+                isOwnProfile = state.isOwnProfile,
+                followingCount = state.followingCount,
                 onContributionsClick = { isContributionsOpen = true },
                 onCommunitiesClick = { isCommunitiesOpen = true },
             )
@@ -627,6 +629,10 @@ private fun StatPillsRow(
     communityCount: Int,
     accountAge: String,
     activeTime: String,
+    /** Own profile swaps the last pill from presence (always "Active now" for
+     *  yourself, so meaningless) to how many accounts you follow. */
+    isOwnProfile: Boolean,
+    followingCount: Long,
     onContributionsClick: () -> Unit,
     onCommunitiesClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -654,7 +660,11 @@ private fun StatPillsRow(
                 .clickable(onClick = onContributionsClick),
         )
         StatPill(accountAge, "Account Age", Modifier.weight(1f))
-        StatPill(activeTime, "Active time", Modifier.weight(1f))
+        if (isOwnProfile) {
+            StatPill("$followingCount", "Following", Modifier.weight(1f))
+        } else {
+            StatPill(activeTime, "Active time", Modifier.weight(1f))
+        }
     }
 }
 

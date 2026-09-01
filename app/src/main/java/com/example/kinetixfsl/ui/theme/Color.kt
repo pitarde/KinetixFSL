@@ -24,7 +24,7 @@ val KinetixMint20 = Color(0xFFE9F6F4)
 val KinetixWhite = Color(0xFFFFFFFF)
 val KinetixSurface = Color(0xFFFAFAFC)
 val KinetixOutline = Color(0xFFD6D6E0)
-val KinetixMuted = Color(0xFF5E657E)
+val KinetixMuted = Color(0xFFB7BDCE)
 
 // Feedback
 val KinetixError = Color(0xFFC0392B)
@@ -35,5 +35,5 @@ val KinetixDarkBackground = Color(0xFF14162F)
 val KinetixDarkSurface = Color(0xFF1E224F)
 val KinetixDarkSurfaceVariant = Color(0xFF272A54)  // cards/components sitting on dark bg
 val KinetixDarkOutline = Color(0xFF3D4070)         // borders/dividers visible on dark bg
-val KinetixDarkMuted = Color(0xFF9A9CBB)           // secondary text readable on dark bg
+val KinetixDarkMuted = Color(0xFFB7BDCE)           // secondary text readable on dark bg
 val KinetixIndigoLight = Color(0xFF8B84D7)         // brighter indigo for dark-mode accent

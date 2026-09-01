@@ -101,6 +101,12 @@ class CommentViewModel(
                         isLoading = false,
                     )
                 }
+                // The post card elsewhere shows the denormalised `commentCount`,
+                // which drifts when a decrement is lost (e.g. an account-deletion
+                // sweep removed a departing user's comments but couldn't correct
+                // the tally). We've just read the real list — use it to snap the
+                // stored number straight. No-ops when it's already correct.
+                repository.reconcileCommentCount(postId, comments.size)
             }
             .catch { t ->
                 _uiState.update {

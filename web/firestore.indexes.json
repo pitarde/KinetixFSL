@@ -42,6 +42,15 @@
         { "order": "ASCENDING", "queryScope": "COLLECTION" },
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
+    },
+    {
+      "//": "Lets the account-deletion sweep find every vote a departing user cast, across all posts, so it can remove them and correct each post's counts (AccountEraser.deleteOwnVotesEverywhere). Votes carry a userId field for exactly this query.",
+      "collectionGroup": "votes",
+      "fieldPath": "userId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
     }
   ]
 }
