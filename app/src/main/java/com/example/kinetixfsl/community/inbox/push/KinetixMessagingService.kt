@@ -10,6 +10,7 @@ import androidx.core.content.ContextCompat
 import com.example.kinetixfsl.MainActivity
 import com.example.kinetixfsl.R
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.messaging.FirebaseMessaging
@@ -158,12 +159,18 @@ object FcmTokenStore {
     /**
      * Drops the token on sign-out, so pushes meant for that account stop
      * arriving on a phone somebody else may now be holding.
+     *
+     * `update` + `FieldValue.delete()`, NOT `set(merge)`: sign-out also runs
+     * right after an admin has deleted the account, and a merge-set would
+     * RECREATE the `users/{uid}` document the wipe just removed — leaving a
+     * ghost profile with nothing but `fcmToken: null`. `update` on a missing
+     * document simply throws and is swallowed here.
      */
     fun clear() {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         runCatching {
             FirebaseFirestore.getInstance().collection(USERS).document(uid)
-                .set(mapOf("fcmToken" to null), SetOptions.merge())
+                .update("fcmToken", FieldValue.delete())
         }
     }
 }

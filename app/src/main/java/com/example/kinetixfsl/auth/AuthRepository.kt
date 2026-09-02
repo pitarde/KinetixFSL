@@ -140,6 +140,16 @@ class AuthRepository(
      * Fail-open on read errors on purpose: a transient Firestore hiccup must not
      * lock a legitimate learner out of an app that otherwise works offline.
      */
+    /**
+     * Runs [enforceAccountStatus] outside the sign-in flow — for the cold-start
+     * path in `MainActivity`, so an admin delete / disable / penalty that landed
+     * while the app was CLOSED is caught on the next launch, not only at the next
+     * explicit sign-in. Same contract: it tears the session down itself (deletes
+     * the Auth record on a `purgeAuth`, or signs out) and returns the message,
+     * or null when the account is fine.
+     */
+    suspend fun enforceAccountStatusNow(): String? = enforceAccountStatus()
+
     private suspend fun enforceAccountStatus(): String? {
         val uid = firebaseAuth.currentUser?.uid ?: return null
         // Read from the SERVER, not the offline cache: a just-lifted disable

@@ -409,7 +409,8 @@ service cloud.firestore {
       // there — and once it exists the participant check applies as before.
       allow read: if request.auth != null
                   && (resource == null
-                      || request.auth.uid in resource.data.participants);
+                      || request.auth.uid in resource.data.participants
+                      || isAdmin());
 
       // Exactly two people, one of whom is you. Creating a thread you aren't
       // in would let someone plant conversations in other people's inboxes.
@@ -427,14 +428,15 @@ service cloud.firestore {
       // other person's copy with it. But once that other participant has
       // deleted their account (no `users/{their uid}` doc), the thread is a
       // ghost nobody can open, so the remaining participant's account-deletion
-      // sweep is allowed to remove it. Costs one document read on the delete
-      // path only.
+      // sweep is allowed to remove it. An admin may delete it too — the
+      // console's account wipe clears a departing learner's chat footprint.
       allow delete: if request.auth != null
-                    && request.auth.uid in resource.data.participants
-                    && !exists(/databases/$(database)/documents/users/$(otherInThread(conversationId)));
+                    && ((request.auth.uid in resource.data.participants
+                         && !exists(/databases/$(database)/documents/users/$(otherInThread(conversationId))))
+                        || isAdmin());
 
       match /messages/{messageId} {
-        allow read: if inThread(conversationId);
+        allow read: if inThread(conversationId) || isAdmin();
 
         // You may only send as yourself, and only if the recipient hasn't
         // blocked you. `blockedBy` is checked rather than the blocker's own
@@ -457,9 +459,10 @@ service cloud.firestore {
         // the conversation doc). The one exception is account deletion: once the
         // other participant's account is gone, this participant's wipe may clear
         // every remaining message so the whole ghost thread can come down.
-        allow delete: if inThread(conversationId)
-                      && (resource.data.senderId == request.auth.uid
-                          || !exists(/databases/$(database)/documents/users/$(otherInThread(conversationId))));
+        allow delete: if isAdmin()
+                      || (inThread(conversationId)
+                          && (resource.data.senderId == request.auth.uid
+                              || !exists(/databases/$(database)/documents/users/$(otherInThread(conversationId)))));
       }
     }
 
@@ -525,10 +528,11 @@ service cloud.firestore {
     // user cast (and correct each post's counts). The `userId == me` condition
     // is what makes it safe: Firestore only accepts a query it can prove matches
     // the rule, so a query without `where userId == <me>` is rejected rather than
-    // exposing other people's votes.
+    // exposing other people's votes. An admin may run the same query for any
+    // uid — the console's account wipe needs it to undo a learner's votes.
     match /{path=**}/votes/{voteId} {
       allow read: if request.auth != null
-                  && resource.data.userId == request.auth.uid;
+                  && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     // -----------------------------------------------------------------------

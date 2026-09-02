@@ -126,6 +126,31 @@ class CommunityRepository(
     // -------------------------------------------------------------------------
 
     /**
+     * True once an admin has deleted this uid (`accountStatus/{uid}.purgeAuth`
+     * or `wipedAt` set). Such a uid is dead: its `users/{uid}` doc must never be
+     * recreated. Several sign-in / foreground paths call [ensureUserProfile] /
+     * [touchLastActive], and any one of them firing between a successful sign-in
+     * and the account-status check tearing that session down would otherwise
+     * rebuild the profile the admin wipe had just removed. Read from the SERVER
+     * so a stale pre-wipe cache can't say "fine"; a read failure fails open (the
+     * value isn't cached, so it re-checks next time).
+     */
+    private suspend fun isPurgedAccount(uid: String): Boolean {
+        if (uid in purgedUids) return true
+        if (uid in verifiedUids) return false
+        val purged = try {
+            val snap = firestore.collection("accountStatus").document(uid)
+                .get(com.google.firebase.firestore.Source.SERVER).await()
+            snap.exists() &&
+                (snap.getBoolean("purgeAuth") == true || snap.getTimestamp("wipedAt") != null)
+        } catch (_: Exception) {
+            return false // read error → fail open, and don't cache either way
+        }
+        (if (purged) purgedUids else verifiedUids).add(uid)
+        return purged
+    }
+
+    /**
      * Writes the signed-in user's name and photo to `users/{uid}`.
      *
      * Follower lists need somewhere to read a user's details from, and posts
@@ -134,6 +159,7 @@ class CommunityRepository(
      */
     suspend fun ensureUserProfile() {
         val user = auth.currentUser ?: return
+        if (isPurgedAccount(user.uid)) return
         try {
             val fields = mutableMapOf<String, Any?>(
                 "uid" to user.uid,
@@ -162,6 +188,7 @@ class CommunityRepository(
      */
     suspend fun touchLastActive() {
         val uid = auth.currentUser?.uid ?: return
+        if (isPurgedAccount(uid)) return
         try {
             firestore.collection(USERS).document(uid)
                 .set(mapOf("lastActiveAt" to Timestamp.now()), SetOptions.merge())
@@ -1371,6 +1398,17 @@ class CommunityRepository(
     }
 
     private companion object {
+        /**
+         * Process-wide caches for [isPurgedAccount], shared across every
+         * [CommunityRepository] instance so `accountStatus/{uid}` is looked up
+         * at most once per uid: [purgedUids] = admin-deleted (never write its
+         * profile again), [verifiedUids] = confirmed healthy this session.
+         */
+        val purgedUids: MutableSet<String> =
+            java.util.Collections.synchronizedSet(HashSet())
+        val verifiedUids: MutableSet<String> =
+            java.util.Collections.synchronizedSet(HashSet())
+
         const val POSTS = "posts"
         const val VOTES = "votes"
         const val COMMENTS = "comments"

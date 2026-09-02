@@ -23,6 +23,7 @@ import com.example.kinetixfsl.navigation.KinetixNavHost
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -43,6 +44,29 @@ class MainActivity : ComponentActivity() {
     /** Whose account checks have already run this session. See [watchForSignIn]. */
     private var lastCheckedUid: String? = null
 
+    /**
+     * One server-side account-status check per uid per process. A non-null
+     * result means an admin deleted / disabled / penalised this account while
+     * the app was closed — [com.example.kinetixfsl.auth.AuthRepository
+     * .enforceAccountStatusNow] has already torn the session down, so callers
+     * must NOT recreate the profile, re-register the push token or re-sync.
+     * Without this gate, `ensureUserProfile()` on the next launch quietly
+     * rebuilt the `users/{uid}` document the wipe had just removed.
+     */
+    private val accountStatusChecks =
+        java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<String?>>()
+
+    private fun accountStatusMessage(uid: String): kotlinx.coroutines.Deferred<String?> =
+        accountStatusChecks.getOrPut(uid) {
+            CoroutineScope(Dispatchers.IO).async {
+                val msg = runCatching {
+                    com.example.kinetixfsl.auth.AuthRepository().enforceAccountStatusNow()
+                }.getOrNull()
+                if (msg != null) com.example.kinetixfsl.auth.AccountStatusWatcher.raise(msg)
+                msg
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Must run before super.onCreate(). This is the platform splash — it only
         // covers the gap until our first Compose frame, then hands off to the
@@ -61,9 +85,10 @@ class MainActivity : ComponentActivity() {
 
         requestNotificationPermission()
         watchForSignIn()
-        // Live enforcement of admin disable/penalty: kicks the learner out the
-        // moment their accountStatus changes, not just at next sign-in.
-        com.example.kinetixfsl.auth.AccountStatusWatcher.start()
+        // Live enforcement of admin disable/penalty/delete: kicks the learner
+        // out the moment their accountStatus changes — and, on a cold start,
+        // the moment the app sees a delete that landed while it was closed.
+        com.example.kinetixfsl.auth.AccountStatusWatcher.start(applicationContext)
 
         setContent {
             // Reading ThemePreference.mode here re-themes the whole app the
@@ -111,6 +136,13 @@ class MainActivity : ComponentActivity() {
         // very first device from being recorded, which in turn made the second
         // device look like the first and never raise a "new device" notice.
         CoroutineScope(Dispatchers.IO).launch {
+            val uid = com.google.firebase.auth.FirebaseAuth.getInstance()
+                .currentUser?.uid ?: return@launch
+            // Bail before any profile-recreating write if an admin deleted /
+            // disabled this account while the app was closed — otherwise
+            // ensureUserProfile() rebuilds the users/{uid} doc the wipe removed.
+            if (accountStatusMessage(uid).await() != null) return@launch
+
             // Stamp presence so other people's profile views show a current
             // "Active now / 5min / 3hr / 2d" state.
             runCatching {
@@ -156,6 +188,11 @@ class MainActivity : ComponentActivity() {
             lastCheckedUid = uid
 
             CoroutineScope(Dispatchers.IO).launch {
+                // An admin delete / disable / penalty that landed while the app
+                // was closed: the session is torn down here and the profile must
+                // NOT be recreated below.
+                if (accountStatusMessage(uid).await() != null) return@launch
+
                 runCatching { CommunityRepository().ensureUserProfile() }
                 runCatching { FcmTokenStore.register() }
                 runCatching { AccountNotifier.check(applicationContext) }
