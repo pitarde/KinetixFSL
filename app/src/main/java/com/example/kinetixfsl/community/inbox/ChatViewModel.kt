@@ -54,6 +54,12 @@ data class ChatUiState(
     val isOtherOnline: Boolean = false,
     /** Who has blocked whom. Gates the composer in both directions. */
     val block: BlockState = BlockState(),
+    /**
+     * The other person deleted their account. The composer is replaced with a
+     * notice and a "Delete conversation" button — the thread can now be removed
+     * outright (the other side has nothing left to lose).
+     */
+    val otherAccountDeleted: Boolean = false,
     val errorMessage: String? = null,
     val currentUid: String = "",
 ) {
@@ -64,7 +70,8 @@ data class ChatUiState(
      * that does close it.
      */
     val canSend: Boolean
-        get() = block.canSend && (draft.isNotBlank() || pending != null)
+        get() = !otherAccountDeleted && block.canSend &&
+            (draft.isNotBlank() || pending != null)
 
     /**
      * The line shown in place of the composer, or null when it's usable.
@@ -75,6 +82,7 @@ data class ChatUiState(
      */
     val composerNotice: String?
         get() = when {
+            otherAccountDeleted -> "This person is no longer available."
             block.iBlockedThem -> "You blocked this person. Unblock to send messages."
             block.theyBlockedMe -> "Messages can't be delivered to this person."
             else -> null
@@ -161,6 +169,10 @@ class ChatViewModel(
 
         PresenceRepository.observeOnline(recipientId)
             .onEach { online -> _uiState.update { it.copy(isOtherOnline = online) } }
+            .launchIn(viewModelScope)
+
+        repository.observeUserExists(recipientId)
+            .onEach { exists -> _uiState.update { it.copy(otherAccountDeleted = !exists) } }
             .launchIn(viewModelScope)
 
         // Anything still uploading for this thread, including sends started
@@ -279,6 +291,26 @@ class ChatViewModel(
                     }
                 }
             onDone()
+        }
+    }
+
+    /**
+     * Deletes the whole thread — messages, their R2 media, and the conversation
+     * document. Only offered once the other person has deleted their account.
+     * Closes the screen on success; the thread is gone from the inbox.
+     */
+    fun deleteConversation(onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.deleteConversation(conversationId)
+                .onSuccess { onDone() }
+                .onFailure { error ->
+                    _uiState.update {
+                        it.copy(
+                            errorMessage = error.localizedMessage
+                                ?: "Couldn't delete the conversation.",
+                        )
+                    }
+                }
         }
     }
 

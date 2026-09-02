@@ -423,9 +423,15 @@ service cloud.firestore {
       allow update: if request.auth != null
                     && request.auth.uid in resource.data.participants;
 
-      // Deleting a thread would delete the other person's copy too. Not
-      // something one participant gets to decide.
-      allow delete: if false;
+      // A live thread can't be deleted by one participant — it would take the
+      // other person's copy with it. But once that other participant has
+      // deleted their account (no `users/{their uid}` doc), the thread is a
+      // ghost nobody can open, so the remaining participant's account-deletion
+      // sweep is allowed to remove it. Costs one document read on the delete
+      // path only.
+      allow delete: if request.auth != null
+                    && request.auth.uid in resource.data.participants
+                    && !exists(/databases/$(database)/documents/users/$(otherInThread(conversationId)));
 
       match /messages/{messageId} {
         allow read: if inThread(conversationId);
@@ -445,13 +451,15 @@ service cloud.firestore {
                       && request.resource.data.diff(resource.data)
                            .affectedKeys().hasOnly(['isRead']);
 
-        // A message can only be deleted by whoever sent it — the single-message
-        // long-press. "Delete all chat history" no longer touches messages at
-        // all: it's a per-user hide (`hiddenFor` + `clearedAt` on the
-        // conversation doc), so one person clearing their view never removes the
-        // other person's copy. That makes this rule safe to keep strict.
+        // Normally a message can only be deleted by whoever sent it — the
+        // single-message long-press. "Delete all chat history" doesn't touch
+        // messages at all: it's a per-user hide (`hiddenFor` + `clearedAt` on
+        // the conversation doc). The one exception is account deletion: once the
+        // other participant's account is gone, this participant's wipe may clear
+        // every remaining message so the whole ghost thread can come down.
         allow delete: if inThread(conversationId)
-                      && resource.data.senderId == request.auth.uid;
+                      && (resource.data.senderId == request.auth.uid
+                          || !exists(/databases/$(database)/documents/users/$(otherInThread(conversationId))));
       }
     }
 

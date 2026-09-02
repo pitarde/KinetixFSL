@@ -73,9 +73,9 @@ export default {
         return jsonResponse(400, { error: "No file provided" });
       }
 
-      // --- Determine folder from resource_type -------------------------
+      // --- Determine the media folder from resource_type --------------
       const resourceType = formData.get("resource_type") || "image";
-      const folder = resourceType === "video" ? "videos" : "images";
+      const mediaFolder = resourceType === "video" ? "videos" : "images";
 
       // --- Per-user folder, so R2 isn't one flat images/ and videos/ ----
       // shared by every account. The app sends the signed-in uploader's uid
@@ -92,13 +92,26 @@ export default {
         ? rawUid
         : null;
 
-      // --- Generate a unique filename ----------------------------------
+      // --- Optional purpose sub-folder --------------------------------
+      // The app tags chat attachments with folder="chat" so message media
+      // sits apart from post/profile media: {uid}/chat/images/…, not mixed
+      // into {uid}/images/…. A strict slug so it can't inject path segments.
+      const rawFolder = formData.get("folder");
+      const subFolder =
+        typeof rawFolder === "string" && /^[a-z0-9_-]{1,32}$/.test(rawFolder)
+          ? rawFolder
+          : null;
+
+      // --- Generate a unique key ------------------------------------------
+      //   {uid}/{subFolder}/{mediaFolder}/{name}   e.g. abc123/chat/images/…
+      //   {uid}/{mediaFolder}/{name}               no sub-folder
+      //   {mediaFolder}/{name}                     no uid (legacy / anon)
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(2, 10);
       const ext = getExtension(file.name, file.type);
-      const key = uid
-        ? `${uid}/${folder}/${timestamp}-${random}${ext}`
-        : `${folder}/${timestamp}-${random}${ext}`;
+      const key =
+        [uid, subFolder, mediaFolder].filter(Boolean).join("/") +
+        `/${timestamp}-${random}${ext}`;
 
       // --- Upload to R2 ------------------------------------------------
       await env.KINETIX_BUCKET.put(key, file.stream(), {
@@ -133,8 +146,9 @@ export default {
  * POST /delete-media
  *   headers: x-kinetix-key: <DELETE_SECRET>
  *   body:    { "postId": "...", "keys": ["images/123-abc.webp", ...] }
- *     — or — { "userId": "...", "keys": [...] }        (profile avatar/banner)
- *     — or — { "communityId": "...", "keys": [...] }   (community avatar/banner)
+ *     — or — { "userId": "...", "keys": [...] }         (profile avatar/banner)
+ *     — or — { "communityId": "...", "keys": [...] }    (community avatar/banner)
+ *     — or — { "conversationId": "...", "keys": [...] } (chat images/videos)
  *
  * Called by the app just *before* it removes the owning document, so it's still
  * readable here and every key can be checked against it. A key that doesn't
@@ -142,9 +156,20 @@ export default {
  * secret, this endpoint can't be turned into "delete anything in the bucket".
  *
  * `postId` authorises a post's media (all image versions, video, comment
- * images); `userId` authorises that user's profile avatar and banner; and
- * `communityId` authorises a community's avatar and banner — the deletion
- * sweeps use them so a wiped account or community leaves nothing in R2.
+ * images); `userId` authorises that user's profile avatar and banner;
+ * `communityId` authorises a community's avatar and banner; and
+ * `conversationId` authorises the chat media in one direct-message thread —
+ * the deletion sweeps use them so a wiped account, post or community leaves
+ * nothing in R2.
+ *
+ * The `conversationId` branch can't verify keys against message documents the
+ * way the others do — messages aren't world-readable, and this Worker reads
+ * Firestore unauthenticated. Instead it relies on the layout: a thread id is
+ * `uidA_uidB` (the two participants, sorted), and every upload is filed under
+ * its uploader's own `{uid}/` folder, so a key that legitimately belongs to
+ * the thread must sit under one of those two prefixes. Paired with the shared
+ * secret, the worst a caller can do is delete files inside one of two named
+ * users' own folders.
  *
  * SECURITY NOTE: the shared secret ships inside the APK and can be extracted
  * by anyone willing to unpack it. The ownership check above is what limits the
@@ -168,20 +193,32 @@ async function handleDeleteMedia(request, env) {
   const postId = payload && payload.postId;
   const userId = payload && payload.userId;
   const communityId = payload && payload.communityId;
+  const conversationId = payload && payload.conversationId;
   const keys = (payload && payload.keys) || [];
   if (
-    (!postId && !userId && !communityId) ||
+    (!postId && !userId && !communityId && !conversationId) ||
     !Array.isArray(keys) ||
     keys.length === 0
   ) {
     return jsonResponse(400, {
-      error: "postId (or userId, or communityId) and keys are required",
+      error:
+        "postId (or userId, communityId, conversationId) and keys are required",
     });
   }
 
+  // Folders a key may sit under for the conversationId branch: one per thread
+  // participant, derived straight from the id (uidA_uidB). Empty for the other
+  // branches, which authorise by document URLs instead.
+  const participantPrefixes = conversationId
+    ? String(conversationId)
+        .split("_")
+        .filter((p) => /^[A-Za-z0-9_-]{1,64}$/.test(p))
+        .map((uid) => `${uid}/`)
+    : [];
+
   // Collect every URL the owning document references, so each key can be
   // confirmed against it before anything is deleted.
-  let ownedUrls;
+  let ownedUrls = [];
   if (postId) {
     const post = await fetchPost(postId, env);
     if (!post) {
@@ -205,7 +242,7 @@ async function handleDeleteMedia(request, env) {
       user.avatarUrlPrev,
       user.bannerUrlPrev,
     ].filter((u) => typeof u === "string" && u.length > 0);
-  } else {
+  } else if (communityId) {
     const community = await fetchCommunity(communityId, env);
     if (!community) {
       return jsonResponse(404, { error: "Community not found" });
@@ -219,14 +256,20 @@ async function handleDeleteMedia(request, env) {
       community.bannerUrlPrev,
     ].filter((u) => typeof u === "string" && u.length > 0);
   }
+  // conversationId has no ownedUrls — it authorises by participant folder
+  // prefix below.
 
   const owned = new Set(ownedUrls.map(keyFromUrl).filter(Boolean));
+
+  const authorised = (key) =>
+    owned.has(key) ||
+    participantPrefixes.some((prefix) => key.startsWith(prefix));
 
   const deleted = [];
   const refused = [];
 
   for (const key of keys) {
-    if (!owned.has(key)) {
+    if (!authorised(key)) {
       refused.push(key);
       continue;
     }

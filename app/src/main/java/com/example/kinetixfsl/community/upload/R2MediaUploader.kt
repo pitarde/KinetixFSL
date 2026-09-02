@@ -69,13 +69,12 @@ object R2MediaUploader {
         uri: Uri,
         resourceType: String = "image",
         /**
-         * Bucket prefix to store under, e.g. "messages". Null keeps the
-         * Worker's default of `images/` or `videos/`.
+         * Purpose sub-folder, slotted between the uid and the media type:
+         * `folder = "chat"` → `{uid}/chat/images/…`. Null keeps the plain
+         * `{uid}/images/…` (or `images/…` with no uid) layout.
          *
-         * Sent as an extra form field, which a Worker that doesn't know about
-         * it simply ignores — so an app update can start separating message
-         * media from post media before the Worker is redeployed, rather than
-         * the two having to ship together.
+         * Sent as an extra form field; a Worker that doesn't understand it just
+         * ignores it and stores flat, so client and Worker needn't ship together.
          */
         folder: String? = null,
     ): UploadResult = withContext(Dispatchers.IO) {
@@ -139,9 +138,21 @@ object R2MediaUploader {
         deleteMedia("communityId", communityId, keys)
 
     /**
-     * The shared /delete-media call. [ownerField] is "postId", "userId" or
-     * "communityId" — the Worker uses it to decide which document's URLs a key
-     * must match before it will delete it.
+     * Removes chat images/videos from one direct-message thread.
+     *
+     * The Worker authorises these by folder: a thread id is `uidA_uidB`, and
+     * every upload is filed under its sender's own `{uid}/` folder, so a key
+     * under either participant's folder is accepted. Used both when a single
+     * message is deleted and by the account-deletion sweep, which clears every
+     * message the departing user sent. Run while the messages still exist.
+     */
+    suspend fun deleteConversationObjects(conversationId: String, keys: List<String>): Boolean =
+        deleteMedia("conversationId", conversationId, keys)
+
+    /**
+     * The shared /delete-media call. [ownerField] is "postId", "userId",
+     * "communityId" or "conversationId" — the Worker uses it to decide how a
+     * key is authorised before it will delete it.
      */
     private suspend fun deleteMedia(
         ownerField: String,

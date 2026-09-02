@@ -129,17 +129,17 @@ object MessageOutbox {
 
         val uri = entry.uri
         if (uri != null) {
-            // Same R2 path posts use, under a `messages/` prefix so message
-            // media can be aged out or locked down separately from public post
-            // media later. No video compression pass: a chat clip is short, and
-            // making someone wait on a transcode to send one is the wrong trade
-            // for a message.
+            // Same R2 pipeline posts use, but under a `chat` sub-folder so
+            // message media sits apart from post/profile media in the bucket:
+            // {uid}/chat/images/… and {uid}/chat/videos/…. No video compression
+            // pass: a chat clip is short, and making someone wait on a transcode
+            // to send one is the wrong trade for a message.
             when (
                 val result = R2MediaUploader.upload(
                     context = context,
                     uri = uri,
                     resourceType = entry.type ?: "image",
-                    folder = "messages",
+                    folder = "chat",
                 )
             ) {
                 is R2MediaUploader.UploadResult.Success -> mediaUrl = result.secureUrl
@@ -181,7 +181,8 @@ object MessageOutbox {
                 fileName = "thumb.jpg",
                 mimeType = "image/jpeg",
                 resourceType = "image",
-                folder = "messages",
+                // Alongside the clip it previews — {uid}/chat/images/….
+                folder = "chat",
             )
         ) {
             is R2MediaUploader.UploadResult.Success -> result.secureUrl

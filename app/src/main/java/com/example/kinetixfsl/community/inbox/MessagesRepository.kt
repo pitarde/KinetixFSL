@@ -424,7 +424,10 @@ class MessagesRepository(
                 storageKeyOf(snapshot.getString("thumbUrl")),
             )
             if (keys.isNotEmpty()) {
-                R2MediaUploader.deleteObjects(conversationId, keys)
+                // conversationId, not deleteObjects(postId=…) — chat media has
+                // no owning post, and the old call 404'd on the Worker and
+                // silently freed nothing.
+                R2MediaUploader.deleteConversationObjects(conversationId, keys)
             }
 
             messageRef.delete().await()
@@ -537,6 +540,73 @@ class MessagesRepository(
                 .sortedBy { it.displayName.lowercase() }
         } catch (_: Exception) {
             emptyList()
+        }
+    }
+
+    /**
+     * Whether [otherUid] still has a profile document.
+     *
+     * Goes false when the other person has deleted their account — the chat
+     * screen uses it to swap the composer for a "no longer available" notice
+     * and a Delete-conversation button. A read failure is reported as `true`
+     * (present): a transient error must never make a live account look gone.
+     */
+    fun observeUserExists(otherUid: String): Flow<Boolean> = callbackFlow {
+        if (otherUid.isBlank()) {
+            trySend(true)
+            awaitClose { }
+            return@callbackFlow
+        }
+        val reg = firestore.collection(USERS).document(otherUid)
+            .addSnapshotListener { snap, err ->
+                if (err != null) { trySend(true); return@addSnapshotListener }
+                trySend(snap?.exists() == true)
+            }
+        awaitClose { reg.remove() }
+    }
+
+    /**
+     * Removes a whole thread — every message, its chat media in R2, and the
+     * conversation document itself.
+     *
+     * Only permitted once the OTHER participant has deleted their account (the
+     * rules check `users/{them}` no longer exists), so this is the chat
+     * screen's "Delete conversation" action on a thread with a departed person,
+     * not a general delete-for-both. R2 first, while the message docs still tie
+     * each key to this thread.
+     */
+    suspend fun deleteConversation(conversationId: String): Result<Unit> {
+        if (auth.currentUser == null) {
+            return Result.failure(Exception("You're not signed in."))
+        }
+        val conversationRef = firestore.collection(CONVERSATIONS).document(conversationId)
+        return try {
+            while (true) {
+                val page = conversationRef.collection(MESSAGES)
+                    .limit(BATCH_LIMIT.toLong())
+                    .get().await()
+                if (page.isEmpty) break
+
+                val keys = page.documents.flatMap { m ->
+                    listOfNotNull(
+                        storageKeyOf(m.getString("mediaUrl")),
+                        storageKeyOf(m.getString("thumbUrl")),
+                    )
+                }.distinct()
+                if (keys.isNotEmpty()) {
+                    runCatching { R2MediaUploader.deleteConversationObjects(conversationId, keys) }
+                }
+
+                val batch = firestore.batch()
+                page.documents.forEach { batch.delete(it.reference) }
+                batch.commit().await()
+
+                if (page.size() < BATCH_LIMIT) break
+            }
+            conversationRef.delete().await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 

@@ -146,6 +146,7 @@ fun ChatScreen(
     var showOptions by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     var confirmBlock by remember { mutableStateOf(false) }
+    var confirmDeleteConversation by remember { mutableStateOf(false) }
     var showMedia by remember { mutableStateOf(false) }
 
     // Follow the conversation down as it grows. Keyed on the counts rather than
@@ -267,6 +268,7 @@ fun ChatScreen(
             onPickVideo = { viewModel.onAttachmentPicked(it, "video") },
             onClearAttachment = viewModel::clearAttachment,
             onSend = { viewModel.send(context) },
+            onDeleteConversation = { confirmDeleteConversation = true },
         )
     }
 
@@ -355,6 +357,19 @@ fun ChatScreen(
                 viewModel.deleteHistory(onDone = onClose)
             },
             onDismiss = { confirmClear = false },
+        )
+    }
+
+    if (confirmDeleteConversation) {
+        ConfirmDialog(
+            title = "Delete conversation?",
+            body = "This person's account no longer exists. Deleting removes this " +
+                "conversation and every message and file in it, for good.",
+            onConfirm = {
+                confirmDeleteConversation = false
+                viewModel.deleteConversation(onDone = onClose)
+            },
+            onDismiss = { confirmDeleteConversation = false },
         )
     }
 
@@ -891,6 +906,7 @@ private fun Composer(
     onPickVideo: (android.net.Uri) -> Unit,
     onClearAttachment: () -> Unit,
     onSend: () -> Unit,
+    onDeleteConversation: () -> Unit,
 ) {
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
@@ -926,8 +942,30 @@ private fun Composer(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 18.dp),
+                    .padding(
+                        start = 24.dp,
+                        end = 24.dp,
+                        top = 18.dp,
+                        bottom = if (state.otherAccountDeleted) 8.dp else 18.dp,
+                    ),
             )
+            // The other account is gone, so there's nothing to keep the thread
+            // for — offer to remove it outright rather than only hide it.
+            if (state.otherAccountDeleted) {
+                Text(
+                    text = "Delete conversation",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .padding(bottom = 16.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(MaterialTheme.colorScheme.errorContainer)
+                        .clickable(onClick = onDeleteConversation)
+                        .padding(horizontal = 24.dp, vertical = 10.dp),
+                )
+            }
             return@Column
         }
 

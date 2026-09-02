@@ -25,13 +25,18 @@ import kotlinx.coroutines.tasks.await
  * deleted community's content doesn't linger in the feed), their
  * notifications, and their public `users/{uid}` profile.
  *
+ * Direct messages (see [deleteOwnChatData]): every message the departing user
+ * SENT is deleted and its chat images/videos freed from R2. If the OTHER
+ * participant has already deleted their account, the thread is a ghost nobody
+ * can open, so the whole conversation — every remaining message and the
+ * document itself — is removed too. While the other participant still exists,
+ * the thread collapses to their half under a "person no longer available"
+ * header and is finished off when they delete in turn.
+ *
  * ## What it deliberately does NOT delete (rule-limited)
  *
- * The rules block a client from deleting conversation documents
- * (`allow delete: if false`) — fully removing those needs a Cloud Function
- * with the Admin SDK. Chat messages a deleted user sent therefore remain
- * visible to the other participant, attributed to a profile that no longer
- * resolves.
+ * A live thread's shared document and the other participant's messages stay put
+ * — one participant doesn't get to wipe a conversation the other still wants.
  */
 class AccountEraser(
     private val db: FirebaseFirestore = FirebaseFirestore.getInstance(),
@@ -123,6 +128,9 @@ class AccountEraser(
         // after deleteOwnPosts so it only touches surviving posts.
         deleteOwnCommentsEverywhere(uid)
         deleteOwnVotesEverywhere(uid)
+        // Direct messages and their R2 media — and the whole thread once both
+        // participants have deleted their accounts.
+        deleteOwnChatData(uid)
         // Reciprocal cleanup — must run BEFORE deleteUserProfile, which clears
         // this user's own following/followers/joined lists that these read.
         leaveJoinedCommunities(uid)
@@ -271,6 +279,68 @@ class AccountEraser(
             if (snap.size() < BATCH) break
         }
     }.onFailure { Log.w(TAG, "votes-everywhere delete failed", it) }.let { }
+
+    /**
+     * Cleans this user out of every direct-message thread they're in, and frees
+     * the chat images/videos involved from R2.
+     *
+     * Two cases per thread, decided by whether the OTHER participant still has a
+     * `users/{uid}` doc:
+     *
+     *  - **They're still around** — delete only the messages this user sent
+     *    (the rules let a sender delete their own), and free the R2 media on
+     *    them. The thread lives on as the other person's half, under a "person
+     *    no longer available" header.
+     *  - **They've already deleted their account too** — the thread is a ghost
+     *    nobody can see: delete EVERY remaining message, free all their R2
+     *    media, then delete the conversation document itself. The rules allow a
+     *    participant to clear a thread once the other side's account is gone.
+     *
+     * R2 first, while the messages still exist — the Worker authorises chat keys
+     * by the thread's two participant folders, and once the docs are gone
+     * there's nothing tying a key to this thread.
+     */
+    private suspend fun deleteOwnChatData(uid: String) = runCatching {
+        val threads = db.collection(CONVERSATIONS)
+            .whereArrayContains("participants", uid)
+            .get().await()
+
+        for (thread in threads.documents) {
+            val otherUid = (thread.get("participants") as? List<*>)
+                ?.mapNotNull { it as? String }
+                ?.firstOrNull { it != uid }
+            val otherGone = otherUid == null || runCatching {
+                !db.collection(USERS).document(otherUid).get().await().exists()
+            }.getOrDefault(false)
+
+            val base = thread.reference.collection(MESSAGES)
+            val query = if (otherGone) base else base.whereEqualTo("senderId", uid)
+
+            while (true) {
+                val page = runCatching { query.limit(BATCH.toLong()).get().await() }
+                    .getOrNull() ?: break
+                if (page.isEmpty) break
+
+                val keys = page.documents.flatMap { m ->
+                    listOfNotNull(
+                        storageKeyOf(m.getString("mediaUrl")),
+                        storageKeyOf(m.getString("thumbUrl")),
+                    )
+                }.distinct()
+                if (keys.isNotEmpty()) {
+                    runCatching { R2MediaUploader.deleteConversationObjects(thread.id, keys) }
+                }
+
+                for (m in page.documents) runCatching { m.reference.delete().await() }
+                if (page.size() < BATCH) break
+            }
+
+            // No one left to keep it — take the whole thread down.
+            if (otherGone) {
+                runCatching { thread.reference.delete().await() }
+            }
+        }
+    }.onFailure { Log.w(TAG, "chat data cleanup failed", it) }.let { }
 
     /**
      * Removes this user from every community they merely *joined* (created by
@@ -482,6 +552,8 @@ class AccountEraser(
         const val FOLLOWERS = "followers"
         const val NOTIFICATIONS = "notifications"
         const val ITEMS = "items"
+        const val CONVERSATIONS = "conversations"
+        const val MESSAGES = "messages"
         const val USERS = "users"
         const val FIELD_COMMUNITY_ID = "communityId"
         const val BATCH = 300
