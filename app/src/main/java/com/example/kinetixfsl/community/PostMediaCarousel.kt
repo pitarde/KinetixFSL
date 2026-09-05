@@ -61,6 +61,13 @@ internal fun PostMediaCarousel(
             state = pagerState,
             // A little room so a peek of the next item hints at swipeability.
             pageSpacing = 8.dp,
+            // A single-image post has nothing to page to, so the drag gesture
+            // is disabled rather than merely pointless: left enabled, dragging
+            // against the pager's edge (there's only ever one page) leaves its
+            // gesture detector in a state where the very next tap on the image
+            // gets swallowed instead of reaching the click handler below — a
+            // second swipe "resets" it, which is the bug this works around.
+            userScrollEnabled = media.size > 1,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(height),

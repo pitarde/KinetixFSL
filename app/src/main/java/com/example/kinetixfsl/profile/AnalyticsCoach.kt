@@ -1,6 +1,7 @@
 package com.example.kinetixfsl.profile
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -117,6 +118,7 @@ private fun RecommendedQueueHero(queue: List<QueueItem>) {
                     listOf(Color(0xFF7C4DFF), Color(0xFFA55EEA), Color(0xFF6C5CE7)),
                 ),
             )
+            .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(20.dp))
             .padding(18.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

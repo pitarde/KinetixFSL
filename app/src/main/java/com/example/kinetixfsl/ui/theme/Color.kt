@@ -25,6 +25,11 @@ val KinetixWhite = Color(0xFFFFFFFF)
 val KinetixSurface = Color(0xFFFAFAFC)
 val KinetixOutline = Color(0xFFD6D6E0)
 val KinetixMuted = Color(0xFFB7BDCE)
+/** A visibly off-white page background — not [KinetixSurface]'s barely-there
+ *  wash — for screens whose cards are [KinetixWhite]: the gap between the two
+ *  is what makes a white card actually read as a card instead of blending
+ *  into the page underneath it. */
+val KinetixPageBackground = Color(0xFFF0EFF8)
 
 // Feedback
 val KinetixError = Color(0xFFC0392B)

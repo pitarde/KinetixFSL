@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
@@ -79,6 +78,13 @@ fun EditPostScreen(
     val joinedCommunities by viewModel.joinedCommunities.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    // Plain theme background, no dark banner here — the ordinary light/dark
+    // default, overriding whatever a screen this opened over (the community
+    // feed's forced-light-icons dark top bar) asked for.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(
+        light = androidx.compose.foundation.isSystemInDarkTheme(),
+    )
+
     var showCommunityPicker by remember { mutableStateOf(false) }
 
     // On Android 13+ the upload notification needs permission; ask once, then
@@ -122,9 +128,11 @@ fun EditPostScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
-            // See CreatePostScreen — edge-to-edge means nothing resizes for the
-            // keyboard without this, so a long body scrolls behind it.
+            // Reached as a SlideUpScreen bottom sheet (see its call site),
+            // which already keeps clear of the status bar with its own top
+            // gap and drag handle — no statusBarsPadding needed here too.
+            // Edge-to-edge still means nothing resizes for the keyboard
+            // without imePadding, so a long body would scroll behind it.
             .imePadding(),
     ) {
         // ---- Screen title: the one thing that differs from the create screen ----

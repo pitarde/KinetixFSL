@@ -3,6 +3,7 @@ package com.example.kinetixfsl.ui.home
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,7 +33,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -42,8 +42,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
 import com.example.kinetixfsl.profile.AccentProgress
-import com.example.kinetixfsl.ui.theme.KinetixIndigo
 import com.example.kinetixfsl.ui.theme.KinetixNavy
+import com.example.kinetixfsl.ui.theme.KinetixPageBackground
 import com.example.kinetixfsl.ui.theme.KinetixWhite
 
 /**
@@ -66,6 +66,15 @@ fun DashboardContent(
     // Real: streak + overall progress toward Level 20, rank badge, and the
     // in-progress modules the user has started but not finished.
     val context = androidx.compose.ui.platform.LocalContext.current
+
+    // A name set via Edit Profile (see LocalProfileStore) overrides the
+    // account's own display name here too — read fresh on every composition
+    // (this screen remounts each time the Home tab is shown) so a change
+    // made on the Profile tab shows up the moment the user comes back here.
+    // Shown exactly as typed — "Ken P." should read as "Ken P.", not get cut
+    // down to "Ken" the way the original Firebase display name does.
+    val displayName = com.example.kinetixfsl.profile.LocalProfileStore.getName(context)
+        ?: state.displayName
     val repo = remember { com.example.kinetixfsl.progress.ProgressRepository(context) }
     // Mutable so claiming a streak day re-snapshots and the UI reflects the new
     // XP/level immediately.
@@ -102,7 +111,7 @@ fun DashboardContent(
     }
 
     DashboardScreenContent(
-        displayName = state.displayName,
+        displayName = displayName,
         progress = progress,
         weakSpots = analytics.confusionPairs.size,
         streakRisk = analytics.streakRiskPercent,
@@ -172,6 +181,11 @@ private fun DashboardScreenContent(
     Column(
         modifier = modifier
             .fillMaxSize()
+            // Off-white in light mode, matching the Home Feed, so the pure-
+            // white cards below (colorScheme.surface already resolves to
+            // that) actually read as cards instead of blending into the
+            // page. Dark mode is untouched.
+            .background(if (isSystemInDarkTheme()) MaterialTheme.colorScheme.background else KinetixPageBackground)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp),
     ) {
@@ -442,11 +456,11 @@ private fun StreakCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            // Same indigo gradient as the Quiz game hero card, so the streak card,
-            // the quiz cards and the module cards all read as one design system.
-            .background(
-                Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, KinetixIndigo)),
-            )
+            // KinetixNavy in light mode. Dark mode uses colorScheme.surface —
+            // the same color the community feed's post cards use for their
+            // dark-mode background — instead of the fixed navy, which read
+            // barely different from the page behind it there.
+            .background(if (isSystemInDarkTheme()) MaterialTheme.colorScheme.surface else KinetixNavy)
             .clickable { showClaim = true }
             .padding(20.dp),
     ) {

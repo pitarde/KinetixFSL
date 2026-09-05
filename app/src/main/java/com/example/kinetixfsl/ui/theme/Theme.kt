@@ -6,7 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
@@ -27,7 +27,7 @@ private val LightColors = lightColorScheme(
     onTertiary = KinetixWhite,
     tertiaryContainer = KinetixMint20,
     onTertiaryContainer = KinetixInk,
-
+    //change color
     background = KinetixWhite,
     onBackground = KinetixInk,
     surface = KinetixWhite,
@@ -82,7 +82,15 @@ fun KinetixFSLTheme(
     val view = LocalView.current
 
     if (!view.isInEditMode) {
-        SideEffect {
+        // LaunchedEffect(darkTheme), not SideEffect — SideEffect reruns on
+        // *every* recomposition of this composable, which unconditionally
+        // stomped isAppearanceLightStatusBars back to the app default even
+        // while a screen further down (StatusBarLightIcons) had deliberately
+        // overridden it for its own dark top bar — e.g. Discover Communities'
+        // navy bar kept losing its white icons to a stray recomposition here.
+        // Keying on darkTheme means this only reasserts the default when the
+        // theme itself actually changes, leaving per-screen overrides alone.
+        LaunchedEffect(darkTheme) {
             val window = (view.context as Activity).window
             // Transparent bars; our screens draw edge to edge underneath them.
             window.statusBarColor = Color.Transparent.toArgb()

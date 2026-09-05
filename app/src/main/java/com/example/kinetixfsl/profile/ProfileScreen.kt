@@ -2,7 +2,9 @@ package com.example.kinetixfsl.profile
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +51,7 @@ import com.example.kinetixfsl.progress.ProgressRepository
 import com.example.kinetixfsl.progress.RankTier
 import com.example.kinetixfsl.ui.home.DashboardViewModel
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+import com.example.kinetixfsl.ui.theme.KinetixPageBackground
 
 /**
  * The Profile screen — user header + a four-tab analytics section.
@@ -63,9 +66,23 @@ fun ProfileScreen(
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: DashboardViewModel = viewModel(),
+    /** Settings is now opened from the top bar's gear (see HomeScreen's
+     *  HomeTopBar) rather than a gear on this screen itself, so the open/
+     *  closed state lives with the caller. */
+    showSettings: Boolean = false,
+    onDismissSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val name = viewModel.uiState.displayName
+
+    // The account's own name is the fallback; a locally-saved override (see
+    // LocalProfileStore, set from the Edit Profile sheet) takes precedence —
+    // this is the offline, on-device part of the profile, independent of the
+    // Firebase account.
+    var name by remember {
+        mutableStateOf(LocalProfileStore.getName(context) ?: viewModel.uiState.displayName)
+    }
+    var avatarFile by remember { mutableStateOf(LocalProfileStore.avatarFile(context)) }
+    var showEditProfile by remember { mutableStateOf(false) }
 
     // Real, per-account progress + analytics computed from local stores.
     val repo = remember { ProgressRepository(context) }
@@ -82,22 +99,41 @@ fun ProfileScreen(
             lessonsCompleted = progress.quizLevelsCleared,
         )
     }
-    var showSettings by remember { mutableStateOf(false) }
 
     if (showSettings) {
         AccountSettingsDialog(
-            onDismiss = { showSettings = false },
+            onDismiss = onDismissSettings,
             onSignOut = onSignOut,
+            onEditProfile = {
+                onDismissSettings()
+                showEditProfile = true
+            },
         )
+    }
+
+    if (showEditProfile) {
+        // Same slide-up-and-swipe-down-to-close sheet as Create/Edit Post and
+        // the community profile's own edit sheet — see SlideUpScreen.
+        com.example.kinetixfsl.community.SlideUpScreen(onClose = { showEditProfile = false }) { dismiss ->
+            EditProfileSheet(
+                currentName = name,
+                currentAvatar = avatarFile,
+                onSaved = { newName, newAvatar ->
+                    name = newName
+                    avatarFile = newAvatar
+                },
+                dismiss = dismiss,
+            )
+        }
     }
 
     ProfileContent(
         name = name,
+        avatarFile = avatarFile,
         summary = summary,
         tier = progress.rank,
         achievements = progress.achievements,
         analytics = analytics,
-        onSettings = { showSettings = true },
         onSignOut = onSignOut,
         modifier = modifier,
     )
@@ -115,16 +151,19 @@ private fun ProfileContent(
     tier: RankTier,
     achievements: List<AchievementView>,
     analytics: AnalyticsData,
-    onSettings: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
+    avatarFile: java.io.File? = null,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            // Off-white in light mode, matching the Home Feed, so the pure-
+            // white cards below (colorScheme.surface already resolves to
+            // that) read as cards. Dark mode is untouched.
+            .background(if (isSystemInDarkTheme()) MaterialTheme.colorScheme.background else KinetixPageBackground)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp),
     ) {
@@ -132,9 +171,9 @@ private fun ProfileContent(
 
         ProfileHeader(
             name = name,
+            avatarFile = avatarFile,
             summary = summary,
             tier = tier,
-            onSettings = onSettings,
         )
 
         Spacer(Modifier.height(18.dp))
@@ -176,51 +215,27 @@ private fun ProfileHeader(
     name: String,
     summary: ProfileSummary,
     tier: RankTier,
-    onSettings: () -> Unit,
+    avatarFile: java.io.File? = null,
 ) {
-    val greeting = remember { greetingForNow() }
-
     Column(modifier = Modifier.fillMaxWidth()) {
-        Box(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Avatar(name = name)
-                Spacer(Modifier.size(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "$greeting,",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                    )
-                    Text(
-                        text = name,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    RankPill(tier = tier)
-}
-            }
-
-            // Settings gear, top-right.
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surface)
-                    .clickable(onClick = onSettings),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = ProfileIcons.Settings,
-                    contentDescription = "Settings",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(22.dp),
+        // The settings gear used to live here (top-right) — it's now in the
+        // top bar (see HomeScreen's HomeTopBar), so this is just the avatar,
+        // name, and rank now.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(name = name, photoFile = avatarFile)
+            Spacer(Modifier.size(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontWeight = FontWeight.ExtraBold,
                 )
+                Spacer(Modifier.height(6.dp))
+                RankPill(tier = tier)
             }
         }
 
@@ -255,23 +270,42 @@ private fun ProfileHeader(
     }
 }
 
+/**
+ * The initial-in-a-gradient-circle fallback, or the user's own locally-saved
+ * photo (see LocalProfileStore) when they've set one via Edit Profile.
+ */
 @Composable
-private fun Avatar(name: String) {
+private fun Avatar(name: String, photoFile: java.io.File? = null) {
     Box(
         modifier = Modifier
             .size(60.dp)
             .clip(CircleShape)
-            .background(
-                Brush.linearGradient(listOf(Color(0xFF7C4DFF), Color(0xFF6C5CE7))),
+            .then(
+                if (photoFile == null) {
+                    Modifier.background(
+                        Brush.linearGradient(listOf(Color(0xFF7C4DFF), Color(0xFF6C5CE7))),
+                    )
+                } else {
+                    Modifier
+                },
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = name.firstOrNull()?.uppercase() ?: "?",
-            style = MaterialTheme.typography.headlineSmall,
-            color = Color.White,
-            fontWeight = FontWeight.ExtraBold,
-        )
+        if (photoFile != null) {
+            coil.compose.AsyncImage(
+                model = photoFile,
+                contentDescription = "Profile photo",
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            Text(
+                text = name.firstOrNull()?.uppercase() ?: "?",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+            )
+        }
     }
 }
 
@@ -362,11 +396,21 @@ private fun AchievementsGrid(achievements: List<AchievementView>) {
     selected?.let { av ->
         com.example.kinetixfsl.ui.AchievementInfoDialog(view = av, onDismiss = { selected = null })
     }
+    val dark = isSystemInDarkTheme()
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
             .background(MaterialTheme.colorScheme.surface)
+            // Border removed in light mode — see the pure-white card redesign.
+            // Dark mode keeps it.
+            .then(
+                if (dark) {
+                    Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(18.dp))
+                } else {
+                    Modifier
+                },
+            )
             .padding(16.dp),
     ) {
         Row(
@@ -495,6 +539,15 @@ private fun StatCard(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
             .background(MaterialTheme.colorScheme.surface)
+            // Border removed in light mode — see the pure-white card redesign.
+            // Dark mode keeps it.
+            .then(
+                if (isSystemInDarkTheme()) {
+                    Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(18.dp))
+                } else {
+                    Modifier
+                },
+            )
             .padding(14.dp),
     ) {
         Box(
@@ -545,6 +598,15 @@ private fun AnalyticsTabRow(selected: Int, onSelect: (Int) -> Unit) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
             .background(MaterialTheme.colorScheme.surface)
+            // Border removed in light mode — see the pure-white card redesign.
+            // Dark mode keeps it.
+            .then(
+                if (isSystemInDarkTheme()) {
+                    Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(18.dp))
+                } else {
+                    Modifier
+                },
+            )
             .padding(6.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -605,6 +667,15 @@ private fun SignOutButton(onSignOut: () -> Unit) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surface)
+            // Border removed in light mode — see the pure-white card redesign.
+            // Dark mode keeps it.
+            .then(
+                if (isSystemInDarkTheme()) {
+                    Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+                } else {
+                    Modifier
+                },
+            )
             .clickable { confirming = true }
             .padding(vertical = 15.dp),
         contentAlignment = Alignment.Center,
@@ -640,13 +711,6 @@ private fun SignOutButton(onSignOut: () -> Unit) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-private fun greetingForNow(): String =
-    when (java.time.LocalTime.now().hour) {
-        in 5..11 -> "Good morning"
-        in 12..17 -> "Good afternoon"
-        else -> "Good evening"
-    }
 
 private fun formatMinutes(minutes: Int): String {
     if (minutes < 60) return "${minutes}m"
@@ -708,7 +772,6 @@ private fun ProfileScreenPreviewLight() {
             tier = RankTier.SKILLED,
             achievements = PreviewAchievements,
             analytics = PreviewAnalytics,
-            onSettings = {},
             onSignOut = {},
         )
     }
@@ -724,7 +787,6 @@ private fun ProfileScreenPreviewDark() {
             tier = RankTier.SKILLED,
             achievements = PreviewAchievements,
             analytics = PreviewAnalytics,
-            onSettings = {},
             onSignOut = {},
         )
     }

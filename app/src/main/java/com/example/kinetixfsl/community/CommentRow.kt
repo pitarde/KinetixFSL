@@ -1,7 +1,10 @@
 package com.example.kinetixfsl.community
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -30,6 +35,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.kinetixfsl.community.model.Comment
+import com.example.kinetixfsl.ui.theme.KinetixError
+import com.example.kinetixfsl.ui.theme.KinetixGreen
 
 /**
  * A top-level comment and its replies.
@@ -47,6 +54,10 @@ internal fun CommentThreadItem(
     modifier: Modifier = Modifier,
     /** Opens the commenter's profile — the signed-in user's own included. */
     onAuthorClick: (String) -> Unit = {},
+    /** This user's own vote on each comment id, "up"/"down"/absent. */
+    commentUserVotes: Map<String, String> = emptyMap(),
+    /** (commentId, "up" | "down") — tapping the same direction twice retracts it. */
+    onVote: (String, String) -> Unit = { _, _ -> },
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         CommentRow(
@@ -54,6 +65,9 @@ internal fun CommentThreadItem(
             onReply = { onReply(thread.comment) },
             onImageClick = onImageClick,
             onAuthorClick = onAuthorClick,
+            userVote = commentUserVotes[thread.comment.id],
+            onUpvote = { onVote(thread.comment.id, "up") },
+            onDownvote = { onVote(thread.comment.id, "down") },
         )
 
         if (thread.replies.isNotEmpty()) {
@@ -71,6 +85,9 @@ internal fun CommentThreadItem(
                         onImageClick = onImageClick,
                         onAuthorClick = onAuthorClick,
                         isReply = true,
+                        userVote = commentUserVotes[reply.id],
+                        onUpvote = { onVote(reply.id, "up") },
+                        onDownvote = { onVote(reply.id, "down") },
                     )
                 }
             }
@@ -139,6 +156,10 @@ internal fun CommentRow(
     isReply: Boolean = false,
     /** Opens the commenter's profile — the signed-in user's own included. */
     onAuthorClick: (String) -> Unit = {},
+    /** This comment's own vote from the signed-in user, "up"/"down"/null. */
+    userVote: String? = null,
+    onUpvote: () -> Unit = {},
+    onDownvote: () -> Unit = {},
 ) {
     Row(
         modifier = modifier
@@ -209,21 +230,114 @@ internal fun CommentRow(
             }
 
             Spacer(Modifier.height(4.dp))
-            Text(
-                text = "Reply",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    // Pulled back by the same amount as its tap padding so the
-                    // label still lines up with the body text above it.
-                    .offset(x = (-8).dp)
-                    .clip(RoundedCornerShape(50))
-                    .clickable(onClick = onReply)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = "Reply",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        // Pulled back by the same amount as its tap padding so
+                        // the label still lines up with the body text above it.
+                        .offset(x = (-8).dp)
+                        .clip(RoundedCornerShape(50))
+                        .clickable(onClick = onReply)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+                // Pulled forward the same way, so the pill's own edge padding
+                // still lands flush with the comment's right edge.
+                CommentVoteRow(
+                    upvoteCount = comment.upvoteCount,
+                    downvoteCount = comment.downvoteCount,
+                    userVote = userVote,
+                    onUpvote = onUpvote,
+                    onDownvote = onDownvote,
+                    modifier = Modifier.offset(x = 8.dp),
+                )
+            }
         }
     }
+}
+
+/**
+ * The same bordered-pill style as the post's own upvote/downvote/comment row
+ * (see PostInteractionRow) — just the two vote buttons, no comment count
+ * (a reply count already shows via "View N replies"). Each shows its own
+ * count rather than a single net number, matching the post's pill exactly.
+ *
+ * Free will, same as a post's own vote: tapping the same arrow again
+ * retracts it, tapping the other one flips it (see
+ * CommunityRepository.voteComment).
+ */
+@Composable
+private fun CommentVoteRow(
+    upvoteCount: Long,
+    downvoteCount: Long,
+    userVote: String?,
+    onUpvote: () -> Unit,
+    onDownvote: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .clip(RoundedCornerShape(50))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(50))
+            .padding(horizontal = 2.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CommentVoteButton(
+            icon = CommunityIcons.ArrowUp,
+            label = upvoteCount.compact(),
+            tint = if (userVote == "up") KinetixGreen else MaterialTheme.colorScheme.onBackground,
+            onClick = onUpvote,
+        )
+        CommentVoteHairline()
+        CommentVoteButton(
+            icon = CommunityIcons.ArrowDown,
+            label = downvoteCount.compact(),
+            tint = if (userVote == "down") KinetixError else MaterialTheme.colorScheme.onBackground,
+            onClick = onDownvote,
+        )
+    }
+}
+
+@Composable
+private fun CommentVoteButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(50))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(5.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = tint,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun CommentVoteHairline() {
+    Box(
+        Modifier
+            .width(1.dp)
+            .height(14.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant),
+    )
 }
 
 /** Replies line up under the parent's text, not under its avatar. */
@@ -263,6 +377,69 @@ private fun ExpandableCommentText(text: String) {
                     .clip(RoundedCornerShape(50))
                     .clickable { expanded = !expanded },
             )
+        }
+    }
+}
+
+/**
+ * "Most relevant ▾" — tapping opens the three-way choice Facebook offers
+ * under a post's comment count: Most relevant (highest score first), Newest
+ * (reverse-chronological), and All comments (every one, oldest first, no
+ * ranking). Shared by [PostDetailScreen] and [ImmersivePostViewer].
+ */
+@Composable
+internal fun CommentSortDropdown(
+    selected: CommentSortMode,
+    onSelect: (CommentSortMode) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .clickable { expanded = true }
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = selected.label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                imageVector = CommunityIcons.ChevronDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            CommentSortMode.entries.forEach { mode ->
+                DropdownMenuItem(
+                    onClick = {
+                        expanded = false
+                        onSelect(mode)
+                    },
+                    text = {
+                        Text(
+                            text = mode.label,
+                            color = if (mode == selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            fontWeight = if (mode == selected) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    },
+                )
+            }
         }
     }
 }

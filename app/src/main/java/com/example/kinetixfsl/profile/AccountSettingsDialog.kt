@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.example.kinetixfsl.account.AccountEraser
+import com.example.kinetixfsl.ui.home.HomeIcons
 import com.example.kinetixfsl.ui.theme.ThemePreference
 import com.example.kinetixfsl.ui.theme.findActivity
 import kotlinx.coroutines.launch
@@ -47,11 +48,14 @@ private enum class Stage { MENU, CHOICE, CONFIRM_RESET, CONFIRM_DELETE }
  *  - CONFIRM_*: a final are-you-sure before running [AccountEraser].
  *
  * @param onSignOut routes to the login screen after a full account delete.
+ * @param onEditProfile dismisses this menu and opens the Edit Profile sheet —
+ *        see [EditProfileSheet].
  */
 @Composable
 fun AccountSettingsDialog(
     onDismiss: () -> Unit,
     onSignOut: () -> Unit,
+    onEditProfile: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     // LocalContext is wrapped by ForcedThemeResources, so resolve the real
@@ -114,6 +118,7 @@ fun AccountSettingsDialog(
     when (stage) {
         Stage.MENU -> SettingsCard(
             onDeleteAccount = { stage = Stage.CHOICE },
+            onEditProfile = onEditProfile,
             onDismiss = onDismiss,
         )
         Stage.CHOICE -> DeleteChoiceCard(
@@ -148,7 +153,11 @@ fun AccountSettingsDialog(
 // ── MENU: appearance + delete entry ─────────────────────────────────
 
 @Composable
-private fun SettingsCard(onDeleteAccount: () -> Unit, onDismiss: () -> Unit) {
+private fun SettingsCard(
+    onDeleteAccount: () -> Unit,
+    onEditProfile: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     Dialog(onDismissRequest = onDismiss) {
         CardSurface {
             Text(
@@ -158,6 +167,32 @@ private fun SettingsCard(onDeleteAccount: () -> Unit, onDismiss: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.height(16.dp))
+
+            // Name + photo, both stored only on this device — see
+            // LocalProfileStore and EditProfileSheet.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(onClick = onEditProfile)
+                    .padding(vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = HomeIcons.Profile,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.size(10.dp))
+                Text(
+                    text = "Edit profile",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
 
             Text(
                 text = "APPEARANCE",

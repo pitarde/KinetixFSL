@@ -59,9 +59,11 @@ import coil.decode.SvgDecoder
 import coil.request.ImageRequest
 import com.example.kinetixfsl.game.QuizScreen
 import com.example.kinetixfsl.game.model.LevelStatus
+import androidx.compose.foundation.isSystemInDarkTheme
 import com.example.kinetixfsl.profile.AccentProgress
 import com.example.kinetixfsl.ui.theme.KinetixGreen
-import com.example.kinetixfsl.ui.theme.KinetixIndigo
+import com.example.kinetixfsl.ui.theme.KinetixNavy
+import com.example.kinetixfsl.ui.theme.KinetixPageBackground
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -95,7 +97,9 @@ fun LevelMapScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            // Off-white in light mode, matching the Home Feed. Dark mode is
+            // untouched.
+            .background(if (isSystemInDarkTheme()) MaterialTheme.colorScheme.background else KinetixPageBackground)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 16.dp),
     ) {
@@ -137,11 +141,11 @@ private fun AdventureHeader(state: QuizScreen.Map, allDone: Boolean, onAction: (
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(28.dp))
-            .background(
-                Brush.linearGradient(
-                    listOf(MaterialTheme.colorScheme.primary, KinetixIndigo),
-                ),
-            )
+            // Same color as the Dashboard's own streak card — KinetixNavy in
+            // light mode, colorScheme.surface in dark — so the two read as
+            // the same card style app-wide instead of this one's own
+            // primary/indigo gradient.
+            .background(if (isSystemInDarkTheme()) MaterialTheme.colorScheme.surface else KinetixNavy)
             .padding(20.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

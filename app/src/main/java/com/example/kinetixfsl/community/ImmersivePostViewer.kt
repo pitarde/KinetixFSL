@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -334,17 +335,26 @@ fun ImmersivePostViewer(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                Text(
-                    text = if (state.totalCount == 0) {
-                        "Comments"
-                    } else {
-                        "Comments (${state.totalCount})"
-                    },
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                )
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    Text(
+                        text = if (state.totalCount == 0) {
+                            "Comments"
+                        } else {
+                            "Comments (${state.totalCount})"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    )
+                    if (state.totalCount > 0) {
+                        CommentSortDropdown(
+                            selected = state.sortMode,
+                            onSelect = viewModel::setSortMode,
+                            modifier = Modifier.offset(x = (-8).dp),
+                        )
+                    }
+                }
 
                 when {
                     state.isLoading -> Box(
@@ -381,6 +391,8 @@ fun ImmersivePostViewer(
                                 },
                                 onImageClick = { url -> fullScreenImageUrl = url },
                                 onAuthorClick = onAuthorClick,
+                                commentUserVotes = state.commentUserVotes,
+                                onVote = viewModel::voteComment,
                             )
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }

@@ -33,6 +33,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.ui.theme.KinetixError
@@ -64,9 +65,12 @@ internal fun PostAuthorRow(
      */
     onAuthorClick: (() -> Unit)? = null,
     /**
-     * When set, the row shows this community (letter avatar + name) instead of
-     * the post's author. The home feed uses this so community posts surface the
-     * community, matching the design. Tapping opens the community.
+     * When set (a community post shown in the home feed), the header shows
+     * this community — its own avatar and name — instead of the author, so a
+     * community reads as its own identity in the feed rather than borrowing
+     * the poster's profile picture. A second line then credits who actually
+     * posted it: "Posted by {author}". Null for a plain Home Feed post (no
+     * community), which shows the author as the header instead.
      */
     communityName: String? = null,
     communityAvatarUrl: String? = null,
@@ -101,6 +105,10 @@ internal fun PostAuthorRow(
                         fontWeight = FontWeight.SemiBold,
                         modifier = communityClickable,
                     )
+                    if (post.isValidated) {
+                        Spacer(Modifier.width(6.dp))
+                        ValidatedBadge()
+                    }
                     if (timeLabel.isNotBlank()) {
                         Spacer(Modifier.width(8.dp))
                         Text(
@@ -108,10 +116,6 @@ internal fun PostAuthorRow(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
-                    if (post.isValidated) {
-                        Spacer(Modifier.width(6.dp))
-                        ValidatedBadge()
                     }
                 }
                 val byline = "Posted by " + post.authorName.ifBlank { "Unknown" } +
@@ -194,19 +198,19 @@ internal fun ValidatedBadge(modifier: Modifier = Modifier) {
         modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .padding(horizontal = 6.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = CommunityIcons.Verified,
             contentDescription = "Validated",
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(14.dp),
+            modifier = Modifier.size(10.dp),
         )
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(3.dp))
         Text(
             "Validated",
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp, lineHeight = 12.sp),
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.Bold,
         )
@@ -270,16 +274,21 @@ internal fun TruncatedBodyText(
      * until the post is opened; a short one shows it inline.
      */
     onOverflowChange: (Boolean) -> Unit = {},
+    /** Colors every #hashtag and makes it tappable — see [HashtagText]. */
+    onHashtagClick: ((String) -> Unit)? = null,
+    /** Tap fallback for non-hashtag text, only used when [onHashtagClick] is set. */
+    onBodyClick: (() -> Unit)? = null,
 ) {
     var isOverflowing by remember(text) { mutableStateOf(false) }
 
     Column(modifier = modifier) {
-        Text(
+        HashtagText(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = maxLines,
-            overflow = TextOverflow.Ellipsis,
+            onHashtagClick = onHashtagClick,
+            onBodyClick = onBodyClick,
             onTextLayout = { result ->
                 isOverflowing = result.hasVisualOverflow
                 onOverflowChange(result.hasVisualOverflow)

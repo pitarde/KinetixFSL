@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,6 +55,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.layout.ContentScale
@@ -67,9 +72,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.kinetixfsl.community.model.Post
 import kotlin.math.abs
+import kotlinx.coroutines.delay
 import com.example.kinetixfsl.ui.theme.KinetixGreen
 import com.example.kinetixfsl.ui.theme.KinetixIndigo
 import com.example.kinetixfsl.ui.theme.KinetixMint
+import com.example.kinetixfsl.ui.theme.KinetixPageBackground
+import com.example.kinetixfsl.ui.theme.KinetixWhite
 
 /**
  * List key for the optional collapsing header. Deliberately an Int, not a
@@ -120,6 +128,11 @@ fun CommunityFeedContent(
      */
     onOpenPostById: (postId: String) -> Unit = {},
     /**
+     * Tapping a #hashtag on a post's body — null (the default) unless the host
+     * owns a search bar to open. See [PostCard]'s parameter of the same name.
+     */
+    onHashtagClick: ((String) -> Unit)? = null,
+    /**
      * Optional collapsing header rendered as the very first list item — the
      * community banner, name card and category strip on a community's own feed.
      * Because it lives inside the feed's own list it scrolls away naturally as
@@ -140,6 +153,17 @@ fun CommunityFeedContent(
     insetForBottomNav: Boolean = false,
 ) {
     val state by viewModel.feedState.collectAsStateWithLifecycle()
+    // Guarantees the skeleton is actually seen: on a fast connection (or a
+    // warm Firestore cache) the real state can resolve to Success within a
+    // frame or two, so without this the skeleton would never visibly show at
+    // all. This composable is freshly created every time its host screen is —
+    // e.g. navigating into Community from the drawer — so this timer restarts
+    // exactly then, not on every recomposition or pull-to-refresh.
+    var minSkeletonElapsed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(500)
+        minSkeletonElapsed = true
+    }
     val userVotes by viewModel.userVotes.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
@@ -241,7 +265,19 @@ fun CommunityFeedContent(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
+                    // Off-white in light mode only — the white PostCards need
+                    // something visibly darker underneath them to actually
+                    // read as cards there. Dark mode keeps the normal theme
+                    // background; KinetixPageBackground is a fixed light
+                    // color, not theme-aware, so forcing it unconditionally
+                    // would paint a light page behind a dark-mode feed.
+                    .background(
+                        if (isSystemInDarkTheme()) {
+                            MaterialTheme.colorScheme.background
+                        } else {
+                            KinetixPageBackground
+                        },
+                    )
                     // Full-size background above paints under the nav bar; this
                     // then insets the list content past it. Only on a screen
                     // without a bottom nav of its own.
@@ -295,7 +331,14 @@ fun CommunityFeedContent(
                     }
                 }
 
-                when (val current = state) {
+                if (!minSkeletonElapsed) {
+                    // Shown regardless of the real state — Loading, or even an
+                    // already-resolved Success/Error — for the first 500ms
+                    // after this feed appears, so it's never skipped outright.
+                    item(key = "feed-skeleton") {
+                        com.example.kinetixfsl.ui.components.FeedSkeleton()
+                    }
+                } else when (val current = state) {
                     is FeedState.Loading -> item(key = "feed-skeleton") {
                         com.example.kinetixfsl.ui.components.FeedSkeleton()
                     }
@@ -366,10 +409,7 @@ fun CommunityFeedContent(
                                     onOpenCommunityLink = onOpenCommunity,
                                     onOpenProfileLink = onAuthorClick,
                                     onClick = { onPostClick(post) },
-                                )
-                                HorizontalDivider(
-                                    color = MaterialTheme.colorScheme.outlineVariant,
-                                    thickness = 1.dp,
+                                    onHashtagClick = onHashtagClick,
                                 )
                             }
                         }
@@ -447,6 +487,17 @@ private fun SearchBar(
     query: String,
     onQueryChange: (String) -> Unit,
 ) {
+    // Requested the moment this enters composition — which, wrapped in the
+    // caller's AnimatedVisibility, is exactly when the search icon is tapped —
+    // so the keyboard is already up and the field ready to type into, instead
+    // of making the user tap the field a second time.
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        keyboardController?.show()
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -463,7 +514,9 @@ private fun SearchBar(
             ),
             singleLine = true,
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester),
             decorationBox = { inner ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
@@ -674,10 +727,47 @@ internal fun PostCard(
     onOpenPostLink: ((String) -> Unit)? = null,
     onOpenCommunityLink: ((String) -> Unit)? = null,
     onOpenProfileLink: ((String) -> Unit)? = null,
+    /**
+     * Tapping a #hashtag in the body — null (the default) everywhere except
+     * the feed contexts that own a search bar, where it opens search for the
+     * tag. See [HashtagText] for why a null here changes more than styling.
+     */
+    onHashtagClick: ((String) -> Unit)? = null,
 ) {
+    val darkCard = isSystemInDarkTheme()
     Column(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 7.dp)
+            .then(
+                if (darkCard) {
+                    // A shadow barely reads against a dark background, so dark
+                    // mode keeps its usual border-defined card instead.
+                    Modifier
+                } else {
+                    Modifier.shadow(
+                        elevation = 3.dp,
+                        shape = RoundedCornerShape(20.dp),
+                        ambientColor = KinetixIndigo.copy(alpha = 0.12f),
+                        spotColor = KinetixIndigo.copy(alpha = 0.12f),
+                    )
+                },
+            )
+            .clip(RoundedCornerShape(20.dp))
+            // Pure white in light mode, deliberately not colorScheme.surface —
+            // the page behind it is KinetixPageBackground precisely so this
+            // reads as a card sitting on top of it. Dark mode keeps the normal
+            // theme surface; forcing white there would be jarring.
+            .background(if (darkCard) MaterialTheme.colorScheme.surface else KinetixWhite)
+            .then(
+                if (darkCard) {
+                    Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
         PostAuthorRow(
             post = post,
@@ -739,6 +829,8 @@ internal fun PostCard(
                 text = post.body,
                 maxLines = 3,
                 onOverflowChange = { bodyClamped = it },
+                onHashtagClick = onHashtagClick,
+                onBodyClick = onClick,
             )
         }
 

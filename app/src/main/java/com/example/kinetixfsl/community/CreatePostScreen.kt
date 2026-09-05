@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -92,6 +91,13 @@ fun CreatePostScreen(
     val joinedCommunities by viewModel.joinedCommunities.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    // Plain theme background, no dark banner here — the ordinary light/dark
+    // default, overriding whatever a screen this opened over (the community
+    // feed's forced-light-icons dark top bar) asked for.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(
+        light = androidx.compose.foundation.isSystemInDarkTheme(),
+    )
+
     // Lock the target once when opened from within a community.
     LaunchedEffect(lockedCommunityId) {
         if (lockedCommunityId != null) {
@@ -138,14 +144,9 @@ fun CreatePostScreen(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            // This screen is now reached as an overlay (the top bar's pencil
-            // icon), not a scaffold tab — a scaffold used to apply
-            // statusBarsPadding() once for whichever tab was showing, so this
-            // screen never needed its own. As a standalone overlay it does, or
-            // the close button and top bar sit under the status bar — exactly
-            // matching EditPostScreen's ordering (status bar, then IME) so the
-            // two composers look and behave identically.
-            .statusBarsPadding()
+            // Reached as a SlideUpScreen bottom sheet (see its call site),
+            // which already keeps clear of the status bar with its own top
+            // gap and drag handle — no statusBarsPadding needed here too.
             .imePadding(),
     ) {
         // ---- Screen title, matching EditPostScreen's ----

@@ -909,6 +909,7 @@ class CommunityRepository(
             mapOf(
                 "title" to title.trim(),
                 "body" to body.trim(),
+                "hashtags" to extractHashtags(title, body),
                 "linkUrl" to cleanLinks.firstOrNull(),
                 "links" to cleanLinks,
                 "media" to media.map {
@@ -973,6 +974,7 @@ class CommunityRepository(
             "communityName" to communityName,
             "title" to title.trim(),
             "body" to body.trim(),
+            "hashtags" to extractHashtags(title, body),
             "linkUrl" to firstLink,
             "links" to cleanLinks,
             "imageUrl" to imageUrl,
@@ -1108,6 +1110,83 @@ class CommunityRepository(
     // -------------------------------------------------------------------------
     // Comments
     // -------------------------------------------------------------------------
+
+    /** The signed-in user's vote on one comment, or null (not voted / signed out). */
+    suspend fun getUserCommentVote(postId: String, commentId: String): String? {
+        val uid = auth.currentUser?.uid ?: return null
+        return try {
+            val doc = firestore.collection(POSTS).document(postId)
+                .collection(COMMENTS).document(commentId)
+                .collection(VOTES).document(uid).get().await()
+            doc.getString("direction")
+        } catch (_: Exception) { null }
+    }
+
+    /**
+     * Up/downvotes a comment. Same free-will transaction as [vote] for
+     * posts — tapping the same direction again retracts it, tapping the
+     * other one flips it — just scoped to
+     * `posts/{postId}/comments/{commentId}` instead of the post itself.
+     */
+    suspend fun voteComment(postId: String, commentId: String, direction: String): String? {
+        val uid = auth.currentUser?.uid ?: return null
+        val commentRef = firestore.collection(POSTS).document(postId)
+            .collection(COMMENTS).document(commentId)
+        val voteRef = commentRef.collection(VOTES).document(uid)
+
+        val result = try {
+            firestore.runTransaction { tx ->
+                val voteDoc = tx.get(voteRef)
+                val existing = voteDoc.getString("direction")
+
+                when {
+                    existing == direction -> {
+                        tx.delete(voteRef)
+                        val countField = if (direction == "up") "upvoteCount" else "downvoteCount"
+                        val scoreDelta = if (direction == "up") -1L else 1L
+                        tx.update(commentRef, countField, FieldValue.increment(-1))
+                        tx.update(commentRef, FIELD_SCORE, FieldValue.increment(scoreDelta))
+                        null
+                    }
+                    existing != null -> {
+                        tx.set(voteRef, hashMapOf("direction" to direction, "userId" to uid))
+                        val incField = if (direction == "up") "upvoteCount" else "downvoteCount"
+                        val decField = if (direction == "up") "downvoteCount" else "upvoteCount"
+                        val scoreDelta = if (direction == "up") 2L else -2L
+                        tx.update(commentRef, incField, FieldValue.increment(1))
+                        tx.update(commentRef, decField, FieldValue.increment(-1))
+                        tx.update(commentRef, FIELD_SCORE, FieldValue.increment(scoreDelta))
+                        direction
+                    }
+                    else -> {
+                        tx.set(voteRef, hashMapOf("direction" to direction, "userId" to uid))
+                        val countField = if (direction == "up") "upvoteCount" else "downvoteCount"
+                        val scoreDelta = if (direction == "up") 1L else -1L
+                        tx.update(commentRef, countField, FieldValue.increment(1))
+                        tx.update(commentRef, FIELD_SCORE, FieldValue.increment(scoreDelta))
+                        direction
+                    }
+                }
+            }.await()
+        } catch (_: Exception) { null }
+
+        // Only a fresh upvote is worth telling someone about — same rule as
+        // a post's own vote() — so retracting or downvoting stays quiet.
+        if (result == "up") {
+            try {
+                val authorId = commentRef.get().await().getString("authorId")
+                if (authorId != null) {
+                    notifications.notify(
+                        recipientId = authorId,
+                        type = NotificationType.LIKE,
+                        targetId = postId,
+                        message = "upvoted your comment",
+                    )
+                }
+            } catch (_: Exception) { /* best-effort */ }
+        }
+        return result
+    }
 
     fun commentsForPost(postId: String): Flow<List<Comment>> = callbackFlow {
         val reg = firestore.collection(POSTS).document(postId)

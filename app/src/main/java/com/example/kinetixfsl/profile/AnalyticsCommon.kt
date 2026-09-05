@@ -1,6 +1,8 @@
 package com.example.kinetixfsl.profile
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,6 +64,16 @@ fun AnalyticsCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
             .background(MaterialTheme.colorScheme.surface)
+            // Border removed in light mode — used by Progress, Weak Spots,
+            // Forecast, and Coach's Picks, all built from this one card.
+            // Dark mode keeps it.
+            .then(
+                if (isSystemInDarkTheme()) {
+                    Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                } else {
+                    Modifier
+                },
+            )
             .padding(16.dp),
         content = content,
     )

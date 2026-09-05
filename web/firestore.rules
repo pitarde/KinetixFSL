@@ -37,6 +37,14 @@ service cloud.firestore {
                   'shareCount', 'viewCount', 'score']);
     }
 
+    // The comment equivalent — voting on someone else's comment only ever
+    // touches its own up/down/score fields, the same way voting on a post
+    // only touches onlyCounterFieldsChanged()'s fields above.
+    function onlyCommentCounterFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['upvoteCount', 'downvoteCount', 'score']);
+    }
+
     // Following someone increments a counter on their profile document, so
     // that one field has to be writable by others — and only that one.
     //
@@ -169,8 +177,13 @@ service cloud.firestore {
         allow read: if true;
         allow create: if request.auth != null
                       && request.resource.data.authorId == request.auth.uid;
+        // The comment's own author edits it; anyone else signed in may only
+        // move its vote counters — the same carve-out posts get from
+        // onlyCounterFieldsChanged(), needed for upvote/downvote to work on
+        // someone else's comment at all.
         allow update: if request.auth != null
-                      && resource.data.authorId == request.auth.uid;
+                      && (resource.data.authorId == request.auth.uid
+                          || onlyCommentCounterFieldsChanged());
         // Comment author, the post's author cleaning up their post, the
         // community's creator clearing a member's post when deleting the whole
         // community, or an admin (moderation "delete comment" and the account
@@ -180,6 +193,21 @@ service cloud.firestore {
                           || isPostAuthor(database, postId)
                           || isPostCommunityCreator(database, postId)
                           || isAdmin());
+
+        // One vote document per user on this comment — same shape and rules
+        // as a post's own /votes/{userId} above.
+        match /votes/{userId} {
+          allow get: if request.auth != null && request.auth.uid == userId;
+          allow list: if isPostAuthor(database, postId)
+                      || isPostCommunityCreator(database, postId)
+                      || isAdmin();
+          allow create, update: if request.auth != null && request.auth.uid == userId;
+          allow delete: if request.auth != null
+                        && (request.auth.uid == userId
+                            || isPostAuthor(database, postId)
+                            || isPostCommunityCreator(database, postId)
+                            || isAdmin());
+        }
       }
     }
 

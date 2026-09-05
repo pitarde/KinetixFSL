@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -17,7 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -47,37 +47,56 @@ fun CommunityCategoryScreen(
     val joinedIds by viewModel.joinedIds.collectAsStateWithLifecycle()
 
     BackHandler(onBack = onClose)
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    // This screen's top bar paints dark behind the status bar too, same as
+    // the Home Feed's — see StatusBarLightIcons for why this needs its own
+    // override rather than relying on the app's light/dark theme default.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(light = true)
 
     androidx.compose.foundation.layout.Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
+            // Off-white in light mode, matching the Home Feed — see
+            // KinetixPageBackground — so the pure-white community cards
+            // below read as cards. Dark mode keeps the normal background.
+            .background(
+                if (dark) MaterialTheme.colorScheme.background else com.example.kinetixfsl.ui.theme.KinetixPageBackground,
+            ),
     ) {
-        // ---- Top bar: back + category name ----
-        Row(
+        // ---- Top bar: back + category name — same treatment (color, size,
+        // painting behind the status bar) as the Home Feed's own top bar. ----
+        val barBackground = if (dark) MaterialTheme.colorScheme.surface else com.example.kinetixfsl.ui.theme.KinetixNavy
+        val barContentColor = if (dark) MaterialTheme.colorScheme.onSurface else com.example.kinetixfsl.ui.theme.KinetixWhite
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .background(barBackground)
+                .statusBarsPadding(),
         ) {
-            Icon(
-                imageVector = CommunityIcons.ArrowBack,
-                contentDescription = "Back",
-                tint = MaterialTheme.colorScheme.onBackground,
+            Row(
                 modifier = Modifier
-                    .size(28.dp)
-                    .clickable(onClick = onClose),
-            )
-            Spacer(Modifier.width(16.dp))
-            Text(
-                text = category,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = CommunityIcons.ArrowBack,
+                    contentDescription = "Back",
+                    tint = barContentColor,
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clickable(onClick = onClose),
+                )
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    text = category,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = barContentColor,
+                )
+            }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
         when (val current = state) {
             is DiscoverState.Loading -> Box(

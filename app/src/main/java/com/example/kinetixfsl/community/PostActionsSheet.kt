@@ -4,9 +4,13 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,20 +30,27 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
 import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * The sheet behind a post's 3-dot button: copy the text, delete the post, or
@@ -135,25 +147,83 @@ internal fun CommentActionsSheet(
     }
 }
 
-/** The shared shell: dimmed backdrop, rounded sheet, close button. */
+/**
+ * The shared shell: dimmed backdrop, rounded sheet, close button.
+ *
+ * Slides up from off-screen the moment it's composed, and slides back down
+ * before actually calling [onDismiss] — from tapping the backdrop, pressing
+ * back, or swiping the sheet itself down past a threshold — Reddit-style,
+ * rather than the "menu just vanishes" a plain `if (target != null)` gives
+ * you. A single [Animatable] drives the sheet's Y offset for all three exits
+ * (and for the drag itself) so they never fight a separate exit transition.
+ */
 @Composable
 private fun ActionsSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     actions: @Composable () -> Unit,
 ) {
-    BackHandler(onBack = onDismiss)
+    val density = LocalDensity.current
+    // Comfortably taller than any sheet this shell will ever hold, so
+    // animating to this offset always lands fully off-screen regardless of
+    // how many action rows are inside.
+    val offscreenPx = with(density) { 1200.dp.toPx() }
+    val dismissThresholdPx = with(density) { 120.dp.toPx() }
+    val offsetY = remember { Animatable(offscreenPx) }
+    val scope = rememberCoroutineScope()
+    var dismissing by remember { mutableStateOf(false) }
+
+    fun dismiss() {
+        if (dismissing) return
+        dismissing = true
+        scope.launch {
+            offsetY.animateTo(offscreenPx, animationSpec = tween(220, easing = FastOutSlowInEasing))
+            onDismiss()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        offsetY.animateTo(0f, animationSpec = tween(280, easing = FastOutSlowInEasing))
+    }
+
+    BackHandler(onBack = { dismiss() })
+
+    // Fades in lockstep with the sheet's own slide, instead of the backdrop
+    // just snapping to fully dimmed the instant the sheet appears.
+    val backdropAlpha = 0.45f * (1f - (offsetY.value / offscreenPx)).coerceIn(0f, 1f)
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
-            .clickable(onClick = onDismiss),
+            .background(Color.Black.copy(alpha = backdropAlpha))
+            .clickable(onClick = { dismiss() }),
     ) {
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .offset { IntOffset(0, offsetY.value.roundToInt()) }
+                // Swipe down anywhere on the sheet to dismiss it; dragging up
+                // is clamped at the resting position rather than overshooting.
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onVerticalDrag = { change, dragAmount ->
+                            change.consume()
+                            scope.launch {
+                                offsetY.snapTo((offsetY.value + dragAmount).coerceAtLeast(0f))
+                            }
+                        },
+                        onDragEnd = {
+                            if (offsetY.value > dismissThresholdPx) {
+                                dismiss()
+                            } else {
+                                scope.launch {
+                                    offsetY.animateTo(0f, animationSpec = tween(200, easing = FastOutSlowInEasing))
+                                }
+                            }
+                        },
+                    )
+                }
                 .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 // Swallow taps so they don't fall through to the backdrop.
@@ -161,15 +231,25 @@ private fun ActionsSheet(
                 .navigationBarsPadding()
                 .padding(vertical = 8.dp),
         ) {
+            // The drag handle — the visual cue that this can be swiped down.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(top = 4.dp, bottom = 6.dp)
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.outlineVariant),
+            )
+
             Box(modifier = Modifier.fillMaxWidth()) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(end = 16.dp, top = 8.dp)
+                        .padding(end = 16.dp, top = 4.dp)
                         .size(30.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable(onClick = onDismiss),
+                        .clickable(onClick = { dismiss() }),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -181,7 +261,7 @@ private fun ActionsSheet(
                 }
             }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
 
             actions()
 

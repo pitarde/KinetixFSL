@@ -46,7 +46,18 @@ internal fun CommunityCard(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+            // Pure white in light mode, matching the feed's own post cards.
+            // Dark mode used colorScheme.background here, which is exactly
+            // the page's own background — the card was invisible but for its
+            // border. KinetixDarkSurfaceVariant is the token already meant
+            // for cards sitting on the dark page background.
+            .background(
+                if (androidx.compose.foundation.isSystemInDarkTheme()) {
+                    com.example.kinetixfsl.ui.theme.KinetixDarkSurfaceVariant
+                } else {
+                    com.example.kinetixfsl.ui.theme.KinetixWhite
+                },
+            )
             .clickable(onClick = onClick)
             .padding(16.dp),
     ) {
@@ -130,9 +141,11 @@ private fun YourCommunityPill() {
             .padding(horizontal = 16.dp, vertical = 6.dp),
     ) {
         Text(
-            text = "Your community",
+            text = "My Community",
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // Same color a #hashtag gets — see HashtagText — for a community
+            // you created yourself.
+            color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.SemiBold,
         )
     }

@@ -35,4 +35,12 @@ data class Comment(
      */
     val mentionedUserIds: List<String> = emptyList(),
     val createdAt: Timestamp? = null,
+    /**
+     * Voting, mirroring [com.example.kinetixfsl.community.model.Post]'s own
+     * fields exactly: [score] = upvoteCount - downvoteCount, maintained by the
+     * same vote transaction so "Most relevant" can sort by it directly.
+     */
+    val upvoteCount: Long = 0,
+    val downvoteCount: Long = 0,
+    val score: Long = 0,
 )

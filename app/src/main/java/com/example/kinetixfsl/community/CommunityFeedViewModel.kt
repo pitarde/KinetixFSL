@@ -348,14 +348,19 @@ class CommunityFeedViewModel(
         val filtered = if (query.isEmpty()) {
             ordered
         } else {
-            // Matches a post's own text, its author's name, or its community's
-            // name — one search box covering "users, posts, communities" as
-            // asked, without a separate search screen/index.
+            // Matches a post's own text, its author's name, its community's
+            // name, or one of its #hashtags — one search box covering "users,
+            // posts, communities, hashtags" without a separate search index.
+            // A leading '#' in the query (typed, or from tapping a hashtag
+            // inline) is optional either way: "#deafcommunity" and
+            // "deafcommunity" find the same posts.
+            val tagQuery = query.removePrefix("#")
             ordered.filter { post ->
                 post.title.lowercase().contains(query) ||
                         post.body.lowercase().contains(query) ||
                         post.authorName.lowercase().contains(query) ||
-                        post.communityName.lowercase().contains(query)
+                        post.communityName.lowercase().contains(query) ||
+                        post.hashtags.any { it.contains(tagQuery) }
             }
         }
 

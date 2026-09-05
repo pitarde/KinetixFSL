@@ -45,6 +45,7 @@ import com.example.kinetixfsl.R
 import com.example.kinetixfsl.modules.model.FslSignData
 import com.example.kinetixfsl.modules.model.SignCategory
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+import com.example.kinetixfsl.ui.theme.KinetixPageBackground
 
 /**
  * Modules tab — category grid for FSL learning modules.
@@ -98,7 +99,16 @@ fun ModulesScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            // Off-white in light mode, matching the Home Feed — the category
+            // cards below keep their own primary/primaryContainer colors
+            // untouched. Dark mode is untouched.
+            .background(
+                if (androidx.compose.foundation.isSystemInDarkTheme()) {
+                    MaterialTheme.colorScheme.background
+                } else {
+                    KinetixPageBackground
+                },
+            )
             .padding(horizontal = 20.dp),
     ) {
         // ── Search bar ──────────────────────────────────────────

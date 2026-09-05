@@ -2,14 +2,19 @@ package com.example.kinetixfsl.community.home
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -35,7 +40,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -68,7 +72,10 @@ import com.example.kinetixfsl.community.CommunityProfileScreen
 import com.example.kinetixfsl.community.EditPostScreen
 import com.example.kinetixfsl.community.FeedState
 import com.example.kinetixfsl.community.ImmersivePostViewer
+import com.example.kinetixfsl.community.hashtagQueryText
 import com.example.kinetixfsl.community.PostDetailScreen
+import com.example.kinetixfsl.community.SlideUpScreen
+import com.example.kinetixfsl.ui.theme.KinetixWhite
 import com.example.kinetixfsl.community.ShareLinks
 import com.example.kinetixfsl.community.SharedPostScreen
 import com.example.kinetixfsl.community.model.Community
@@ -106,6 +113,14 @@ fun CommunityHomeScreen(
     val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    // CommunityHomeTopBar paints a scrim-darkened banner behind the status bar
+    // when the community has one (always dark, whatever the photo), or a
+    // plain surfaceVariant strip when it doesn't (light in light mode, dark in
+    // dark mode) — so light icons are only right for a banner or dark theme.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(
+        light = !community?.bannerUrl.isNullOrBlank() || androidx.compose.foundation.isSystemInDarkTheme(),
+    )
+
     fun placeholder(label: String) {
         android.widget.Toast.makeText(context, "$label — coming soon", android.widget.Toast.LENGTH_SHORT).show()
     }
@@ -140,13 +155,14 @@ fun CommunityHomeScreen(
     val feedViewModel = remember(communityId) { CommunityFeedViewModel(communityId = communityId) }
     val feedState by feedViewModel.feedState.collectAsStateWithLifecycle()
     val userVotes by feedViewModel.userVotes.collectAsStateWithLifecycle()
-    val searchQuery by feedViewModel.searchQuery.collectAsStateWithLifecycle()
     val communityAvatars by feedViewModel.communityAvatars.collectAsStateWithLifecycle()
     val feedListState = rememberLazyListState()
 
-    // The top-bar magnifier opens an inline search field; typing filters this
-    // community's feed the same way the Home Feed's search does.
+    // The top-bar magnifier opens the feed's own inline search section (same
+    // as the Home Feed's), which collapses the banner header out of the way
+    // to make room for it — see the headerContent AnimatedVisibility below.
     var searchActive by remember { mutableStateOf(false) }
+    val searchScope = androidx.compose.runtime.rememberCoroutineScope()
 
     val overlays = remember { mutableStateListOf<HomeOverlay>() }
     fun closeFrom(index: Int) {
@@ -206,17 +222,31 @@ fun CommunityHomeScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
+                // Off-white in light mode only, matching the main Home Feed —
+                // see KinetixPageBackground and PostCard. Dark mode keeps the
+                // normal theme background.
+                .background(
+                    if (androidx.compose.foundation.isSystemInDarkTheme()) {
+                        MaterialTheme.colorScheme.background
+                    } else {
+                        com.example.kinetixfsl.ui.theme.KinetixPageBackground
+                    },
+                ),
         ) {
             val current = community
             CommunityHomeTopBar(
                 searchActive = searchActive,
-                query = searchQuery,
-                onQueryChange = feedViewModel::onSearchQueryChange,
-                onOpenSearch = { searchActive = true },
-                onCloseSearch = {
-                    searchActive = false
-                    feedViewModel.onSearchQueryChange("")
+                onSearchClick = {
+                    searchActive = !searchActive
+                    if (!searchActive) {
+                        // Collapsing search returns the feed to normal — drop
+                        // any query, and scroll back to the top so the header
+                        // re-expanding there is actually visible instead of
+                        // landing off-screen above wherever search had
+                        // scrolled to (typing, browsing results).
+                        feedViewModel.onSearchQueryChange("")
+                        searchScope.launch { feedListState.animateScrollToItem(0) }
+                    }
                 },
                 onClose = onClose,
                 onShare = {
@@ -229,7 +259,6 @@ fun CommunityHomeScreen(
                 communityName = current?.name.orEmpty(),
                 bannerUrl = current?.bannerUrl,
             )
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
             if (current == null) {
                 Box(
@@ -250,15 +279,33 @@ fun CommunityHomeScreen(
                     onMediaClick = { post -> overlays.add(HomeOverlay.Immersive(post)) },
                     onAuthorClick = { uid -> overlays.add(HomeOverlay.Profile(uid)) },
                     isFeedActive = overlays.isEmpty(),
-                    // Posting happens from the Create tab; this feed needs no
-                    // search bar of its own.
-                    showSearchBar = false,
+                    // Same built-in search section (with its own auto-focus
+                    // and expand/collapse animation) the Home Feed uses,
+                    // instead of a field swapped into the top bar itself.
+                    showSearchBar = searchActive,
                     onMenuClick = { post -> actionsPost = post },
                     onOpenCommunity = openCommunity,
                     onOpenPostById = openPostById,
+                    // Tapping a #hashtag opens this community's own inline
+                    // search (the top bar's magnifier), pre-filled with the tag.
+                    onHashtagClick = { tag ->
+                        searchActive = true
+                        feedViewModel.onSearchQueryChange(hashtagQueryText(tag))
+                    },
                     // The banner, name card and categories ride inside the feed
                     // so they scroll away on swipe-up — see [collapseProgress].
+                    // They also collapse (with the same expand/shrink + fade
+                    // the search bar itself uses) the moment search opens, so
+                    // the search field lands right below the banner instead of
+                    // the header staying pinned above it.
                     headerContent = {
+                        AnimatedVisibility(
+                            visible = !searchActive,
+                            enter = expandVertically(animationSpec = tween(280, easing = FastOutSlowInEasing)) +
+                                fadeIn(tween(280)),
+                            exit = shrinkVertically(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                                fadeOut(tween(160)),
+                        ) {
                         Column {
                             CommunityHeader(
                                 community = current,
@@ -267,7 +314,6 @@ fun CommunityHomeScreen(
                                 onJoin = viewModel::join,
                                 onLeave = viewModel::leave,
                             )
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                             CategoryStrip(
                                 categories = current.categories,
@@ -275,7 +321,7 @@ fun CommunityHomeScreen(
                                 onAdd = { showAddCategory = true },
                                 onRemove = viewModel::removeCategory,
                             )
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
                         }
                     },
                 )
@@ -384,9 +430,18 @@ fun CommunityHomeScreen(
                                 },
                                 onUserClick = openProfile,
                                 onOpenCommunity = openCommunity,
+                                onClose = close,
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .background(MaterialTheme.colorScheme.background)
+                                    // Off-white in light mode, matching the
+                                    // Home Feed — see KinetixPageBackground.
+                                    .background(
+                                        if (androidx.compose.foundation.isSystemInDarkTheme()) {
+                                            MaterialTheme.colorScheme.background
+                                        } else {
+                                            com.example.kinetixfsl.ui.theme.KinetixPageBackground
+                                        },
+                                    )
                                     .statusBarsPadding()
                                     // Overlay — no bottom nav beneath it, so keep
                                     // its content clear of the nav buttons.
@@ -408,10 +463,19 @@ fun CommunityHomeScreen(
                         }
 
 
-                        is HomeOverlay.Edit -> EditPostScreen(
-                            post = liveCopyOf(overlay.post),
-                            onClose = close,
-                        )
+                        // Removes itself the instant its own slide-down
+                        // finishes (bypassing `close`/the outer fade-out) —
+                        // going through `close` left the invisible full-
+                        // screen blockPassThrough touch-blocker mounted for
+                        // that fade's whole duration after the sheet had
+                        // already finished disappearing, an input dead zone
+                        // with nothing visibly happening in it.
+                        is HomeOverlay.Edit -> SlideUpScreen(onClose = { closeFrom(index) }) { dismiss ->
+                            EditPostScreen(
+                                post = liveCopyOf(overlay.post),
+                                onClose = dismiss,
+                            )
+                        }
 
                         is HomeOverlay.Detail -> {
                             val post = liveCopyOf(overlay.post)
@@ -475,10 +539,24 @@ fun CommunityHomeScreen(
                             // nest to any depth — community, profile, another
                             // community, another profile — each layer closing
                             // back to the one beneath it.
-                            CommunityHomeScreen(
-                                communityId = overlay.communityId,
-                                onClose = close,
-                            )
+                            // A slide-in on top of the stack's own fade, so
+                            // opening a community reads as a real "push" —
+                            // matching the same screen's NavHost route.
+                            val slideIn = remember {
+                                MutableTransitionState(false).apply { targetState = true }
+                            }
+                            AnimatedVisibility(
+                                visibleState = slideIn,
+                                enter = slideInHorizontally(
+                                    animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                ) { it / 3 } + fadeIn(tween(280)),
+                                exit = fadeOut(tween(120)),
+                            ) {
+                                CommunityHomeScreen(
+                                    communityId = overlay.communityId,
+                                    onClose = close,
+                                )
+                            }
                         }
                     }
                 }
@@ -579,10 +657,7 @@ private data class CropRequest(val uri: android.net.Uri, val forBanner: Boolean)
 @Composable
 private fun CommunityHomeTopBar(
     searchActive: Boolean,
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onOpenSearch: () -> Unit,
-    onCloseSearch: () -> Unit,
+    onSearchClick: () -> Unit,
     onClose: () -> Unit,
     onShare: () -> Unit,
     onMenu: () -> Unit,
@@ -595,49 +670,58 @@ private fun CommunityHomeTopBar(
         // bar including the status-bar strip, so there's no white band at the
         // very top. The sharp image shows while expanded and crossfades to a
         // blurred version as the header scrolls away; a scrim keeps the white
-        // controls and name legible over any banner, in both themes.
+        // controls and name legible over any banner, in both themes. Stays up
+        // while searching too, now that the field lives below it (in the
+        // feed's own collapsing header) rather than swapped into this bar.
         val hasBanner = !bannerUrl.isNullOrBlank()
-        if (!searchActive) {
-            if (hasBanner) {
-                coil.compose.AsyncImage(
-                    model = bannerUrl,
-                    contentDescription = null,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    modifier = Modifier
-                        .matchParentSize()
-                        .graphicsLayer { alpha = 1f - collapseProgress },
-                )
-                coil.compose.AsyncImage(
-                    model = bannerUrl,
-                    contentDescription = null,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    modifier = Modifier
-                        .matchParentSize()
-                        .blur(18.dp)
-                        .graphicsLayer { alpha = collapseProgress },
-                )
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(
-                            androidx.compose.ui.graphics.Color.Black.copy(
-                                alpha = 0.22f + 0.18f * collapseProgress,
-                            ),
+        if (hasBanner) {
+            coil.compose.AsyncImage(
+                model = bannerUrl,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer { alpha = 1f - collapseProgress },
+            )
+            coil.compose.AsyncImage(
+                model = bannerUrl,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier
+                    .matchParentSize()
+                    .blur(18.dp)
+                    .graphicsLayer { alpha = collapseProgress },
+            )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        androidx.compose.ui.graphics.Color.Black.copy(
+                            alpha = 0.22f + 0.18f * collapseProgress,
                         ),
-                )
-            } else {
-                // No banner set — a neutral strip rather than a bare white band.
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
-            }
+                    ),
+            )
+        } else {
+            // No banner set — the same flat color the Home Feed's own top bar
+            // uses, not a generic neutral strip, so a bannerless community
+            // page still reads as the same bar design.
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        if (androidx.compose.foundation.isSystemInDarkTheme()) {
+                            MaterialTheme.colorScheme.surface
+                        } else {
+                            com.example.kinetixfsl.ui.theme.KinetixNavy
+                        },
+                    ),
+            )
         }
 
-        // White controls read cleanly over the banner+scrim; with no banner they
-        // keep the normal on-surface tint against the neutral strip.
-        val controlColor = if (hasBanner && !searchActive) {
+        // White controls read cleanly over the banner+scrim or the Home
+        // Feed-matching navy fallback; only the neutral surfaceVariant case
+        // (now gone) needed the on-surface tint, so it's white either way.
+        val controlColor = if (hasBanner || !androidx.compose.foundation.isSystemInDarkTheme()) {
             Color.White
         } else {
             MaterialTheme.colorScheme.onSurface
@@ -646,105 +730,50 @@ private fun CommunityHomeTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                // The controls clear the notch/status bar, but the blurred banner
-                // behind them still runs to the very top edge.
+                // The controls clear the notch/status bar, but the blurred
+                // banner (or the flat navy fallback) behind them still runs
+                // to the very top edge. Ordered before height() so the inset
+                // adds *on top of* the bar's own 56dp, matching the Home
+                // Feed's own top bar rather than eating into it.
                 .statusBarsPadding()
+                .height(56.dp)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (searchActive) {
-                // Search mode: back arrow collapses it, the field fills the bar.
-                CircleIconButton(CommunityIcons.ArrowBack, "Close search", onCloseSearch)
+            CircleIconButton(CommunityIcons.Close, "Close", onClose, tint = controlColor)
+            // The community name slides in as the header collapses, sitting
+            // between Close and the actions like the reference design.
+            if (collapseProgress > 0f) {
                 Spacer(Modifier.width(12.dp))
-                TopBarSearchField(
-                    query = query,
-                    onQueryChange = onQueryChange,
-                    modifier = Modifier.weight(1f),
+                Text(
+                    text = communityName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = controlColor,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .graphicsLayer { alpha = collapseProgress },
                 )
+                Spacer(Modifier.width(12.dp))
             } else {
-                CircleIconButton(CommunityIcons.Close, "Close", onClose, tint = controlColor)
-                // The community name slides in as the header collapses, sitting
-                // between Close and the actions like the reference design.
-                if (collapseProgress > 0f) {
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        text = communityName,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = controlColor,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .weight(1f)
-                            .graphicsLayer { alpha = collapseProgress },
-                    )
-                    Spacer(Modifier.width(12.dp))
-                } else {
-                    Spacer(Modifier.weight(1f))
-                }
-                CircleIconButton(CommunityIcons.Search, "Search", onOpenSearch, tint = controlColor)
-                Spacer(Modifier.width(12.dp))
-                CircleIconButton(CommunityIcons.Share, "Share", onShare, tint = controlColor)
-                Spacer(Modifier.width(12.dp))
-                CircleIconButton(CommunityIcons.MoreVertical, "More", onMenu, tint = controlColor)
+                Spacer(Modifier.weight(1f))
             }
-        }
-    }
-}
-
-/** The inline search input the top-bar magnifier expands into. */
-@Composable
-private fun TopBarSearchField(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = CommunityIcons.Search,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        androidx.compose.foundation.text.BasicTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                color = MaterialTheme.colorScheme.onSurface,
-            ),
-            cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
-            modifier = Modifier.weight(1f),
-            decorationBox = { inner ->
-                Box {
-                    if (query.isEmpty()) {
-                        Text(
-                            text = "Search posts, users...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    inner()
-                }
-            },
-        )
-        if (query.isNotEmpty()) {
-            Spacer(Modifier.width(8.dp))
-            Icon(
-                imageVector = CommunityIcons.Close,
-                contentDescription = "Clear",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .size(18.dp)
-                    .clickable { onQueryChange("") },
+            // Toggles the feed's own search section below — see
+            // CommunityFeedContent's showSearchBar — rather than swapping a
+            // field into this row; stays the same color whether active or
+            // not, so it never reads as going dark/mismatched against the bar.
+            CircleIconButton(
+                icon = CommunityIcons.Search,
+                description = if (searchActive) "Hide search" else "Search",
+                onClick = onSearchClick,
+                tint = controlColor,
             )
+            Spacer(Modifier.width(12.dp))
+            CircleIconButton(CommunityIcons.Share, "Share", onShare, tint = controlColor)
+            Spacer(Modifier.width(12.dp))
+            CircleIconButton(CommunityIcons.MoreVertical, "More", onMenu, tint = controlColor)
         }
     }
 }
@@ -779,7 +808,13 @@ private fun CommunityHeader(
 
     // The banner now lives full-bleed behind the top bar, so the header card
     // itself starts straight at the avatar/name row.
-    Column {
+    Column(
+        modifier = Modifier.background(
+            // Pure white in light mode, matching the feed's own post cards —
+            // dark mode keeps the normal theme surface.
+            if (isSystemInDarkTheme()) MaterialTheme.colorScheme.surface else KinetixWhite,
+        ),
+    ) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Community profile picture (falls back to a letter avatar).
@@ -804,8 +839,7 @@ private fun CommunityHeader(
                     )
                     if (community.creatorName.isNotBlank()) {
                         Text(
-                            text = "Created by ${community.creatorName}" +
-                                if (isAdmin) " (you)" else "",
+                            text = "Created by ${community.creatorName}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1008,10 +1042,12 @@ private fun YourCommunityBadge() {
             .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Text(
-            text = "Your community",
+            text = "My Community",
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.SemiBold,
+            // The same color a #hashtag uses (see HashtagText) — nothing
+            // brand new, just reused for this label too.
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold,
         )
     }
 }

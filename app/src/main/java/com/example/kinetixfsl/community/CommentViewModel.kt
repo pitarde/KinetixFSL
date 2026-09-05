@@ -27,6 +27,21 @@ data class CommentThread(
     val replies: List<Comment> = emptyList(),
 )
 
+/**
+ * How the top-level comments are ordered — the same three choices Facebook
+ * offers under a post's comment count.
+ */
+enum class CommentSortMode(val label: String) {
+    /** Highest [Comment.upvoteCount] first — a downvoted-but-upvoted comment
+     *  still counts as relevant, so this ranks by raw upvotes rather than the
+     *  net score. */
+    MOST_RELEVANT("Most relevant"),
+    /** Straight reverse-chronological — what the Firestore query already returns. */
+    NEWEST("Newest"),
+    /** Every comment, oldest first, no ranking applied. */
+    ALL("All comments"),
+}
+
 data class CommentUiState(
     val threads: List<CommentThread> = emptyList(),
     /** Comments plus replies — what the "Comments (n)" heading shows. */
@@ -61,6 +76,15 @@ data class CommentUiState(
     val expandedThreadIds: Set<String> = emptySet(),
     val isSending: Boolean = false,
     val errorMessage: String? = null,
+    /** Most relevant / Newest / All comments — see [CommentSortMode]. */
+    val sortMode: CommentSortMode = CommentSortMode.MOST_RELEVANT,
+    /**
+     * The signed-in user's own vote on each comment, keyed by comment id —
+     * "up", "down", or absent (never voted). Filled in lazily as comments
+     * arrive, the same way the feed does for posts — see
+     * [CommunityFeedViewModel.userVotes].
+     */
+    val commentUserVotes: Map<String, String> = emptyMap(),
 ) {
     /** What the composer currently reads, without its cursor. */
     val commentText: String get() = commentField.text
@@ -87,6 +111,13 @@ class CommentViewModel(
      */
     private var mentionCandidates: List<FollowUser> = emptyList()
 
+    /**
+     * The flat comment list as last received from Firestore — kept around so
+     * switching [CommentSortMode] re-sorts instantly instead of waiting on a
+     * fresh snapshot.
+     */
+    private var lastComments: List<Comment> = emptyList()
+
     init {
         viewModelScope.launch {
             mentionCandidates = repository.mentionCandidates()
@@ -94,9 +125,10 @@ class CommentViewModel(
 
         repository.commentsForPost(postId)
             .onEach { comments ->
+                lastComments = comments
                 _uiState.update {
                     it.copy(
-                        threads = buildThreads(comments),
+                        threads = buildThreads(comments, it.sortMode),
                         totalCount = comments.size,
                         isLoading = false,
                     )
@@ -107,6 +139,8 @@ class CommentViewModel(
                 // the tally). We've just read the real list — use it to snap the
                 // stored number straight. No-ops when it's already correct.
                 repository.reconcileCommentCount(postId, comments.size)
+
+                loadMissingVotes(comments)
             }
             .catch { t ->
                 _uiState.update {
@@ -120,25 +154,85 @@ class CommentViewModel(
     }
 
     /**
-     * Splits the flat stream into threads. The repository hands them over
-     * newest-first, which is the order we want for top-level comments; replies
-     * get flipped to oldest-first so a back-and-forth reads top to bottom.
+     * Splits the flat stream into threads and orders the top-level ones by
+     * [sortMode]. The repository hands the raw list over newest-first
+     * (Firestore's own order), which is exactly [CommentSortMode.NEWEST] —
+     * the other two modes re-sort it. Replies always stay oldest-first within
+     * their thread regardless of mode, so a back-and-forth reads top to
+     * bottom no matter how the threads themselves are ordered.
      */
-    private fun buildThreads(all: List<Comment>): List<CommentThread> {
+    private fun buildThreads(all: List<Comment>, sortMode: CommentSortMode): List<CommentThread> {
         val repliesByParent = all
             .filter { !it.parentId.isNullOrBlank() }
             .groupBy { it.parentId!! }
 
-        return all
-            .filter { it.parentId.isNullOrBlank() }
-            .map { parent ->
-                CommentThread(
-                    comment = parent,
-                    replies = repliesByParent[parent.id]
-                        .orEmpty()
-                        .sortedBy { it.createdAt },
-                )
+        val topLevel = all.filter { it.parentId.isNullOrBlank() }
+        val ordered = when (sortMode) {
+            CommentSortMode.NEWEST -> topLevel
+            CommentSortMode.MOST_RELEVANT -> topLevel.sortedByDescending { it.upvoteCount }
+            CommentSortMode.ALL -> topLevel.sortedBy { it.createdAt?.seconds ?: 0L }
+        }
+
+        return ordered.map { parent ->
+            CommentThread(
+                comment = parent,
+                replies = repliesByParent[parent.id]
+                    .orEmpty()
+                    .sortedBy { it.createdAt?.seconds ?: 0L },
+            )
+        }
+    }
+
+    /** Most relevant / Newest / All comments — re-sorts the already-loaded list. */
+    fun setSortMode(mode: CommentSortMode) {
+        _uiState.update {
+            if (it.sortMode == mode) return
+            it.copy(sortMode = mode, threads = buildThreads(lastComments, mode))
+        }
+    }
+
+    /**
+     * Fetches the signed-in user's vote for every comment not already in
+     * [CommentUiState.commentUserVotes] — one doc read per unseen comment,
+     * same lazy-fill pattern the feed uses for posts (see
+     * CommunityFeedViewModel.refreshMissingVotes).
+     */
+    private fun loadMissingVotes(comments: List<Comment>) {
+        val known = _uiState.value.commentUserVotes
+        val unchecked = comments.map { it.id }.filter { it !in known }
+        if (unchecked.isEmpty()) return
+
+        viewModelScope.launch {
+            val found = mutableMapOf<String, String>()
+            unchecked.forEach { id ->
+                repository.getUserCommentVote(postId, id)?.let { found[id] = it }
             }
+            if (found.isNotEmpty()) {
+                _uiState.update { it.copy(commentUserVotes = it.commentUserVotes + found) }
+            }
+        }
+    }
+
+    /**
+     * Up/downvotes one comment — free will, same as a post's own vote (see
+     * [CommunityRepository.voteComment]): tapping the same direction again
+     * retracts it, tapping the other one flips it. Optimistically updates the
+     * local vote map so the button reflects the tap immediately; the count
+     * itself updates once the live comment listener picks up the
+     * transaction's result.
+     */
+    fun voteComment(commentId: String, direction: String) {
+        viewModelScope.launch {
+            val newDirection = repository.voteComment(postId, commentId, direction)
+            _uiState.update { state ->
+                val votes = if (newDirection != null) {
+                    state.commentUserVotes + (commentId to newDirection)
+                } else {
+                    state.commentUserVotes - commentId
+                }
+                state.copy(commentUserVotes = votes)
+            }
+        }
     }
 
     /**

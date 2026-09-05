@@ -111,6 +111,13 @@ fun ChatScreen(
      */
     val store = remember(conversationId) { ViewModelStore() }
     DisposableEffect(store) { onDispose { store.clear() } }
+
+    // Plain theme background here too — the ordinary light/dark default,
+    // overriding whatever a screen this opened over (the community feed's
+    // forced-light-icons dark top bar) asked for.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(
+        light = androidx.compose.foundation.isSystemInDarkTheme(),
+    )
     val storeOwner = remember(store) {
         object : ViewModelStoreOwner {
             override val viewModelStore: ViewModelStore = store

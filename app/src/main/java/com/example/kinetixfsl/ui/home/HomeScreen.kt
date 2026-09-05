@@ -1,5 +1,14 @@
 package com.example.kinetixfsl.ui.home
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +23,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,12 +46,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.kinetixfsl.detection.MainCameraScreen
+import com.example.kinetixfsl.community.CommunityIcons
 import com.example.kinetixfsl.game.ui.QuizGameRoot
 import com.example.kinetixfsl.modules.ModulesScreen
 import com.example.kinetixfsl.profile.ProfileScreen
 import com.example.kinetixfsl.ui.theme.KinetixFSLTheme
+import com.example.kinetixfsl.ui.theme.KinetixNavy
+import com.example.kinetixfsl.ui.theme.KinetixWhite
+import com.example.kinetixfsl.ui.theme.StatusBarLightIcons
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.isSystemInDarkTheme
 import kotlinx.coroutines.launch
 
 @Composable
@@ -84,6 +98,9 @@ fun HomeScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        // Icon-only to *open*; enabled once actually open so swiping it back
+        // closed still works — see CommunityScreen's own copy of this.
+        gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet {
                 KinetixDrawerContent(
@@ -160,37 +177,86 @@ private fun HomeScaffold(
     // bar and bottom nav. The flag is only ever consulted on the Game tab.
     var gameImmersive by rememberSaveable { mutableStateOf(false) }
     val hideChrome = selectedTab == HomeTab.GAME && gameImmersive
+    // Profile reads as its own pushed screen — reached only via the icon on
+    // Home's bar, not a bottom-nav destination — so the bottom nav hides
+    // while it's showing, the same as it would for a real "new screen".
+    val hideBottomNav = hideChrome || selectedTab == HomeTab.PROFILE
+    // The settings gear now lives in Profile's own top bar rather than on the
+    // screen itself — see HomeTopBar — so its open/closed state lives here,
+    // a level above ProfileScreen, and is just passed down to it.
+    var profileSettingsOpen by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
+            // HomeTopBar paints its own dark bar behind the status bar and
+            // insets itself when it's shown — this only needs to reserve that
+            // inset itself when the bar is hidden (immersive gameplay).
+            .then(if (hideChrome) Modifier.statusBarsPadding() else Modifier),
     ) {
         if (!hideChrome) {
             HomeTopBar(
                 tab = selectedTab,
                 onMenuClick = onMenuClick,
+                onProfileClick = { onTabSelected(HomeTab.PROFILE) },
+                onBackToDashboard = { onTabSelected(HomeTab.HOME) },
+                onSettingsClick = { profileSettingsOpen = true },
             )
         }
 
-        Box(modifier = Modifier.weight(1f)) {
-            when (selectedTab) {
+        // Home/Modules/Game switch instantly between each other (unchanged);
+        // opening or leaving Profile specifically gets a slide+fade, so it
+        // reads as a screen being pushed on and popped off, matching the
+        // bottom nav hiding while it's up.
+        AnimatedContent(
+            targetState = selectedTab,
+            modifier = Modifier.weight(1f),
+            transitionSpec = {
+                when (HomeTab.PROFILE) {
+                    targetState -> {
+                        // Opening Profile — slide in from the right + fade,
+                        // matching the "pushed screen" treatment its bottom-
+                        // nav-hiding already implies.
+                        (slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 3 } +
+                            fadeIn(tween(280))) togetherWith
+                            fadeOut(tween(150))
+                    }
+                    initialState -> {
+                        // Leaving Profile — the reverse: slide out to the
+                        // right + fade while the destination tab fades in.
+                        fadeIn(tween(200)) togetherWith
+                            (slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 3 } +
+                                fadeOut(tween(280)))
+                    }
+                    else -> {
+                        // Home/Modules/Game switching among themselves —
+                        // unchanged, an instant swap.
+                        fadeIn(snap()) togetherWith fadeOut(snap())
+                    }
+                }
+            },
+            label = "homeTabContent",
+        ) { tab ->
+            when (tab) {
                 HomeTab.HOME -> DashboardContent(onOpenModule = onNavigateToSignList)
                 HomeTab.MODULES -> ModulesScreen(
                     onCategoryClick = { category ->
                         onNavigateToSignList(category.id)
                     },
                 )
-                HomeTab.CAMERA -> MainCameraScreen()
                 HomeTab.GAME -> QuizGameRoot(
                     onImmersiveChange = { gameImmersive = it },
                 )
-                HomeTab.PROFILE -> ProfileScreen(onSignOut = onSignOut)
+                HomeTab.PROFILE -> ProfileScreen(
+                    onSignOut = onSignOut,
+                    showSettings = profileSettingsOpen,
+                    onDismissSettings = { profileSettingsOpen = false },
+                )
             }
         }
 
-        if (!hideChrome) {
+        if (!hideBottomNav) {
             HomeBottomNav(
                 selectedTab = selectedTab,
                 onTabSelected = onTabSelected,
@@ -200,43 +266,124 @@ private fun HomeScaffold(
 }
 
 /**
- * The top bar. Only the Home tab shows the hamburger — every other tab shows a
- * centered title so the user always knows where they are.
+ * The top bar. Home, Modules, and Game always get the same dark bar
+ * treatment as the Community Home Feed's own top bar — KinetixNavy in light
+ * mode, colorScheme.surface in dark, white (light) status bar icons. Profile
+ * (only reached via the icon on Home's bar, not a bottom-nav tab of its own)
+ * gets that same colored bar in light mode too — see the light-mode-only note
+ * on its redesign — but keeps its old plain, uncolored bar in dark mode... with
+ * one exception: in dark mode Profile's bar (like every other tab's) uses
+ * colorScheme.surface, the same color its cards use — not
+ * colorScheme.background, the plain page color — so it reads as a raised bar
+ * rather than flush with the page.
+ *
+ * Home shows the hamburger on the left, "Dashboard" as its title (same size
+ * as the Community Home Feed's "KinetixFSL Community"), and the Profile
+ * shortcut on the right — the icon that used to be its own bottom-nav tab.
+ * Modules and Game both get the hamburger too, opening the same drawer.
+ * Profile gets a back arrow instead, returning to the Dashboard — it reads as
+ * a pushed screen, not a peer destination, in both themes.
  */
 @Composable
 private fun HomeTopBar(
     tab: HomeTab,
     onMenuClick: () -> Unit,
+    onProfileClick: () -> Unit,
+    onBackToDashboard: () -> Unit,
+    onSettingsClick: () -> Unit,
 ) {
+    val dark = isSystemInDarkTheme()
+    val coloredBar = tab != HomeTab.PROFILE || !dark
+
+    StatusBarLightIcons(light = if (coloredBar) true else dark)
+
+    // Dark mode always resolves to the card surface color regardless of tab —
+    // Profile no longer needs its own "plain background" case there, since
+    // that's exactly what colorScheme.surface already gives every other tab.
+    val barBackground = when {
+        dark -> MaterialTheme.colorScheme.surface
+        coloredBar -> KinetixNavy
+        else -> MaterialTheme.colorScheme.background
+    }
+    val barContentColor = when {
+        dark -> MaterialTheme.colorScheme.onSurface
+        coloredBar -> KinetixWhite
+        else -> MaterialTheme.colorScheme.onBackground
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
-            .padding(horizontal = 12.dp),
+            .background(barBackground)
+            .statusBarsPadding(),
     ) {
-        if (tab == HomeTab.HOME) {
-            Icon(
-                imageVector = HomeIcons.Menu,
-                contentDescription = "Open menu",
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .size(32.dp)
-                    .clickable(onClick = onMenuClick),
-            )
-        } else {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            when (tab) {
+                HomeTab.HOME, HomeTab.MODULES, HomeTab.GAME -> {
+                    Icon(
+                        imageVector = HomeIcons.Menu,
+                        contentDescription = "Open menu",
+                        tint = barContentColor,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clickable(onClick = onMenuClick),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
+                HomeTab.PROFILE -> {
+                    Icon(
+                        imageVector = CommunityIcons.ArrowBack,
+                        contentDescription = "Back",
+                        tint = barContentColor,
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clickable(onClick = onBackToDashboard),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
+            }
             Text(
-                text = tab.label,
+                text = if (tab == HomeTab.HOME) "Dashboard" else tab.label,
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.Center),
+                color = barContentColor,
+                modifier = Modifier.weight(1f),
             )
+            if (tab == HomeTab.HOME) {
+                Icon(
+                    imageVector = HomeIcons.Profile,
+                    contentDescription = "Profile",
+                    tint = barContentColor,
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clickable(onClick = onProfileClick),
+                )
+            }
+            if (tab == HomeTab.PROFILE) {
+                // Moved here from a gear icon on the screen itself — see
+                // ProfileHeader.
+                Icon(
+                    imageVector = com.example.kinetixfsl.profile.ProfileIcons.Settings,
+                    contentDescription = "Settings",
+                    tint = barContentColor,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clickable(onClick = onSettingsClick),
+                )
+            }
         }
     }
 }
 
-/** The five-icon bottom nav. Selected icon takes the theme's primary, rest are muted. */
+/** The bottom nav — Home, Modules, Game. Selected icon takes the theme's
+ *  primary, rest are muted. Camera was removed entirely, and Profile moved to
+ *  a shortcut on the Dashboard's own top bar — see [HomeTab.BOTTOM_NAV_TABS]. */
 @Composable
 private fun HomeBottomNav(
     selectedTab: HomeTab,
@@ -256,7 +403,7 @@ private fun HomeBottomNav(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            HomeTab.entries.forEach { tab ->
+            HomeTab.BOTTOM_NAV_TABS.forEach { tab ->
                 NavItem(
                     icon = tab.icon,
                     label = tab.label,

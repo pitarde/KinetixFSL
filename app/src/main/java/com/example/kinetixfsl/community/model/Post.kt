@@ -50,6 +50,13 @@ data class Post(
     val title: String = "",
     val body: String = "",
     /**
+     * Every #hashtag in [title]/[body], lowercased and without the leading '#'
+     * — extracted and saved once at write time (see [CommunityRepository])
+     * rather than parsed on every render, so the feed's search filter can
+     * match a tag exactly instead of only ever substring-matching raw text.
+     */
+    val hashtags: List<String> = emptyList(),
+    /**
      * Legacy single link. Still written (as the first of [links]) so older
      * clients and the un-redeployed web worker keep rendering something.
      * [allLinks] is what the UI should read.

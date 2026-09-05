@@ -7,6 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
@@ -23,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
@@ -154,6 +156,11 @@ private const val MODULES_OUT_FADE = 250
 
 private const val PUSH_DURATION = 300
 
+/** Plain crossfade — used for Discover, its category lists, and a community's
+ *  own home screen, in both directions (open and back). */
+private fun communityFadeIn(): EnterTransition = fadeIn(tween(PUSH_DURATION))
+private fun communityFadeOut(): ExitTransition = fadeOut(tween(PUSH_DURATION))
+
 /** New screen slides in from the right edge. */
 private fun pushEnter(): EnterTransition =
     slideInHorizontally(tween(PUSH_DURATION, easing = FastOutSlowInEasing)) { it } +
@@ -277,14 +284,47 @@ fun KinetixNavHost(
         com.example.kinetixfsl.auth.AccountStatusWatcher.consume()
     }
 
+    // The community area's own light-mode page color — every route in
+    // COMMUNITY_AREA_ROUTES paints this as its background, off-white rather
+    // than pure white. The push/recede slide transitions below briefly expose
+    // whatever sits behind the NavHost itself (see the backstop below); as
+    // long as that matches, the slide never shows a seam.
+    val communityAreaBackground = androidx.compose.runtime.remember {
+        setOf(
+            Route.COMMUNITY,
+            Route.START_COMMUNITY,
+            Route.DISCOVER_COMMUNITIES,
+            Route.COMMUNITY_CATEGORY_PATTERN,
+            Route.COMMUNITY_HOME_PATTERN,
+            Route.INBOX,
+            Route.CHAT_PATTERN,
+        )
+    }
+    val currentRoute = navController.currentBackStackEntryAsState().value
+        ?.destination?.route
+    val inCommunityArea = currentRoute in communityAreaBackground
+
     NavHost(
         navController = navController,
         startDestination = Route.SPLASH,
-        // A themed backstop behind every destination, so during a transition the
-        // exposed sliver is the app's own background — never the bare window.
+        // A themed backstop behind every destination, so during a transition
+        // the sliver exposed mid-slide is never the bare window. Most routes
+        // are pure white in light mode (colorScheme.background), which this
+        // already matches — but the community-area routes above are all
+        // KinetixPageBackground instead, so the backstop follows suit
+        // whenever the current destination is one of them. Dark mode is
+        // unaffected either way.
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(
+                if (isSystemInDarkTheme()) {
+                    MaterialTheme.colorScheme.background
+                } else if (inCommunityArea) {
+                    com.example.kinetixfsl.ui.theme.KinetixPageBackground
+                } else {
+                    MaterialTheme.colorScheme.background
+                },
+            ),
     ) {
         // ---- Splash: no animation (it fades on its own) ----
         composable(Route.SPLASH) {
@@ -523,8 +563,16 @@ fun KinetixNavHost(
             }
             val inboxState by inboxViewModel.uiState.collectAsStateWithLifecycle()
 
+            androidx.activity.compose.BackHandler(enabled = inboxDrawerState.isOpen) {
+                inboxDrawerScope.launch { inboxDrawerState.close() }
+            }
+
             androidx.compose.material3.ModalNavigationDrawer(
                 drawerState = inboxDrawerState,
+                // Icon-only to *open*; enabled once actually open so swiping
+                // it back closed still works — see CommunityScreen's own copy
+                // of this.
+                gesturesEnabled = inboxDrawerState.isOpen,
                 drawerContent = {
                     androidx.compose.material3.ModalDrawerSheet(
                         drawerContainerColor = MaterialTheme.colorScheme.surface,
@@ -582,10 +630,12 @@ fun KinetixNavHost(
                     onOpenPost = { postId -> navController.navigate(Route.post(postId)) },
                     onOpenProfile = { userId -> navController.navigate(Route.profile(userId)) },
                     onMenuClick = { inboxDrawerScope.launch { inboxDrawerState.open() } },
+                    // No statusBarsPadding here — InboxScreen's own top bar
+                    // now paints behind the status bar and insets itself, the
+                    // same way the Home Feed's top bar does.
                     modifier = Modifier
                         .fillMaxSize()
                         .background(MaterialTheme.colorScheme.background)
-                        .statusBarsPadding()
                         .navigationBarsPadding(),
                 )
             }
@@ -665,10 +715,10 @@ fun KinetixNavHost(
         // ---- Discover communities: category filter + list ----
         composable(
             route = Route.DISCOVER_COMMUNITIES,
-            enterTransition = { pushEnter() },
-            exitTransition = { recedeExit() },
-            popEnterTransition = { recedePopEnter() },
-            popExitTransition = { pushPopExit() },
+            enterTransition = { communityFadeIn() },
+            exitTransition = { communityFadeOut() },
+            popEnterTransition = { communityFadeIn() },
+            popExitTransition = { communityFadeOut() },
         ) {
             DiscoverCommunitiesScreen(
                 onClose = { navController.popBackStack() },
@@ -685,10 +735,10 @@ fun KinetixNavHost(
         composable(
             route = Route.COMMUNITY_CATEGORY_PATTERN,
             arguments = listOf(navArgument(Route.COMMUNITY_CATEGORY_ARG) { type = NavType.StringType }),
-            enterTransition = { pushEnter() },
-            exitTransition = { recedeExit() },
-            popEnterTransition = { recedePopEnter() },
-            popExitTransition = { pushPopExit() },
+            enterTransition = { communityFadeIn() },
+            exitTransition = { communityFadeOut() },
+            popEnterTransition = { communityFadeIn() },
+            popExitTransition = { communityFadeOut() },
         ) { backStackEntry ->
             val encoded = backStackEntry.arguments?.getString(Route.COMMUNITY_CATEGORY_ARG).orEmpty()
             val category = URLDecoder.decode(encoded, StandardCharsets.UTF_8.name())
@@ -705,10 +755,10 @@ fun KinetixNavHost(
         composable(
             route = Route.COMMUNITY_HOME_PATTERN,
             arguments = listOf(navArgument(Route.COMMUNITY_HOME_ARG) { type = NavType.StringType }),
-            enterTransition = { pushEnter() },
-            exitTransition = { recedeExit() },
-            popEnterTransition = { recedePopEnter() },
-            popExitTransition = { pushPopExit() },
+            enterTransition = { communityFadeIn() },
+            exitTransition = { communityFadeOut() },
+            popEnterTransition = { communityFadeIn() },
+            popExitTransition = { communityFadeOut() },
         ) { backStackEntry ->
             val communityId = backStackEntry.arguments?.getString(Route.COMMUNITY_HOME_ARG).orEmpty()
             CommunityHomeScreen(
@@ -734,9 +784,18 @@ fun KinetixNavHost(
                 onCommentClick = { item -> navController.navigate(Route.post(item.postId)) },
                 onUserClick = { uid -> navController.navigate(Route.profile(uid)) },
                 onOpenCommunity = { id -> navController.navigate(Route.communityHome(id)) },
+                onClose = { navController.popBackStack() },
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
+                    // Off-white in light mode, matching the Home Feed — see
+                    // KinetixPageBackground.
+                    .background(
+                        if (androidx.compose.foundation.isSystemInDarkTheme()) {
+                            MaterialTheme.colorScheme.background
+                        } else {
+                            com.example.kinetixfsl.ui.theme.KinetixPageBackground
+                        },
+                    )
                     .statusBarsPadding()
                     // Full-screen destination with no bottom nav — inset the
                     // bottom so content clears the system navigation buttons.

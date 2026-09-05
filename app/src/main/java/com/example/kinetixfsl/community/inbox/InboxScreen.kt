@@ -1,6 +1,5 @@
 package com.example.kinetixfsl.community.inbox
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
@@ -23,6 +22,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -90,6 +90,11 @@ fun InboxScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var isPickerOpen by remember { mutableStateOf(false) }
 
+    // This screen's own top bar is always dark now (KinetixNavy in light
+    // mode, colorScheme.surface in dark) — see InboxTopBar — so it always
+    // wants light (white) status bar icons, same as the Home Feed's own bar.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(light = true)
+
     /** The thread a long-press is asking to clear, or null. */
     var pendingClear by remember { mutableStateOf<Conversation?>(null) }
 
@@ -102,68 +107,68 @@ fun InboxScreen(
         label = "inboxEnter",
     )
 
+    // Chat <-> Notification, kept in step with the tab row in both
+    // directions: tapping a tab animates the pager to it, and swiping the
+    // pager (a fling anywhere in the page, not just the tab row) updates
+    // which tab reads as selected once the swipe settles.
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(
+        initialPage = state.selectedTab.ordinal,
+    ) { InboxTab.entries.size }
+
+    LaunchedEffect(state.selectedTab) {
+        val target = state.selectedTab.ordinal
+        if (pagerState.currentPage != target && !pagerState.isScrollInProgress) {
+            pagerState.animateScrollToPage(target)
+        }
+    }
+    LaunchedEffect(pagerState) {
+        androidx.compose.runtime.snapshotFlow { pagerState.settledPage }.collect { page ->
+            val tab = InboxTab.entries[page]
+            if (tab != state.selectedTab) viewModel.selectTab(tab)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .graphicsLayer { alpha = enter; translationY = (1f - enter) * 36f }
             .background(MaterialTheme.colorScheme.background),
     ) {
-        // A screen title, matching the pattern EditPostScreen and
-        // CreatePostScreen use — the same bit of air above the tab row also
-        // keeps it from sitting flush against the status bar. The hamburger,
-        // when there's a drawer to open, sits at the start rather than
-        // replacing the title, so the screen still reads as "Inbox" the same
-        // way wherever it's shown.
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 12.dp)
-                .padding(horizontal = 12.dp),
-        ) {
-            if (onMenuClick != null) {
-                Icon(
-                    imageVector = CommunityIcons.Menu,
-                    contentDescription = "Open menu",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .size(28.dp)
-                        .clickable(onClick = onMenuClick),
-                )
-            }
-            Text(
-                text = "Inbox",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.Center),
-            )
-        }
+        InboxTopBar(onMenuClick = onMenuClick)
         InboxTabRow(
             selected = state.selectedTab,
             unreadChats = state.unreadChats,
             unreadNotifications = state.unreadNotifications,
-            onSelect = viewModel::selectTab,
+            onSelect = { tab ->
+                viewModel.selectTab(tab)
+            },
         )
 
-        when (state.selectedTab) {
-            InboxTab.CHAT -> ChatListContent(
-                state = state,
-                onQueryChange = viewModel::onSearchQueryChange,
-                onOpenConversation = onOpenConversation,
-                onNewMessage = { isPickerOpen = true },
-                onLongPressConversation = { pendingClear = it },
-            )
+        androidx.compose.foundation.pager.HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) { page ->
+            when (InboxTab.entries[page]) {
+                InboxTab.CHAT -> ChatListContent(
+                    state = state,
+                    onQueryChange = viewModel::onSearchQueryChange,
+                    onOpenConversation = onOpenConversation,
+                    onNewMessage = { isPickerOpen = true },
+                    onLongPressConversation = { pendingClear = it },
+                )
 
-            InboxTab.NOTIFICATION -> NotificationListContent(
-                state = state,
-                onClearAll = viewModel::clearNotifications,
-                onDelete = viewModel::deleteNotification,
-                onMarkRead = viewModel::markNotificationRead,
-                onOpenConversation = onOpenConversation,
-                onOpenPost = onOpenPost,
-                onOpenProfile = onOpenProfile,
-            )
+                InboxTab.NOTIFICATION -> NotificationListContent(
+                    state = state,
+                    onClearAll = viewModel::clearNotifications,
+                    onDelete = viewModel::deleteNotification,
+                    onMarkRead = viewModel::markNotificationRead,
+                    onOpenConversation = onOpenConversation,
+                    onOpenPost = onOpenPost,
+                    onOpenProfile = onOpenProfile,
+                )
+            }
         }
     }
 
@@ -181,18 +186,72 @@ fun InboxScreen(
     }
 
     if (isPickerOpen) {
-        NewMessageSheet(
-            viewModel = viewModel,
-            onDismiss = { isPickerOpen = false },
-            onPick = { candidate ->
-                isPickerOpen = false
-                viewModel.openConversationWith(
-                    uid = candidate.uid,
-                    name = candidate.displayName,
-                    photo = candidate.avatarUrl,
-                ) { conversationId -> onOpenConversation(conversationId, candidate.uid) }
-            },
-        )
+        // Same slide-up-and-swipe-down-to-close sheet as Create/Edit post —
+        // see SlideUpScreen.
+        com.example.kinetixfsl.community.SlideUpScreen(onClose = { isPickerOpen = false }) { dismiss ->
+            NewMessageSheet(
+                viewModel = viewModel,
+                onDismiss = dismiss,
+                onPick = { candidate ->
+                    dismiss()
+                    viewModel.openConversationWith(
+                        uid = candidate.uid,
+                        name = candidate.displayName,
+                        photo = candidate.avatarUrl,
+                    ) { conversationId -> onOpenConversation(conversationId, candidate.uid) }
+                },
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Top bar
+// ---------------------------------------------------------------------------
+
+/**
+ * A slim top bar matching the Home Feed's own: KinetixNavy in light mode, the
+ * normal theme surface in dark mode, 56dp tall. The hamburger, when there's a
+ * drawer to open, sits at the start rather than replacing the title, so the
+ * screen still reads as "Inbox" the same way wherever it's shown.
+ */
+@Composable
+private fun InboxTopBar(onMenuClick: (() -> Unit)?) {
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    val barBackground = if (dark) MaterialTheme.colorScheme.surface else com.example.kinetixfsl.ui.theme.KinetixNavy
+    val barContentColor = if (dark) MaterialTheme.colorScheme.onSurface else com.example.kinetixfsl.ui.theme.KinetixWhite
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(barBackground)
+            .statusBarsPadding(),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 12.dp),
+        ) {
+            if (onMenuClick != null) {
+                Icon(
+                    imageVector = CommunityIcons.Menu,
+                    contentDescription = "Open menu",
+                    tint = barContentColor,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .size(28.dp)
+                        .clickable(onClick = onMenuClick),
+                )
+            }
+            Text(
+                text = "Inbox",
+                style = MaterialTheme.typography.titleLarge,
+                color = barContentColor,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
     }
 }
 
@@ -267,7 +326,6 @@ private fun InboxTabRow(
                 }
             }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 
@@ -895,101 +953,79 @@ private fun NewMessageSheet(
 
     LaunchedEffect(Unit) { candidates = viewModel.loadCandidates() }
 
-    BackHandler(onBack = onDismiss)
-
-    // Hand-rolled rather than a ModalBottomSheet, to match the post-actions
-    // sheet this app already uses — same dimmed backdrop, same tap-outside and
-    // back-to-close behaviour, and no experimental Material API.
-    Box(
+    // The sheet chrome itself (scrim, rounded top corners, drag handle,
+    // slide-up-and-swipe-down-to-dismiss) is SlideUpScreen's ModalBottomSheet
+    // — this is just its content.
+    Column(
         Modifier
-            .fillMaxSize()
-            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.BottomCenter,
+            .fillMaxWidth()
+            // Same fix as the Edit Profile sheet: without imePadding the
+            // keyboard just covered the search field, so typing a name
+            // showed nothing. The scroll is what lets the pushed-up sheet
+            // still reach that field instead of clipping it.
+            .imePadding()
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                .background(MaterialTheme.colorScheme.surface)
-                // Swallow taps on the sheet itself, so choosing a person doesn't
-                // also register as a tap on the backdrop behind it.
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                ) { }
-                // Same fix as the Edit Profile sheet: without imePadding the
-                // keyboard just covered the search field, so typing a name
-                // showed nothing. The scroll is what lets the pushed-up sheet
-                // still reach that field instead of clipping it.
-                .imePadding()
-                .navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 20.dp),
-        ) {
-            Text(
-                text = "New message",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(12.dp))
-            SearchField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = "Search people",
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
+        Text(
+            text = "New message",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.height(12.dp))
+        SearchField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = "Search people",
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
 
-            val list = candidates
-            when {
-                list == null -> Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(120.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+        val list = candidates
+        when {
+            list == null -> Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(120.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            }
+
+            list.isEmpty() -> Text(
+                text = "Follow someone first — you can message people you follow, and " +
+                    "anyone who follows you.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 24.dp),
+            )
+
+            else -> LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                val filtered = list.filter {
+                    query.isBlank() || it.displayName.contains(query.trim(), ignoreCase = true)
                 }
-
-                list.isEmpty() -> Text(
-                    text = "Follow someone first — you can message people you follow, and " +
-                        "anyone who follows you.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 24.dp),
-                )
-
-                else -> LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                    val filtered = list.filter {
-                        query.isBlank() || it.displayName.contains(query.trim(), ignoreCase = true)
-                    }
-                    items(filtered, key = { it.uid }) { candidate ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onPick(candidate) }
-                                .padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Avatar(
-                                avatarUrl = candidate.avatarUrl,
-                                name = candidate.displayName,
-                                size = 42.dp,
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            Text(
-                                text = candidate.displayName,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontWeight = FontWeight.Medium,
-                            )
-                        }
+                items(filtered, key = { it.uid }) { candidate ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(candidate) }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Avatar(
+                            avatarUrl = candidate.avatarUrl,
+                            name = candidate.displayName,
+                            size = 42.dp,
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            text = candidate.displayName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Medium,
+                        )
                     }
                 }
             }

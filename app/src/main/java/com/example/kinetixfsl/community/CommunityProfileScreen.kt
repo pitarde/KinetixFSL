@@ -4,12 +4,19 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.imePadding
@@ -49,10 +56,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -82,6 +91,9 @@ fun CommunityProfileScreen(
     onEditPost: (Post) -> Unit,
     onCommentClick: (UserComment) -> Unit,
     modifier: Modifier = Modifier,
+    /** The X button, top-left — closes this profile back to whatever opened
+     *  it (the home feed, a community's own feed, or a shared-link push). */
+    onClose: () -> Unit = {},
     /**
      * Whose profile to show. Null is the signed-in user; anything else turns
      * this into a visitor view — Message and Follow replace Edit, and the post
@@ -108,6 +120,12 @@ fun CommunityProfileScreen(
     val uploading by viewModel.uploading.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // This screen's own background is the plain theme background (its cover
+    // banner sits below the status bar, not behind it), so — unlike the
+    // community feed this is often opened over — it just wants the ordinary
+    // light/dark theme default back, not a forced color.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(light = isSystemInDarkTheme())
 
     // Own-profile editing: an Edit sheet to swap the profile picture and banner,
     // each picked from the device then cropped before upload — the same flow the
@@ -185,13 +203,31 @@ fun CommunityProfileScreen(
         }
     }
 
-    // Cold open of someone else's profile: show the whole-screen skeleton until
-    // the profile document lands, so the header isn't a blank card first.
-    if (state.isColdLoading) {
+    // Shows the whole-screen skeleton for at least 500ms every time a profile
+    // is opened — your own or someone else's — rather than only on a genuine
+    // cold open (state.isColdLoading skips it for your own profile entirely,
+    // since Auth fills the name in immediately, and a visitor profile backed
+    // by a warm Firestore cache can resolve within a frame either way). Keyed
+    // on userId so switching straight from one profile to another restarts it.
+    var minProfileSkeletonElapsed by remember(userId) { mutableStateOf(false) }
+    LaunchedEffect(userId) {
+        kotlinx.coroutines.delay(500)
+        minProfileSkeletonElapsed = true
+    }
+    if (!minProfileSkeletonElapsed || state.isColdLoading) {
         Box(
             modifier = modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
+                // Off-white in light mode, matching the Home Feed — see
+                // KinetixPageBackground — so there's no background flash once
+                // the skeleton gives way to the real page below.
+                .background(
+                    if (isSystemInDarkTheme()) {
+                        MaterialTheme.colorScheme.background
+                    } else {
+                        com.example.kinetixfsl.ui.theme.KinetixPageBackground
+                    },
+                ),
         ) {
             com.example.kinetixfsl.ui.components.ProfileSkeleton()
         }
@@ -202,7 +238,19 @@ fun CommunityProfileScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
+                // Off-white in light mode, matching the Home Feed — see
+                // KinetixPageBackground — so the pure-white cards below
+                // actually read as cards. This was overriding the caller's
+                // own KinetixPageBackground modifier with the plain theme
+                // background, which is why it never showed up. Dark mode
+                // keeps the normal theme background.
+                .background(
+                    if (isSystemInDarkTheme()) {
+                        MaterialTheme.colorScheme.background
+                    } else {
+                        com.example.kinetixfsl.ui.theme.KinetixPageBackground
+                    },
+                )
                 .nestedScroll(collapseConnection),
         ) {
             // Reserves the shrinking space the overlaid identity card occupies.
@@ -277,6 +325,7 @@ fun CommunityProfileScreen(
                 avatarUrl = state.avatarUrl,
                 bannerUrl = state.bannerUrl,
                 followerCount = state.followerCount,
+                followingCount = state.followingCount,
                 isOwnProfile = state.isOwnProfile,
                 isFollowing = state.isFollowing,
                 onFollowersClick = { isFollowersOpen = true },
@@ -284,6 +333,28 @@ fun CommunityProfileScreen(
                 onMessageClick = onMessageClick,
                 onEditClick = { showEditProfile = true },
             )
+        }
+
+        // Closes back to whatever opened this profile — mirrors Share's own
+        // position/fade so the two read as a matched pair.
+        if (headerAlpha > 0.05f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = 12.dp, start = 16.dp)
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(50))
+                    .graphicsLayer { alpha = headerAlpha }
+                    .clickable(onClick = onClose),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = CommunityIcons.Close,
+                    contentDescription = "Close",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
 
         // Share this profile — a link that opens the same profile in-app, or a
@@ -497,6 +568,7 @@ private fun ProfileCard(
     avatarUrl: String?,
     bannerUrl: String?,
     followerCount: Long,
+    followingCount: Long,
     isOwnProfile: Boolean,
     isFollowing: Boolean,
     onFollowersClick: () -> Unit,
@@ -505,23 +577,31 @@ private fun ProfileCard(
     onEditClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val bannerHeight = 130.dp
-    val avatarSize = 72.dp
+    val bannerHeight = 132.dp
+    val avatarSize = 80.dp
+    // Pure white in light mode, matching the feed's own post cards — dark
+    // mode keeps the normal theme background.
+    val cardBackground = if (isSystemInDarkTheme()) {
+        MaterialTheme.colorScheme.background
+    } else {
+        com.example.kinetixfsl.ui.theme.KinetixWhite
+    }
     Column(modifier = modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.background)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp)),
+                .clip(RoundedCornerShape(22.dp))
+                .background(cardBackground)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(22.dp)),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                // ---- Cover banner: the user's image, or a plain colored strip ----
+                // ---- Cover banner: the user's image, or a decorative brand
+                // gradient when they haven't set one ----
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(bannerHeight)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .clipToBounds(),
                 ) {
                     if (!bannerUrl.isNullOrBlank()) {
                         coil.compose.AsyncImage(
@@ -530,6 +610,8 @@ private fun ProfileCard(
                             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
                         )
+                    } else {
+                        ProfileBannerFallback()
                     }
                 }
 
@@ -539,7 +621,7 @@ private fun ProfileCard(
                     modifier = Modifier.padding(
                         start = 16.dp,
                         end = 16.dp,
-                        top = 44.dp,
+                        top = 48.dp,
                         bottom = 16.dp,
                     ),
                 ) {
@@ -549,19 +631,17 @@ private fun ProfileCard(
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onBackground,
                             fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
                         )
-                        Spacer(Modifier.width(14.dp))
+                        Spacer(Modifier.width(12.dp))
 
                         if (isOwnProfile) {
-                            Text(
+                            ProfilePillButton(
                                 text = "Edit",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .clickable(onClick = onEditClick)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                filled = false,
+                                onClick = onEditClick,
                             )
                         } else {
                             Icon(
@@ -573,26 +653,22 @@ private fun ProfileCard(
                                     .clip(RoundedCornerShape(50))
                                     .clickable(onClick = onMessageClick),
                             )
-                            Spacer(Modifier.width(14.dp))
-                            Text(
+                            Spacer(Modifier.width(10.dp))
+                            ProfilePillButton(
                                 text = if (isFollowing) "Following" else "Follow",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = if (isFollowing) {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                } else {
-                                    MaterialTheme.colorScheme.primary
-                                },
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .clickable(onClick = onFollowClick)
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                filled = !isFollowing,
+                                onClick = onFollowClick,
                             )
                         }
                     }
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(6.dp))
+                    val followText = if (isOwnProfile) {
+                        "$followerCount followers · $followingCount following  ›"
+                    } else {
+                        "$followerCount followers  ›"
+                    }
                     Text(
-                        text = "$followerCount followers  ›",
+                        text = followText,
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
@@ -610,12 +686,90 @@ private fun ProfileCard(
                     .padding(start = 16.dp)
                     .offset(y = bannerHeight - avatarSize / 2)
                     .clip(androidx.compose.foundation.shape.CircleShape)
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(3.dp),
+                    // Matches the card's own background so the ring blends
+                    // with the card, not the page behind it.
+                    .background(cardBackground)
+                    .padding(4.dp),
             ) {
                 Avatar(avatarUrl = avatarUrl, name = displayName, size = avatarSize)
             }
         }
+    }
+}
+
+/**
+ * The soft brand-gradient banner shown while a user hasn't picked a cover
+ * photo — a lighter flat fill in light mode (bold gradients read heavy there,
+ * same call as the dashboard's streak card), the indigo gradient in dark mode,
+ * with a couple of translucent decorative circles for texture.
+ */
+@Composable
+private fun ProfileBannerFallback() {
+    val dark = isSystemInDarkTheme()
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                if (dark) {
+                    Brush.linearGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.primary,
+                            com.example.kinetixfsl.ui.theme.KinetixIndigo,
+                        ),
+                    )
+                } else {
+                    androidx.compose.ui.graphics.SolidColor(
+                        com.example.kinetixfsl.ui.theme.KinetixIndigoLight,
+                    )
+                },
+            ),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(170.dp)
+                .align(Alignment.TopEnd)
+                .offset(x = 55.dp, y = (-85).dp)
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f)),
+        )
+        Box(
+            modifier = Modifier
+                .size(110.dp)
+                .align(Alignment.BottomStart)
+                .offset(x = (-40).dp, y = 60.dp)
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .background(com.example.kinetixfsl.ui.theme.KinetixMint.copy(alpha = 0.18f)),
+        )
+    }
+}
+
+/** A pill button for the profile card's Edit / Follow / Following action. */
+@Composable
+private fun ProfilePillButton(text: String, filled: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .then(
+                if (filled) {
+                    Modifier.background(MaterialTheme.colorScheme.primary)
+                } else {
+                    Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, shape)
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 7.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (filled) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
@@ -637,66 +791,88 @@ private fun StatPillsRow(
     onCommunitiesClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // A single divider-separated stat strip, matching the reference design's
+    // profile stats row — Account Age and Active time are read-only by design
+    // and stay untappable; My Communities and Contributions open a sheet.
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(16.dp))
+            // Pure white in light mode, matching the feed's own post cards —
+            // dark mode keeps the normal theme background.
+            .background(
+                if (isSystemInDarkTheme()) {
+                    MaterialTheme.colorScheme.background
+                } else {
+                    com.example.kinetixfsl.ui.theme.KinetixWhite
+                },
+            )
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp)),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Account Age and Active time are read-only by design and stay
-        // untappable; My Communities and Contributions open a sheet.
-        StatPill(
+        StatCell(
             "$communityCount",
             "My Communities",
             Modifier
                 .weight(1f)
                 .clickable(onClick = onCommunitiesClick),
         )
-        StatPill(
+        StatCellDivider()
+        StatCell(
             "$contributions",
             "Contributions ›",
             Modifier
                 .weight(1f)
                 .clickable(onClick = onContributionsClick),
         )
-        StatPill(accountAge, "Account Age", Modifier.weight(1f))
+        StatCellDivider()
+        StatCell(accountAge, "Account Age", Modifier.weight(1f))
+        StatCellDivider()
         if (isOwnProfile) {
-            StatPill("$followingCount", "Following", Modifier.weight(1f))
+            StatCell("$followingCount", "Following", Modifier.weight(1f))
         } else {
-            StatPill(activeTime, "Active time", Modifier.weight(1f))
+            StatCell(activeTime, "Active time", Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun StatPill(value: String, label: String, modifier: Modifier = Modifier) {
-    // Filled brand-indigo pill (onPrimary text) to match the reference design;
-    // primary/onPrimary keep it legible in both light and dark themes.
+private fun StatCell(value: String, label: String, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.primary)
-            .padding(vertical = 10.dp, horizontal = 6.dp),
+        modifier = modifier.padding(vertical = 12.dp, horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             text = value,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onPrimary,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
-            // "Active now" needs a second line in a quarter-width pill.
+            // "Active now" needs a second line in a quarter-width cell.
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+        Spacer(Modifier.height(2.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+@Composable
+private fun StatCellDivider() {
+    Box(
+        Modifier
+            .width(1.dp)
+            .height(28.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant),
+    )
 }
 
 // ---- Tabs ----
@@ -707,49 +883,61 @@ private fun ProfileTabs(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Filled indigo tab bar from the reference design; onPrimary text and
-    // underline keep it readable in both themes.
+    // A rounded pill-tab bar, matching the reference design and the stat strip
+    // above it — the active tab is a solid indigo pill instead of an underline.
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.primary),
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clip(RoundedCornerShape(16.dp))
+            // Pure white in light mode, matching the feed's own post cards —
+            // dark mode keeps the normal theme background.
+            .background(
+                if (isSystemInDarkTheme()) {
+                    MaterialTheme.colorScheme.background
+                } else {
+                    com.example.kinetixfsl.ui.theme.KinetixWhite
+                },
+            )
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+            .padding(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        TabLabel("Posts", selectedIndex == 0, Modifier.weight(1f)) { onSelect(0) }
-        TabLabel("Comments", selectedIndex == 1, Modifier.weight(1f)) { onSelect(1) }
+        TabPill("Posts", selectedIndex == 0, Modifier.weight(1f)) { onSelect(0) }
+        TabPill("Comments", selectedIndex == 1, Modifier.weight(1f)) { onSelect(1) }
     }
 }
 
 @Composable
-private fun TabLabel(
+private fun TabPill(
     text: String,
     selected: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    Column(
-        modifier = modifier.clickable(onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    androidx.compose.ui.graphics.Color.Transparent
+                },
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onPrimary.copy(
-                alpha = if (selected) 1f else 0.7f,
-            ),
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            modifier = Modifier.padding(vertical = 12.dp),
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(2.dp)
-                .background(
-                    if (selected) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        androidx.compose.ui.graphics.Color.Transparent
-                    }
-                ),
+            color = if (selected) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
         )
     }
 }
@@ -808,7 +996,6 @@ private fun PostsTab(
                         onOpenCommunityLink = onOpenCommunityLink,
                         onOpenProfileLink = onOpenProfileLink,
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
         }
@@ -1065,6 +1252,130 @@ private fun shareProfile(context: Context, userId: String, displayName: String) 
 }
 
 /**
+ * The shared shell for this screen's Contributions, My Communities and Edit
+ * profile sheets: dimmed backdrop, rounded sheet, drag handle.
+ *
+ * Slides up from off-screen the moment it's composed, and slides back down
+ * before actually calling [onDismiss] — from tapping the backdrop, pressing
+ * back, or swiping the sheet down past a threshold — the same animation as a
+ * post's 3-dot menu (see PostActionsSheet.kt's ActionsSheet; this is a
+ * separate copy because these sheets live in a different file and shape their
+ * content differently, not because the behavior should differ). [content]
+ * receives that animated `dismiss` so an in-sheet control (the close button)
+ * triggers the same slide-down instead of vanishing the sheet instantly.
+ */
+@Composable
+private fun ProfileBottomSheet(
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** True for the sheet holding a text field (Edit profile) — pushes the
+     *  sheet up above the keyboard and lets its content scroll to reach it. */
+    imeAware: Boolean = false,
+    content: @Composable ColumnScope.(dismiss: () -> Unit) -> Unit,
+) {
+    val density = LocalDensity.current
+    // Comfortably taller than any sheet this shell will ever hold, so
+    // animating to this offset always lands fully off-screen regardless of
+    // how much content is inside.
+    val offscreenPx = with(density) { 1200.dp.toPx() }
+    val dismissThresholdPx = with(density) { 120.dp.toPx() }
+    val offsetY = remember { Animatable(offscreenPx) }
+    val scope = rememberCoroutineScope()
+    var dismissing by remember { mutableStateOf(false) }
+
+    fun dismiss() {
+        if (dismissing) return
+        dismissing = true
+        scope.launch {
+            offsetY.animateTo(offscreenPx, animationSpec = tween(220, easing = FastOutSlowInEasing))
+            onDismiss()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        offsetY.animateTo(0f, animationSpec = tween(280, easing = FastOutSlowInEasing))
+    }
+
+    BackHandler(onBack = { dismiss() })
+
+    // Fades in lockstep with the sheet's own slide, instead of the backdrop
+    // just snapping to fully dimmed the instant the sheet appears.
+    val backdropAlpha = 0.45f * (1f - (offsetY.value / offscreenPx)).coerceIn(0f, 1f)
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = backdropAlpha))
+            .clickable(onClick = { dismiss() }),
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .offset { IntOffset(0, offsetY.value.roundToInt()) }
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                // Swallow taps so they don't reach the dismiss backdrop.
+                .clickable(enabled = false) {},
+        ) {
+            // The drag handle, in its own generously-sized touch zone rather
+            // than spread across the whole sheet — a sheet with imeAware also
+            // puts a `verticalScroll` on its content, and Compose's own
+            // scrollable gesture there was winning the drag before this raw
+            // detector ever saw it, which is why Edit profile couldn't be
+            // swiped down while Contributions/My Communities (no competing
+            // scroll on the same node) could.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(28.dp)
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                scope.launch {
+                                    offsetY.snapTo((offsetY.value + dragAmount).coerceAtLeast(0f))
+                                }
+                            },
+                            onDragEnd = {
+                                if (offsetY.value > dismissThresholdPx) {
+                                    dismiss()
+                                } else {
+                                    scope.launch {
+                                        offsetY.animateTo(0f, animationSpec = tween(200, easing = FastOutSlowInEasing))
+                                    }
+                                }
+                            },
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(width = 36.dp, height = 4.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(MaterialTheme.colorScheme.outlineVariant),
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .then(
+                        if (imeAware) {
+                            Modifier.imePadding().verticalScroll(rememberScrollState())
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .padding(start = 20.dp, end = 20.dp, bottom = 20.dp),
+            ) {
+                content { dismiss() }
+            }
+        }
+    }
+}
+
+/**
  * The breakdown behind the Contributions stat: how much of it is posts and how
  * much is comments.
  */
@@ -1074,68 +1385,52 @@ private fun ContributionsSheet(
     commentCount: Int,
     onDismiss: () -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
-            .clickable(onClick = onDismiss),
-    ) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                .background(MaterialTheme.colorScheme.surface)
-                // Swallow taps so they don't reach the dismiss backdrop.
-                .clickable(enabled = false) {}
-                .padding(20.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Contributions",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = "Total post and comments",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable(onClick = onDismiss),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = CommunityIcons.Close,
-                        contentDescription = "Close",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(15.dp),
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            Row(modifier = Modifier.fillMaxWidth()) {
-                CountBlock("$postCount", "Post", Modifier.weight(1f))
-                Box(
-                    Modifier
-                        .width(1.dp)
-                        .height(40.dp)
-                        .background(MaterialTheme.colorScheme.outlineVariant)
+    ProfileBottomSheet(onDismiss = onDismiss) { dismiss ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Contributions",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold,
                 )
-                CountBlock("$commentCount", "Comments", Modifier.weight(1f))
+                Text(
+                    text = "Total post and comments",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-
-            Spacer(Modifier.height(12.dp))
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable(onClick = dismiss),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = CommunityIcons.Close,
+                    contentDescription = "Close",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
         }
+
+        Spacer(Modifier.height(20.dp))
+
+        Row(modifier = Modifier.fillMaxWidth()) {
+            CountBlock("$postCount", "Post", Modifier.weight(1f))
+            Box(
+                Modifier
+                    .width(1.dp)
+                    .height(40.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant)
+            )
+            CountBlock("$commentCount", "Comments", Modifier.weight(1f))
+        }
+
+        Spacer(Modifier.height(12.dp))
     }
 }
 
@@ -1172,82 +1467,67 @@ private fun MyCommunitiesSheet(
     onOpenCommunity: (Community) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
-            .clickable(onClick = onDismiss),
-    ) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                .background(MaterialTheme.colorScheme.surface)
-                .clickable(enabled = false) {}
-                .padding(20.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "My Communities",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = "Communities joined",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable(onClick = onDismiss),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = CommunityIcons.Close,
-                        contentDescription = "Close",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(15.dp),
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            if (communities.isEmpty()) {
+    ProfileBottomSheet(onDismiss = onDismiss) { dismiss ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "No communities joined yet.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 12.dp),
+                    text = "My Communities",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold,
                 )
-            } else {
-                Column(
-                    modifier = Modifier
-                        .heightIn(max = 420.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    communities.forEach { community ->
-                        MyCommunityRow(
-                            community = community,
-                            isJoined = community.id in joinedIds,
-                            isOwnedByProfile = profileUid != null && community.creatorId == profileUid,
-                            onToggleJoin = { onToggleJoin(community) },
-                            onClick = { onOpenCommunity(community) },
-                        )
-                    }
+                Text(
+                    text = "Communities joined",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable(onClick = dismiss),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = CommunityIcons.Close,
+                    contentDescription = "Close",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        if (communities.isEmpty()) {
+            Text(
+                text = "No communities joined yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 12.dp),
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                communities.forEach { community ->
+                    MyCommunityRow(
+                        community = community,
+                        isJoined = community.id in joinedIds,
+                        isOwnedByProfile = profileUid != null && community.creatorId == profileUid,
+                        onToggleJoin = { onToggleJoin(community) },
+                        onClick = { onOpenCommunity(community) },
+                    )
                 }
             }
-
-            Spacer(Modifier.height(12.dp))
         }
+
+        Spacer(Modifier.height(12.dp))
     }
 }
 
@@ -1372,30 +1652,12 @@ private fun EditProfileSheet(
     val idle = uploading == CommunityProfileViewModel.Uploading.NONE
     var nameInput by remember(displayName) { mutableStateOf(displayName) }
     val nameChanged = nameInput.trim().isNotEmpty() && nameInput.trim() != displayName.trim()
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
-            .clickable(onClick = onDismiss),
-    ) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                .background(MaterialTheme.colorScheme.surface)
-                // Swallow taps so they don't reach the dismiss backdrop.
-                .clickable(enabled = false) {}
-                // Without this the keyboard simply overlapped the sheet — the
-                // name field (and its Save button) sat behind it with no way to
-                // see what was typed. imePadding pushes the sheet's bottom up by
-                // the keyboard's height; the scroll is what actually lets that
-                // pushed-up content reach the name field at the top instead of
-                // just clipping it against the shrunk viewport.
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-        ) {
+    // imeAware: without this the keyboard simply overlapped the sheet — the
+    // name field (and its Save button) sat behind it with no way to see what
+    // was typed. It pushes the sheet's bottom up by the keyboard's height,
+    // and scrolls so that pushed-up content can still reach the name field at
+    // the top instead of just clipping it against the shrunk viewport.
+    ProfileBottomSheet(onDismiss = onDismiss, imeAware = true) { dismiss ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -1415,7 +1677,7 @@ private fun EditProfileSheet(
                         .size(30.dp)
                         .clip(androidx.compose.foundation.shape.CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable(onClick = onDismiss),
+                        .clickable(onClick = dismiss),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -1547,7 +1809,6 @@ private fun EditProfileSheet(
                 }
             }
             Spacer(Modifier.height(12.dp))
-        }
     }
 }
 

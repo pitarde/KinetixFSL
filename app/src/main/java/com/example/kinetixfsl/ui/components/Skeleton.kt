@@ -120,10 +120,20 @@ internal object ShimmerColors {
 @Composable
 fun SyncShimmerColors() {
     val scheme = androidx.compose.material3.MaterialTheme.colorScheme
-    ShimmerColors.base = scheme.surfaceVariant
+    // Light mode's surfaceVariant (KinetixSurface, #FAFAFC) is nearly white —
+    // fine as a card fill, but as a skeleton base it barely registered against
+    // the page at all. KinetixOutline is the same neutral family, just a
+    // visibly darker step, so the shape of what's loading actually reads.
+    // Dark mode's surfaceVariant already has plenty of contrast as it is.
+    val base = if (androidx.compose.foundation.isSystemInDarkTheme()) {
+        scheme.surfaceVariant
+    } else {
+        com.example.kinetixfsl.ui.theme.KinetixOutline
+    }
+    ShimmerColors.base = base
     // A highlight lifted toward the surface color reads as a sheen on both themes.
     ShimmerColors.highlight = scheme.surface.copy(alpha = 0.85f)
-        .compositeOverSurfaceVariant(scheme.surfaceVariant)
+        .compositeOverSurfaceVariant(base)
 }
 
 private fun androidx.compose.ui.graphics.Color.compositeOverSurfaceVariant(
