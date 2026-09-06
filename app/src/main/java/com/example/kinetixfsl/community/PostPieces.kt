@@ -274,21 +274,20 @@ internal fun TruncatedBodyText(
      * until the post is opened; a short one shows it inline.
      */
     onOverflowChange: (Boolean) -> Unit = {},
-    /** Colors every #hashtag and makes it tappable — see [HashtagText]. */
-    onHashtagClick: ((String) -> Unit)? = null,
-    /** Tap fallback for non-hashtag text, only used when [onHashtagClick] is set. */
-    onBodyClick: (() -> Unit)? = null,
 ) {
     var isOverflowing by remember(text) { mutableStateOf(false) }
 
     Column(modifier = modifier) {
-        HashtagText(
+        // Plain text on purpose: hashtags now live in the composer's dedicated
+        // Hashtags box and render as their own row (see [PostHashtags]). A
+        // #word typed into the body is just text — not colored, not tappable,
+        // and not part of the post's searchable hashtags.
+        Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = maxLines,
-            onHashtagClick = onHashtagClick,
-            onBodyClick = onBodyClick,
+            overflow = TextOverflow.Ellipsis,
             onTextLayout = { result ->
                 isOverflowing = result.hasVisualOverflow
                 onOverflowChange(result.hasVisualOverflow)
@@ -301,6 +300,46 @@ internal fun TruncatedBodyText(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The post's hashtags, as a wrapped row of "#tag" beneath the body.
+ *
+ * These come only from the composer's dedicated Hashtags box (see
+ * [HashtagSection]) — the post's [Post.hashtags] array — not from #words typed
+ * into the title or body, which are plain text. This is what "the hashtags in
+ * the box show in the feed" means. Tappable only where [onHashtagClick] is
+ * given (the feed, to open search for the tag); elsewhere it's display-only.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+internal fun PostHashtags(
+    hashtags: List<String>,
+    modifier: Modifier = Modifier,
+    onHashtagClick: ((String) -> Unit)? = null,
+) {
+    if (hashtags.isEmpty()) return
+    androidx.compose.foundation.layout.FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        hashtags.forEach { tag ->
+            Text(
+                text = "#$tag",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = if (onHashtagClick != null) {
+                    Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable { onHashtagClick(tag) }
+                } else {
+                    Modifier
+                },
             )
         }
     }

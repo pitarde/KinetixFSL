@@ -121,6 +121,35 @@ class CommunityRepository(
         }
     }
 
+    /**
+     * Validated posts tagged with [tag] — the media behind a Text-to-Sign
+     * search.
+     *
+     * The searched word is matched against the post's [Post.hashtags] array,
+     * which the author fills in via the composer's Hashtags field (one #tag per
+     * sign in the media). Only posts an admin has marked "validated" and that
+     * actually carry media are returned, since the search shows only the media.
+     *
+     * `array-contains` alone needs only a single-field index (auto-created), so
+     * the "validated" filter is applied client-side rather than as a second
+     * `where`, which would demand a composite index. Fine at this app's scale.
+     */
+    suspend fun validatedPostsByHashtag(tag: String, limit: Long = 60): List<Post> {
+        val needle = tag.trim().removePrefix("#").lowercase()
+        if (needle.isEmpty()) return emptyList()
+        return try {
+            firestore.collection(POSTS)
+                .whereArrayContains("hashtags", needle)
+                .limit(limit)
+                .get().await()
+                .documents.mapNotNull { it.toPostOrNull() }
+                .filter { it.isValidated && it.mediaItems.isNotEmpty() }
+                .sortedByDescending { it.createdAt }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Following
     // -------------------------------------------------------------------------
@@ -901,6 +930,12 @@ class CommunityRepository(
         /** True re-submits the (edited) post for admin validation as "pending";
          *  false clears any validation state, since the content changed. */
         requestValidation: Boolean = false,
+        /**
+         * The raw text of the composer's dedicated Hashtags field. Its #tags are
+         * merged with any found in the title/body so a Text-to-Sign search can
+         * match the signs the author declared for this tutorial.
+         */
+        hashtagsText: String = "",
     ): Result<Unit> = try {
         val cleanLinks = links.map { it.trim() }.filter { it.isNotBlank() }
         // Legacy single-media fields are rewritten too, so the share page and
@@ -909,7 +944,9 @@ class CommunityRepository(
             mapOf(
                 "title" to title.trim(),
                 "body" to body.trim(),
-                "hashtags" to extractHashtags(title, body),
+                // Only the composer's dedicated Hashtags box feeds this — a
+                // #word in the title/body is plain text, not a hashtag.
+                "hashtags" to extractHashtags(hashtagsText),
                 "linkUrl" to cleanLinks.firstOrNull(),
                 "links" to cleanLinks,
                 "media" to media.map {
@@ -950,6 +987,12 @@ class CommunityRepository(
         communityName: String = "",
         /** When true, the post enters the admin validation queue as "pending". */
         requestValidation: Boolean = false,
+        /**
+         * The raw text of the composer's dedicated Hashtags field. Its #tags are
+         * merged with any found in the title/body so a Text-to-Sign search can
+         * match the signs the author declared for this tutorial.
+         */
+        hashtagsText: String = "",
     ): Result<String> {
         val user = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
 
@@ -974,7 +1017,9 @@ class CommunityRepository(
             "communityName" to communityName,
             "title" to title.trim(),
             "body" to body.trim(),
-            "hashtags" to extractHashtags(title, body),
+            // Only the composer's dedicated Hashtags box feeds this — a #word in
+            // the title/body is plain text, not a hashtag.
+            "hashtags" to extractHashtags(hashtagsText),
             "linkUrl" to firstLink,
             "links" to cleanLinks,
             "imageUrl" to imageUrl,

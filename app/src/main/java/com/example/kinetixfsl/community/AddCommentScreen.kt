@@ -94,13 +94,30 @@ fun AddCommentScreen(
         if (uri != null) viewModel.onImagePicked(uri)
     }
 
+    // Same dark bar treatment as the Home Feed's own top bar — KinetixNavy in
+    // light mode, colorScheme.surface in dark — so the status bar's
+    // notification area reads as part of one continuous colored bar. Always
+    // wants light (white) status bar icons regardless of the app's theme.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(light = true)
+    val darkTheme = androidx.compose.foundation.isSystemInDarkTheme()
+    val barBackground = if (darkTheme) MaterialTheme.colorScheme.surface else com.example.kinetixfsl.ui.theme.KinetixNavy
+    val barContentColor = if (darkTheme) MaterialTheme.colorScheme.onSurface else com.example.kinetixfsl.ui.theme.KinetixWhite
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
+            .background(MaterialTheme.colorScheme.background),
     ) {
         // ---- Top bar: X | Add comment | Post ----
+        // The background is painted on this Box, which takes the status bar
+        // inset as padding rather than being pushed below it — so the color
+        // runs all the way to the physical top of the screen.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(barBackground)
+                .statusBarsPadding(),
+        ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -110,7 +127,7 @@ fun AddCommentScreen(
             Icon(
                 imageVector = CommunityIcons.Close,
                 contentDescription = "Close",
-                tint = MaterialTheme.colorScheme.onSurface,
+                tint = barContentColor,
                 modifier = Modifier
                     .size(26.dp)
                     .clickable(onClick = onClose),
@@ -119,14 +136,14 @@ fun AddCommentScreen(
             Text(
                 text = if (state.replyingTo != null) "Add reply" else "Add comment",
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = barContentColor,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f),
             )
 
             if (state.isSending) {
                 CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary,
+                    color = barContentColor,
                     strokeWidth = 2.dp,
                     modifier = Modifier.size(20.dp),
                 )
@@ -136,9 +153,9 @@ fun AddCommentScreen(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = if (state.canSend) {
-                        MaterialTheme.colorScheme.primary
+                        barContentColor
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        barContentColor.copy(alpha = 0.5f)
                     },
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
@@ -148,6 +165,7 @@ fun AddCommentScreen(
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                 )
             }
+        }
         }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

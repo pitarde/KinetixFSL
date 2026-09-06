@@ -829,8 +829,6 @@ internal fun PostCard(
                 text = post.body,
                 maxLines = 3,
                 onOverflowChange = { bodyClamped = it },
-                onHashtagClick = onHashtagClick,
-                onBodyClick = onClick,
             )
         }
 
@@ -857,6 +855,15 @@ internal fun PostCard(
                 posterUrl = post.previewUrl,
                 blurData = post.previewBlur,
                 height = 240.dp,
+            )
+        }
+
+        // Hashtags from the composer's box — tapping one opens search for it.
+        if (post.hashtags.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            PostHashtags(
+                hashtags = post.hashtags,
+                onHashtagClick = onHashtagClick,
             )
         }
 

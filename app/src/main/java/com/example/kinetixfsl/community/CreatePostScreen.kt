@@ -251,10 +251,14 @@ fun CreatePostScreen(
         }
 
         // ---- Request admin validation toggle ----
-        ValidationToggleRow(
-            checked = state.requestValidation,
-            onToggle = { viewModel.onToggleValidation(it) },
-        )
+        // Only shown once the post carries a photo or video — there's nothing to
+        // validate on a text-only post.
+        if (state.hasMedia) {
+            ValidationToggleRow(
+                checked = state.requestValidation,
+                onToggle = { viewModel.onToggleValidation(it) },
+            )
+        }
 
         // ---- Content area (scrollable) ----
         Column(
@@ -368,6 +372,13 @@ fun CreatePostScreen(
 
             Spacer(Modifier.height(16.dp))
         }
+
+        // ---- Hashtags section (like YouTube's tags row, above the toolbar) ----
+        HashtagSection(
+            value = state.hashtags,
+            onValueChange = viewModel::onHashtagsChange,
+            required = state.wantsValidation,
+        )
 
         // ---- Bottom toolbar: link, image, video ----
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
@@ -554,6 +565,89 @@ internal fun ValidationToggleRow(
             checked = checked,
             onCheckedChange = onToggle,
         )
+    }
+}
+
+/**
+ * The dedicated Hashtags field, shown just above the create/edit composer's
+ * bottom toolbar — YouTube-style tagging. The author lists one #tag per sign in
+ * the attached media (e.g. "#salamat #patawad"); those tags are what a
+ * Text-to-Sign search matches against, and they're required before a post
+ * carrying media can request a validation badge.
+ */
+@Composable
+internal fun HashtagSection(
+    value: String,
+    onValueChange: (String) -> Unit,
+    /** Draws the "required" hint when validation is requested. */
+    required: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Hashtags",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (required) {
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "• required to validate",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = "Add one #tag per sign in your media, e.g. #salamat #patawad",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "#",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.width(6.dp))
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxWidth(),
+                decorationBox = { inner ->
+                    Box {
+                        if (value.isEmpty()) {
+                            Text(
+                                text = "#salamat #patawad #kamusta",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        inner()
+                    }
+                },
+            )
+        }
     }
 }
 

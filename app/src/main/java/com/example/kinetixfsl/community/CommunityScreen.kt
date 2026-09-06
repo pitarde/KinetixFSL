@@ -80,6 +80,8 @@ fun CommunityScreen(
     onNavigateToDashboard: () -> Unit,
     onStartCommunity: () -> Unit = {},
     onDiscoverCommunities: () -> Unit = {},
+    /** Opens the Text-to-Sign search — the drawer's "Text to Gesture" item. */
+    onTextToSign: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -128,8 +130,17 @@ fun CommunityScreen(
         overlays.add(CommunityOverlay.Chat(conversationId, otherUid))
     }
 
-    /** Opens the Inbox (chat list + notifications) — reached from the drawer now. */
-    val openInbox: () -> Unit = { overlays.add(CommunityOverlay.Inbox) }
+    /**
+     * Opens the Inbox (chat list + notifications) — reached from the drawer
+     * now. A no-op when it's already showing — mashing the drawer's Inbox
+     * entry while already on it used to stack a fresh copy on top of itself
+     * every tap.
+     */
+    val openInbox: () -> Unit = {
+        if (overlays.lastOrNull() != CommunityOverlay.Inbox) {
+            overlays.add(CommunityOverlay.Inbox)
+        }
+    }
 
     // The home-feed post whose 3-dot sheet is open, and one pending delete.
     var actionsPost: Post? by remember { mutableStateOf(null) }
@@ -190,7 +201,12 @@ fun CommunityScreen(
                         }
                     },
                     onGestureToTextClick = { scope.launch { drawerState.close() } },
-                    onTextToGestureClick = { scope.launch { drawerState.close() } },
+                    onTextToGestureClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onTextToSign()
+                        }
+                    },
                     onCommunityClick = {
                         // Already here — treat it as "back to a clean feed":
                         // drop every open overlay and close the drawer.
@@ -418,12 +434,28 @@ fun CommunityScreen(
                             }
                         }
 
-                        is CommunityOverlay.Chat -> ChatScreen(
-                            conversationId = overlay.conversationId,
-                            recipientId = overlay.otherUid,
-                            onClose = close,
-                            onOpenProfile = openProfile,
-                        )
+                        is CommunityOverlay.Chat -> {
+                            // Same push-style slide-in as opening a community
+                            // below — a conversation reads as a pushed screen,
+                            // not just a fade over the feed.
+                            val slideIn = remember {
+                                MutableTransitionState(false).apply { targetState = true }
+                            }
+                            AnimatedVisibility(
+                                visibleState = slideIn,
+                                enter = slideInHorizontally(
+                                    animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                ) { it / 3 } + fadeIn(tween(280)),
+                                exit = fadeOut(tween(120)),
+                            ) {
+                                ChatScreen(
+                                    conversationId = overlay.conversationId,
+                                    recipientId = overlay.otherUid,
+                                    onClose = close,
+                                    onOpenProfile = openProfile,
+                                )
+                            }
+                        }
 
                         is CommunityOverlay.Community -> {
                             // CommunityHomeScreen registers its own BackHandler
@@ -461,22 +493,36 @@ fun CommunityScreen(
                             // live inside a tab (no back handling of its own),
                             // so this overlay supplies it.
                             BackHandler(onBack = close)
-                            InboxScreen(
-                                viewModel = inboxViewModel,
-                                onOpenConversation = openChat,
-                                onOpenPost = openPostById,
-                                onOpenProfile = openProfile,
-                                // The community drawer is still there underneath
-                                // this overlay — this just reopens it.
-                                onMenuClick = { scope.launch { drawerState.open() } },
-                                // No statusBarsPadding here — InboxScreen's own
-                                // top bar now paints behind the status bar and
-                                // insets itself, the same way the Home Feed's does.
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(MaterialTheme.colorScheme.background)
-                                    .navigationBarsPadding(),
-                            )
+                            // Same push-style slide-in as opening a community —
+                            // the Inbox reads as a pushed screen, not just a
+                            // fade over the feed.
+                            val slideIn = remember {
+                                MutableTransitionState(false).apply { targetState = true }
+                            }
+                            AnimatedVisibility(
+                                visibleState = slideIn,
+                                enter = slideInHorizontally(
+                                    animationSpec = tween(280, easing = FastOutSlowInEasing),
+                                ) { it / 3 } + fadeIn(tween(280)),
+                                exit = fadeOut(tween(120)),
+                            ) {
+                                InboxScreen(
+                                    viewModel = inboxViewModel,
+                                    onOpenConversation = openChat,
+                                    onOpenPost = openPostById,
+                                    onOpenProfile = openProfile,
+                                    // The community drawer is still there underneath
+                                    // this overlay — this just reopens it.
+                                    onMenuClick = { scope.launch { drawerState.open() } },
+                                    // No statusBarsPadding here — InboxScreen's own
+                                    // top bar now paints behind the status bar and
+                                    // insets itself, the same way the Home Feed's does.
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(MaterialTheme.colorScheme.background)
+                                        .navigationBarsPadding(),
+                                )
+                            }
                         }
                     }
                     }
@@ -584,6 +630,20 @@ private fun CommunityScaffold(
     var searchActive by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    /** Collapses the search bar back to the icon — shared by the icon and back. */
+    fun collapseSearch() {
+        searchActive = false
+        // Drop the query so the list isn't left filtered behind a hidden bar,
+        // and scroll back to the top so the circle row is in view again.
+        feedViewModel.onSearchQueryChange("")
+        scope.launch { feedListState.animateScrollToItem(0) }
+    }
+
+    // While the search bar is open, the device/nav back button collapses it to
+    // the search icon (same as tapping the icon again) instead of leaving the
+    // feed. Registered here so it takes priority over the outer navigation back.
+    BackHandler(enabled = searchActive) { collapseSearch() }
+
     // This screen's top bar paints dark (KinetixNavy in light mode,
     // colorScheme.surface in dark mode) behind the status bar — see
     // CommunityTopBar — so it always wants light (white) status bar icons,
@@ -633,17 +693,12 @@ private fun CommunityScaffold(
             searchActive = searchActive,
             onMenuClick = onMenuClick,
             onSearchClick = {
-                searchActive = !searchActive
-                if (!searchActive) {
-                    // Collapsing search returns the feed to normal — drop any
-                    // query so the post list isn't left filtered behind a
-                    // hidden bar. The circle row re-expanding at the top of
-                    // the list is invisible if the user had scrolled down
-                    // while searching (typing, scrolling results), so this
-                    // scrolls back to the top the same moment — otherwise
-                    // it's "there" but off-screen until a manual swipe down.
-                    feedViewModel.onSearchQueryChange("")
-                    scope.launch { feedListState.animateScrollToItem(0) }
+                if (searchActive) {
+                    // Collapsing search returns the feed to normal — see
+                    // collapseSearch (also what the back button runs).
+                    collapseSearch()
+                } else {
+                    searchActive = true
                 }
             },
             onProfileClick = onProfileClick,

@@ -115,13 +115,32 @@ fun PostDetailScreen(
 
     BackHandler(onBack = onClose)
 
+    // Same dark bar treatment as the Home Feed's own top bar — KinetixNavy in
+    // light mode, colorScheme.surface in dark — so the status bar's
+    // notification area reads as part of one continuous colored bar instead of
+    // a plain white strip above it. Always wants light (white) status bar
+    // icons regardless of the app's theme, same reasoning as the feed's own.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(light = true)
+    val darkTheme = androidx.compose.foundation.isSystemInDarkTheme()
+    val barBackground = if (darkTheme) MaterialTheme.colorScheme.surface else com.example.kinetixfsl.ui.theme.KinetixNavy
+    val barContentColor = if (darkTheme) MaterialTheme.colorScheme.onSurface else com.example.kinetixfsl.ui.theme.KinetixWhite
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
+            .background(MaterialTheme.colorScheme.background),
     ) {
         // ---- Top bar: back, author, share ----
+        // The background is painted on this Box, which takes the status bar
+        // inset as padding rather than being pushed below it — so the color
+        // runs all the way to the physical top of the screen, matching the
+        // Home Feed's own top bar.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(barBackground)
+                .statusBarsPadding(),
+        ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -131,7 +150,7 @@ fun PostDetailScreen(
             Icon(
                 imageVector = CommunityIcons.ArrowBack,
                 contentDescription = "Back",
-                tint = MaterialTheme.colorScheme.onSurface,
+                tint = barContentColor,
                 modifier = Modifier
                     .size(28.dp)
                     .clickable(onClick = onClose),
@@ -149,14 +168,17 @@ fun PostDetailScreen(
                         avatarUrl = communityAvatarUrl,
                         name = post.communityName.ifBlank { "Community" },
                         size = 30.dp,
-                        modifier = Modifier.clickable { onCommunityClick(post.communityId) },
+                        modifier = Modifier
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .border(1.5.dp, barContentColor.copy(alpha = 0.4f), androidx.compose.foundation.shape.CircleShape)
+                            .clickable { onCommunityClick(post.communityId) },
                     )
                     Spacer(Modifier.width(8.dp))
                     Column {
                         Text(
                             text = post.communityName.ifBlank { "Community" },
                             style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = barContentColor,
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(50))
@@ -165,7 +187,7 @@ fun PostDetailScreen(
                         Text(
                             text = "Posted by " + post.authorName.ifBlank { "Unknown" },
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = barContentColor.copy(alpha = 0.75f),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(50))
                                 .clickable(enabled = post.authorId.isNotBlank()) {
@@ -191,12 +213,15 @@ fun PostDetailScreen(
                         avatarUrl = post.authorAvatarUrl,
                         name = post.authorName,
                         size = 30.dp,
+                        modifier = Modifier
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .border(1.5.dp, barContentColor.copy(alpha = 0.4f), androidx.compose.foundation.shape.CircleShape),
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = post.authorName.ifBlank { "Unknown" },
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = barContentColor,
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
@@ -204,11 +229,12 @@ fun PostDetailScreen(
             Icon(
                 imageVector = CommunityIcons.MoreVertical,
                 contentDescription = "Post options",
-                tint = MaterialTheme.colorScheme.onSurface,
+                tint = barContentColor,
                 modifier = Modifier
                     .size(24.dp)
                     .clickable { isMenuOpen = true },
             )
+        }
         }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -233,7 +259,9 @@ fun PostDetailScreen(
                     // whole point of opening the post.
                     if (post.body.isNotBlank()) {
                         Spacer(Modifier.height(10.dp))
-                        HashtagText(
+                        // Plain text — hashtags live in their own row below
+                        // (from the composer's box), not inline in the body.
+                        Text(
                             text = post.body,
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onBackground,
@@ -267,6 +295,13 @@ fun PostDetailScreen(
                             },
                             height = 260.dp,
                         )
+                    }
+
+                    // Hashtags from the composer's box (display-only here —
+                    // the detail screen has no search bar of its own).
+                    if (post.hashtags.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        PostHashtags(hashtags = post.hashtags)
                     }
 
                     Spacer(Modifier.height(14.dp))
@@ -490,14 +525,5 @@ private fun JoinConversationBar(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Spacer(Modifier.width(10.dp))
-        Icon(
-            imageVector = CommunityIcons.Image,
-            contentDescription = "Comment with an image",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .size(26.dp)
-                .clickable(onClick = onClick),
-        )
     }
 }

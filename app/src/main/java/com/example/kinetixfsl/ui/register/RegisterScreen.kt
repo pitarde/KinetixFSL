@@ -62,6 +62,15 @@ fun RegisterScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
+    // This screen never overrides the status bar itself, so without this it
+    // just shows whatever the app-wide default was at launch and never
+    // updates if the system's light/dark setting is toggled while the app is
+    // open. Reading isSystemInDarkTheme() here directly makes it reactive,
+    // the same way every other screen with its own override already is.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(
+        light = androidx.compose.foundation.isSystemInDarkTheme(),
+    )
+
     if (state.isRegisterSuccessful) {
         onRegisterSuccess()
         viewModel.onRegisterHandled()

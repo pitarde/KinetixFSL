@@ -243,10 +243,13 @@ fun EditPostScreen(
         }
 
         // ---- Request admin validation toggle ----
-        ValidationToggleRow(
-            checked = state.requestValidation,
-            onToggle = { viewModel.onToggleValidation(it) },
-        )
+        // Only shown once the post carries a photo or video.
+        if (state.hasMedia) {
+            ValidationToggleRow(
+                checked = state.requestValidation,
+                onToggle = { viewModel.onToggleValidation(it) },
+            )
+        }
 
         // ---- Fields ----
         Column(
@@ -327,6 +330,13 @@ fun EditPostScreen(
 
             Spacer(Modifier.height(16.dp))
         }
+
+        // ---- Hashtags section (above the toolbar, same as create) ----
+        HashtagSection(
+            value = state.hashtags,
+            onValueChange = viewModel::onHashtagsChange,
+            required = state.wantsValidation,
+        )
 
         // ---- Bottom toolbar: link, image, video (identical to create) ----
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)

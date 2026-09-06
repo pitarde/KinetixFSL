@@ -24,12 +24,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -41,12 +43,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.kinetixfsl.community.Avatar
 import com.example.kinetixfsl.community.CommunityIcons
+import com.example.kinetixfsl.community.CommunityRepository
 import com.example.kinetixfsl.game.ui.QuizGameRoot
 import com.example.kinetixfsl.modules.ModulesScreen
 import com.example.kinetixfsl.profile.ProfileScreen
@@ -62,6 +68,8 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     onSignOut: () -> Unit,
     onNavigateToCommunity: () -> Unit,
+    /** Opens the Text-to-Sign search — the drawer's "Text to Gesture" item. */
+    onNavigateToTextToSign: () -> Unit = {},
     onNavigateToSignList: (categoryId: String) -> Unit,
     onStartCommunity: () -> Unit = {},
     onDiscoverCommunities: () -> Unit = {},
@@ -73,6 +81,16 @@ fun HomeScreen(
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    // The (offline) Profile screen's own avatar — a device-only file set via
+    // Edit Profile in Settings (see LocalProfileStore), independent of the
+    // Firebase account. The Dashboard top bar's profile shortcut mirrors this
+    // exact picture, updated the instant Edit Profile saves a new one via
+    // onAvatarChanged below — no separate source of truth to fall out of sync.
+    var localAvatarFile by remember {
+        mutableStateOf(com.example.kinetixfsl.profile.LocalProfileStore.avatarFile(context))
+    }
 
     // Hoisted purely for the drawer's unread badge — the Inbox screen itself
     // gets its own instance when it's actually opened (a separate NavHost
@@ -112,7 +130,10 @@ fun HomeScreen(
                         scope.launch { drawerState.close() }
                     },
                     onTextToGestureClick = {
-                        scope.launch { drawerState.close() }
+                        scope.launch {
+                            drawerState.close()
+                            onNavigateToTextToSign()
+                        }
                     },
                     onCommunityClick = {
                         scope.launch {
@@ -158,6 +179,8 @@ fun HomeScreen(
             onMenuClick = { scope.launch { drawerState.open() } },
             onSignOut = onSignOut,
             onNavigateToSignList = onNavigateToSignList,
+            localAvatarFile = localAvatarFile,
+            onAvatarChanged = { localAvatarFile = it },
             modifier = modifier,
         )
     }
@@ -170,6 +193,8 @@ private fun HomeScaffold(
     onMenuClick: () -> Unit,
     onSignOut: () -> Unit,
     onNavigateToSignList: (categoryId: String) -> Unit,
+    localAvatarFile: java.io.File?,
+    onAvatarChanged: (java.io.File?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // The Quiz Game runs an active level (tutorial/quiz/result) full-screen, with
@@ -202,65 +227,75 @@ private fun HomeScaffold(
                 onProfileClick = { onTabSelected(HomeTab.PROFILE) },
                 onBackToDashboard = { onTabSelected(HomeTab.HOME) },
                 onSettingsClick = { profileSettingsOpen = true },
+                localAvatarFile = localAvatarFile,
             )
         }
 
-        // Home/Modules/Game switch instantly between each other (unchanged);
-        // opening or leaving Profile specifically gets a slide+fade, so it
-        // reads as a screen being pushed on and popped off, matching the
-        // bottom nav hiding while it's up.
-        AnimatedContent(
-            targetState = selectedTab,
-            modifier = Modifier.weight(1f),
-            transitionSpec = {
-                when (HomeTab.PROFILE) {
-                    targetState -> {
-                        // Opening Profile — slide in from the right + fade,
-                        // matching the "pushed screen" treatment its bottom-
-                        // nav-hiding already implies.
-                        (slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 3 } +
-                            fadeIn(tween(280))) togetherWith
-                            fadeOut(tween(150))
+        // The tab content fills everything below the top bar, and the bottom
+        // nav pill floats as an overlay on top of it (aligned to the bottom)
+        // rather than taking its own row of space — so the content runs the
+        // full height behind the pill, and the pill reads as popped up in
+        // front of it, not as a bar the page is squeezed above.
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            // Home/Modules/Game switch instantly between each other (unchanged);
+            // opening or leaving Profile specifically gets a slide+fade, so it
+            // reads as a screen being pushed on and popped off, matching the
+            // bottom nav hiding while it's up.
+            AnimatedContent(
+                targetState = selectedTab,
+                modifier = Modifier.fillMaxSize(),
+                transitionSpec = {
+                    when (HomeTab.PROFILE) {
+                        targetState -> {
+                            // Opening Profile — slide in from the right + fade,
+                            // matching the "pushed screen" treatment its bottom-
+                            // nav-hiding already implies.
+                            (slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 3 } +
+                                fadeIn(tween(280))) togetherWith
+                                fadeOut(tween(150))
+                        }
+                        initialState -> {
+                            // Leaving Profile — the reverse: slide out to the
+                            // right + fade while the destination tab fades in.
+                            fadeIn(tween(200)) togetherWith
+                                (slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 3 } +
+                                    fadeOut(tween(280)))
+                        }
+                        else -> {
+                            // Home/Modules/Game switching among themselves —
+                            // unchanged, an instant swap.
+                            fadeIn(snap()) togetherWith fadeOut(snap())
+                        }
                     }
-                    initialState -> {
-                        // Leaving Profile — the reverse: slide out to the
-                        // right + fade while the destination tab fades in.
-                        fadeIn(tween(200)) togetherWith
-                            (slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 3 } +
-                                fadeOut(tween(280)))
-                    }
-                    else -> {
-                        // Home/Modules/Game switching among themselves —
-                        // unchanged, an instant swap.
-                        fadeIn(snap()) togetherWith fadeOut(snap())
-                    }
+                },
+                label = "homeTabContent",
+            ) { tab ->
+                when (tab) {
+                    HomeTab.HOME -> DashboardContent(onOpenModule = onNavigateToSignList)
+                    HomeTab.MODULES -> ModulesScreen(
+                        onCategoryClick = { category ->
+                            onNavigateToSignList(category.id)
+                        },
+                    )
+                    HomeTab.GAME -> QuizGameRoot(
+                        onImmersiveChange = { gameImmersive = it },
+                    )
+                    HomeTab.PROFILE -> ProfileScreen(
+                        onSignOut = onSignOut,
+                        showSettings = profileSettingsOpen,
+                        onDismissSettings = { profileSettingsOpen = false },
+                        onAvatarChanged = onAvatarChanged,
+                    )
                 }
-            },
-            label = "homeTabContent",
-        ) { tab ->
-            when (tab) {
-                HomeTab.HOME -> DashboardContent(onOpenModule = onNavigateToSignList)
-                HomeTab.MODULES -> ModulesScreen(
-                    onCategoryClick = { category ->
-                        onNavigateToSignList(category.id)
-                    },
-                )
-                HomeTab.GAME -> QuizGameRoot(
-                    onImmersiveChange = { gameImmersive = it },
-                )
-                HomeTab.PROFILE -> ProfileScreen(
-                    onSignOut = onSignOut,
-                    showSettings = profileSettingsOpen,
-                    onDismissSettings = { profileSettingsOpen = false },
+            }
+
+            if (!hideBottomNav) {
+                HomeBottomNav(
+                    selectedTab = selectedTab,
+                    onTabSelected = onTabSelected,
+                    modifier = Modifier.align(Alignment.BottomCenter),
                 )
             }
-        }
-
-        if (!hideBottomNav) {
-            HomeBottomNav(
-                selectedTab = selectedTab,
-                onTabSelected = onTabSelected,
-            )
         }
     }
 }
@@ -291,6 +326,7 @@ private fun HomeTopBar(
     onProfileClick: () -> Unit,
     onBackToDashboard: () -> Unit,
     onSettingsClick: () -> Unit,
+    localAvatarFile: java.io.File? = null,
 ) {
     val dark = isSystemInDarkTheme()
     val coloredBar = tab != HomeTab.PROFILE || !dark
@@ -356,14 +392,29 @@ private fun HomeTopBar(
                 modifier = Modifier.weight(1f),
             )
             if (tab == HomeTab.HOME) {
-                Icon(
-                    imageVector = HomeIcons.Profile,
-                    contentDescription = "Profile",
-                    tint = barContentColor,
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clickable(onClick = onProfileClick),
-                )
+                // The same photo the (offline) Profile screen shows — set via
+                // Edit Profile in Settings, see LocalProfileStore — falling
+                // back to the plain icon until one is ever set.
+                if (localAvatarFile == null) {
+                    Icon(
+                        imageVector = HomeIcons.Profile,
+                        contentDescription = "Profile",
+                        tint = barContentColor,
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clickable(onClick = onProfileClick),
+                    )
+                } else {
+                    coil.compose.AsyncImage(
+                        model = localAvatarFile,
+                        contentDescription = "Profile",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .clickable(onClick = onProfileClick),
+                    )
+                }
             }
             if (tab == HomeTab.PROFILE) {
                 // Moved here from a gear icon on the screen itself — see
@@ -381,35 +432,55 @@ private fun HomeTopBar(
     }
 }
 
-/** The bottom nav — Home, Modules, Game. Selected icon takes the theme's
- *  primary, rest are muted. Camera was removed entirely, and Profile moved to
- *  a shortcut on the Dashboard's own top bar — see [HomeTab.BOTTOM_NAV_TABS]. */
+/**
+ * The bottom nav — Home, Modules, Game — as a floating rounded pill rather
+ * than a full-width bar. It's positioned as an overlay on top of the tab
+ * content (see [HomeScaffold]) rather than in its own row of layout space, so
+ * the page runs the full height behind it and the pill reads as popped up in
+ * front of the screen — a strong shadow reinforces the separation. A tab's
+ * icon simply switches to the primary color when selected — no filled capsule
+ * behind it. Camera was removed entirely, and Profile lives on the Dashboard's
+ * own top bar instead — see [HomeTab.BOTTOM_NAV_TABS].
+ */
 @Composable
 private fun HomeBottomNav(
     selectedTab: HomeTab,
     onTabSelected: (HomeTab) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = Modifier
+    Box(
+        modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface),
+            .navigationBarsPadding()
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
+        Surface(
+            shape = RoundedCornerShape(50),
+            // colorScheme.surface *is* pure white in light mode (see Theme.kt)
+            // — the same color every card (Achievements, post cards) renders
+            // on, so this reads as pure white too. Dark mode gets its own
+            // theme surface. No tonalElevation: Surface tints the color by a
+            // primary-tinted overlay proportional to it, which would leave
+            // this a faint off-white instead of the flat white every card uses.
+            color = MaterialTheme.colorScheme.surface,
+            // A pronounced shadow so the pill visibly lifts off the page
+            // behind it, matching the "popped up in front" look.
+            shadowElevation = 16.dp,
         ) {
-            HomeTab.BOTTOM_NAV_TABS.forEach { tab ->
-                NavItem(
-                    icon = tab.icon,
-                    label = tab.label,
-                    selected = tab == selectedTab,
-                    onClick = { onTabSelected(tab) },
-                )
+            Row(
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                HomeTab.BOTTOM_NAV_TABS.forEach { tab ->
+                    NavItem(
+                        icon = tab.icon,
+                        label = tab.label,
+                        selected = tab == selectedTab,
+                        onClick = { onTabSelected(tab) },
+                    )
+                }
             }
         }
     }
@@ -422,22 +493,29 @@ private fun NavItem(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    val tint = if (selected) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
     Column(
         modifier = Modifier
+            .clip(RoundedCornerShape(50))
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = label,
-            tint = tint,
-            modifier = Modifier.size(26.dp),
+            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp),
+        )
+        Spacer(Modifier.height(4.dp))
+        // A short underline marks which tab is active — invisible (but still
+        // reserving its space, so the icon above doesn't shift) on the rest.
+        Box(
+            modifier = Modifier
+                .size(width = 16.dp, height = 3.dp)
+                .clip(RoundedCornerShape(50))
+                .background(
+                    if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                ),
         )
     }
 }

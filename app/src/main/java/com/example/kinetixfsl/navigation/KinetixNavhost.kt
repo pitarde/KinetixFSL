@@ -76,6 +76,9 @@ object Route {
     const val HOME = "home"
     const val COMMUNITY = "community"
 
+    /** Text-to-Sign search, reached from the drawer's "Text to Gesture" item. */
+    const val TEXT_TO_SIGN = "text_to_sign"
+
     // ── Communities: create, discover, and a single community's home ──
     const val START_COMMUNITY = "start_community"
     const val DISCOVER_COMMUNITIES = "discover_communities"
@@ -156,11 +159,6 @@ private const val MODULES_OUT_FADE = 250
 
 private const val PUSH_DURATION = 300
 
-/** Plain crossfade — used for Discover, its category lists, and a community's
- *  own home screen, in both directions (open and back). */
-private fun communityFadeIn(): EnterTransition = fadeIn(tween(PUSH_DURATION))
-private fun communityFadeOut(): ExitTransition = fadeOut(tween(PUSH_DURATION))
-
 /** New screen slides in from the right edge. */
 private fun pushEnter(): EnterTransition =
     slideInHorizontally(tween(PUSH_DURATION, easing = FastOutSlowInEasing)) { it } +
@@ -180,6 +178,33 @@ private fun recedeExit(): ExitTransition =
 private fun recedePopEnter(): EnterTransition =
     slideInHorizontally(tween(PUSH_DURATION, easing = FastOutSlowInEasing)) { -it / 4 } +
         fadeIn(tween(PUSH_DURATION))
+
+// ── Discover Communities / a category / a community's own home ──────────
+//
+// The pushEnter()/recedeExit() pair above still shows a sliver of the shared
+// NavHost backstop between the two screens while the underneath one recedes
+// — matched to the community page background as closely as possible, but
+// never quite perfectly on every device, which is what read as a white
+// flash. This formula is the same one HomeScreen's own Dashboard-to-Profile
+// AnimatedContent already uses and never flashes: the *source* screen never
+// moves, it only fades in place — no receding, so there's no gap to expose —
+// while the incoming screen slides in already mostly overlapping it (a third
+// of the screen width, not the full width), so something opaque always
+// covers every pixel throughout the whole animation.
+private const val COMMUNITY_ENTER_DURATION = 280
+private const val COMMUNITY_EXIT_DURATION = 150
+
+private fun communityPushEnter(): EnterTransition =
+    slideInHorizontally(tween(COMMUNITY_ENTER_DURATION, easing = FastOutSlowInEasing)) { it / 3 } +
+        fadeIn(tween(COMMUNITY_ENTER_DURATION))
+
+private fun communityPushExit(): ExitTransition = fadeOut(tween(COMMUNITY_EXIT_DURATION))
+
+private fun communityPopEnter(): EnterTransition = fadeIn(tween(200))
+
+private fun communityPopExit(): ExitTransition =
+    slideOutHorizontally(tween(COMMUNITY_ENTER_DURATION, easing = FastOutSlowInEasing)) { it / 3 } +
+        fadeOut(tween(COMMUNITY_ENTER_DURATION))
 
 @Composable
 fun KinetixNavHost(
@@ -522,6 +547,9 @@ fun KinetixNavHost(
                 onNavigateToCommunity = {
                     navController.navigate(Route.COMMUNITY)
                 },
+                onNavigateToTextToSign = {
+                    navController.navigate(Route.TEXT_TO_SIGN)
+                },
                 onNavigateToSignList = { categoryId ->
                     navController.navigate(Route.signList(categoryId))
                 },
@@ -535,7 +563,10 @@ fun KinetixNavHost(
                     navController.navigate(Route.communityHome(communityId))
                 },
                 onOpenInbox = {
-                    navController.navigate(Route.INBOX)
+                    // launchSingleTop — mashing the drawer's Inbox entry
+                    // while already on it used to push a fresh copy onto the
+                    // back stack every tap.
+                    navController.navigate(Route.INBOX) { launchSingleTop = true }
                 },
             )
         }
@@ -588,7 +619,12 @@ fun KinetixNavHost(
                                 }
                             },
                             onGestureToTextClick = { inboxDrawerScope.launch { inboxDrawerState.close() } },
-                            onTextToGestureClick = { inboxDrawerScope.launch { inboxDrawerState.close() } },
+                            onTextToGestureClick = {
+                                inboxDrawerScope.launch {
+                                    inboxDrawerState.close()
+                                    navController.navigate(Route.TEXT_TO_SIGN)
+                                }
+                            },
                             onCommunityClick = {
                                 inboxDrawerScope.launch {
                                     inboxDrawerState.close()
@@ -689,6 +725,22 @@ fun KinetixNavHost(
                 onDiscoverCommunities = {
                     navController.navigate(Route.DISCOVER_COMMUNITIES)
                 },
+                onTextToSign = {
+                    navController.navigate(Route.TEXT_TO_SIGN)
+                },
+            )
+        }
+
+        // ---- Text to Sign: search a word, see the validated sign media ----
+        composable(
+            route = Route.TEXT_TO_SIGN,
+            enterTransition = { pushEnter() },
+            exitTransition = { recedeExit() },
+            popEnterTransition = { recedePopEnter() },
+            popExitTransition = { pushPopExit() },
+        ) {
+            com.example.kinetixfsl.community.TextToSignScreen(
+                onClose = { navController.popBackStack() },
             )
         }
 
@@ -715,10 +767,10 @@ fun KinetixNavHost(
         // ---- Discover communities: category filter + list ----
         composable(
             route = Route.DISCOVER_COMMUNITIES,
-            enterTransition = { communityFadeIn() },
-            exitTransition = { communityFadeOut() },
-            popEnterTransition = { communityFadeIn() },
-            popExitTransition = { communityFadeOut() },
+            enterTransition = { communityPushEnter() },
+            exitTransition = { communityPushExit() },
+            popEnterTransition = { communityPopEnter() },
+            popExitTransition = { communityPopExit() },
         ) {
             DiscoverCommunitiesScreen(
                 onClose = { navController.popBackStack() },
@@ -735,10 +787,10 @@ fun KinetixNavHost(
         composable(
             route = Route.COMMUNITY_CATEGORY_PATTERN,
             arguments = listOf(navArgument(Route.COMMUNITY_CATEGORY_ARG) { type = NavType.StringType }),
-            enterTransition = { communityFadeIn() },
-            exitTransition = { communityFadeOut() },
-            popEnterTransition = { communityFadeIn() },
-            popExitTransition = { communityFadeOut() },
+            enterTransition = { communityPushEnter() },
+            exitTransition = { communityPushExit() },
+            popEnterTransition = { communityPopEnter() },
+            popExitTransition = { communityPopExit() },
         ) { backStackEntry ->
             val encoded = backStackEntry.arguments?.getString(Route.COMMUNITY_CATEGORY_ARG).orEmpty()
             val category = URLDecoder.decode(encoded, StandardCharsets.UTF_8.name())
@@ -755,10 +807,10 @@ fun KinetixNavHost(
         composable(
             route = Route.COMMUNITY_HOME_PATTERN,
             arguments = listOf(navArgument(Route.COMMUNITY_HOME_ARG) { type = NavType.StringType }),
-            enterTransition = { communityFadeIn() },
-            exitTransition = { communityFadeOut() },
-            popEnterTransition = { communityFadeIn() },
-            popExitTransition = { communityFadeOut() },
+            enterTransition = { communityPushEnter() },
+            exitTransition = { communityPushExit() },
+            popEnterTransition = { communityPopEnter() },
+            popExitTransition = { communityPopExit() },
         ) { backStackEntry ->
             val communityId = backStackEntry.arguments?.getString(Route.COMMUNITY_HOME_ARG).orEmpty()
             CommunityHomeScreen(

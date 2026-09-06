@@ -6,7 +6,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -36,7 +35,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalTextStyle
@@ -50,11 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -81,6 +75,9 @@ import com.example.kinetixfsl.community.inbox.model.ChatMessage
 import com.example.kinetixfsl.community.mediaUrl
 import com.example.kinetixfsl.community.openLink
 import com.example.kinetixfsl.ui.theme.KinetixGreen
+import com.example.kinetixfsl.ui.theme.KinetixNavy
+import com.example.kinetixfsl.ui.theme.KinetixPageBackground
+import com.example.kinetixfsl.ui.theme.KinetixWhite
 
 /**
  * One open conversation: the thread, the composer, and the header that says who
@@ -112,12 +109,10 @@ fun ChatScreen(
     val store = remember(conversationId) { ViewModelStore() }
     DisposableEffect(store) { onDispose { store.clear() } }
 
-    // Plain theme background here too — the ordinary light/dark default,
-    // overriding whatever a screen this opened over (the community feed's
-    // forced-light-icons dark top bar) asked for.
-    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(
-        light = androidx.compose.foundation.isSystemInDarkTheme(),
-    )
+    // This screen's own top bar is always dark now (KinetixNavy in light
+    // mode, colorScheme.surface in dark) — see ChatHeader — so it always
+    // wants light (white) status bar icons, same as the Home Feed's own bar.
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(light = true)
     val storeOwner = remember(store) {
         object : ViewModelStoreOwner {
             override val viewModelStore: ViewModelStore = store
@@ -164,21 +159,25 @@ fun ChatScreen(
         if (totalRows > 0) listState.animateScrollToItem(totalRows - 1)
     }
 
-    // Gentle fade + slide-up on entry, matching the other community screens.
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { shown = true }
-    val enter by animateFloatAsState(
-        targetValue = if (shown) 1f else 0f,
-        animationSpec = tween(380, easing = FastOutSlowInEasing),
-        label = "chatEnter",
-    )
-
     Column(
         modifier = modifier
             .fillMaxSize()
-            .graphicsLayer { alpha = enter; translationY = (1f - enter) * 36f }
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
+            // The horizontal slide this screen opens/closes with now comes
+            // entirely from the overlay it's shown in (see
+            // CommunityOverlay.Chat) — this used to layer its own vertical
+            // fade-and-slide-up on top, which read as two animations
+            // happening at once.
+            // Off-white in light mode, matching the Home Feed, so the
+            // pure-white "their message" bubbles below read as cards. Dark
+            // mode is untouched. No statusBarsPadding here — ChatHeader
+            // paints behind the status bar and insets itself instead.
+            .background(
+                if (androidx.compose.foundation.isSystemInDarkTheme()) {
+                    MaterialTheme.colorScheme.background
+                } else {
+                    KinetixPageBackground
+                },
+            ),
     ) {
         ChatHeader(
             name = state.otherName,
@@ -300,32 +299,35 @@ fun ChatScreen(
     }
 
     if (showOptions) {
-        ChatOptionsSheet(
-            isBlocked = state.block.iBlockedThem,
-            onViewProfile = {
-                showOptions = false
-                onOpenProfile(recipientId)
-            },
-            onViewMedia = {
-                showOptions = false
-                showMedia = true
-            },
-            onReport = {
-                showOptions = false
-                showReport = true
-            },
-            onToggleBlock = {
-                showOptions = false
-                // Unblocking is harmless and immediate; blocking gets a
-                // confirmation, because it silently cuts someone off.
-                if (state.block.iBlockedThem) viewModel.toggleBlock() else confirmBlock = true
-            },
-            onDeleteConversation = {
-                showOptions = false
-                confirmClear = true
-            },
-            onDismiss = { showOptions = false },
-        )
+        // Same slide-up-and-swipe-down-to-close sheet as Create/Edit Post —
+        // see SlideUpScreen.
+        com.example.kinetixfsl.community.SlideUpScreen(onClose = { showOptions = false }) { dismiss ->
+            ChatOptionsSheet(
+                isBlocked = state.block.iBlockedThem,
+                onViewProfile = {
+                    dismiss()
+                    onOpenProfile(recipientId)
+                },
+                onViewMedia = {
+                    dismiss()
+                    showMedia = true
+                },
+                onReport = {
+                    dismiss()
+                    showReport = true
+                },
+                onToggleBlock = {
+                    dismiss()
+                    // Unblocking is harmless and immediate; blocking gets a
+                    // confirmation, because it silently cuts someone off.
+                    if (state.block.iBlockedThem) viewModel.toggleBlock() else confirmBlock = true
+                },
+                onDeleteConversation = {
+                    dismiss()
+                    confirmClear = true
+                },
+            )
+        }
     }
 
     if (showReport) {
@@ -419,7 +421,18 @@ private fun ChatHeader(
     onOpenProfile: () -> Unit,
     onMenu: () -> Unit,
 ) {
-    Column {
+    // KinetixNavy in light mode, colorScheme.surface in dark — same treatment
+    // as the Home Feed's own top bar.
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    val barBackground = if (dark) MaterialTheme.colorScheme.surface else KinetixNavy
+    val barContentColor = if (dark) MaterialTheme.colorScheme.onSurface else KinetixWhite
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(barBackground)
+            .statusBarsPadding(),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -429,7 +442,7 @@ private fun ChatHeader(
             Icon(
                 imageVector = CommunityIcons.ArrowBack,
                 contentDescription = "Back",
-                tint = MaterialTheme.colorScheme.onSurface,
+                tint = barContentColor,
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
@@ -453,7 +466,7 @@ private fun ChatHeader(
                                 .align(Alignment.BottomEnd)
                                 .size(12.dp)
                                 .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.background)
+                                .background(barBackground)
                                 .padding(2.dp)
                                 .clip(CircleShape)
                                 .background(KinetixGreen),
@@ -465,7 +478,7 @@ private fun ChatHeader(
                     Text(
                         text = name.ifBlank { "Chat" },
                         style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onBackground,
+                        color = barContentColor,
                         fontWeight = FontWeight.Bold,
                     )
                     val status = when {
@@ -477,11 +490,7 @@ private fun ChatHeader(
                         Text(
                             text = status,
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (isTyping) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                KinetixGreen
-                            },
+                            color = if (isTyping) barContentColor.copy(alpha = 0.8f) else KinetixGreen,
                         )
                     }
                 }
@@ -490,7 +499,7 @@ private fun ChatHeader(
             Icon(
                 imageVector = CommunityIcons.MoreVertical,
                 contentDescription = "More",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = barContentColor,
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
@@ -498,7 +507,6 @@ private fun ChatHeader(
                     .padding(10.dp),
             )
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 
@@ -543,10 +551,15 @@ private fun MessageBubble(
     /** Long-press to delete. Null on messages we didn't send. */
     onLongPress: (() -> Unit)? = null,
 ) {
+    // Mine stays the primary colour; theirs is pure white in light mode
+    // (matching every other card in the app) instead of the greyish
+    // surfaceVariant — dark mode keeps surfaceVariant.
     val bubbleColor = if (isMine) {
         MaterialTheme.colorScheme.primary
-    } else {
+    } else if (androidx.compose.foundation.isSystemInDarkTheme()) {
         MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        KinetixWhite
     }
     val textColor = if (isMine) {
         MaterialTheme.colorScheme.onPrimary
@@ -885,7 +898,15 @@ private fun TypingBubble() {
         Row(
             Modifier
                 .clip(RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
+                // Same pure-white-in-light-mode treatment as a received
+                // message bubble.
+                .background(
+                    if (androidx.compose.foundation.isSystemInDarkTheme()) {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    } else {
+                        KinetixWhite
+                    },
+                )
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -923,10 +944,17 @@ private fun Composer(
         ActivityResultContracts.PickVisualMedia()
     ) { uri -> uri?.let(onPickVideo) }
 
+    // Same treatment as ChatHeader — KinetixNavy in light mode,
+    // colorScheme.surface in dark — so the composer frames the thread the
+    // same way the top bar does.
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    val barBackground = if (dark) MaterialTheme.colorScheme.surface else KinetixNavy
+    val barContentColor = if (dark) MaterialTheme.colorScheme.onSurface else KinetixWhite
+
     Column(
         Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
+            .background(barBackground)
             // This exact chain, in this order: navigationBarsPadding consumes
             // the nav-bar inset, so imePadding then adds only the *remaining*
             // keyboard height. Applying imePadding higher up instead leaves the
@@ -935,8 +963,6 @@ private fun Composer(
             .navigationBarsPadding()
             .imePadding(),
     ) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
         // Blocked in either direction: the composer is replaced entirely rather
         // than disabled in place. A greyed-out field still invites typing, and
         // discovering afterwards that nothing can be sent is worse than being
@@ -945,7 +971,7 @@ private fun Composer(
             Text(
                 text = notice,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (dark) MaterialTheme.colorScheme.onSurfaceVariant else barContentColor.copy(alpha = 0.85f),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1014,7 +1040,7 @@ private fun Composer(
             Icon(
                 imageVector = CommunityIcons.Image,
                 contentDescription = "Attach photo",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = barContentColor,
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape)
@@ -1028,7 +1054,7 @@ private fun Composer(
             Icon(
                 imageVector = InboxIcons.Video,
                 contentDescription = "Attach video",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = barContentColor,
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape)
@@ -1042,16 +1068,14 @@ private fun Composer(
 
             Spacer(Modifier.width(6.dp))
 
+            // Pure white in light mode against the navy composer — same
+            // pairing the app uses everywhere else a search/input field sits
+            // on a dark bar. Dark mode keeps its own surfaceVariant pill.
             Box(
                 Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(22.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .border(
-                        1.dp,
-                        MaterialTheme.colorScheme.outlineVariant,
-                        RoundedCornerShape(22.dp),
-                    )
+                    .background(if (dark) MaterialTheme.colorScheme.surfaceVariant else KinetixWhite)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             ) {
                 if (state.draft.isEmpty()) {
@@ -1085,10 +1109,10 @@ private fun Composer(
                     .size(42.dp)
                     .clip(CircleShape)
                     .background(
-                        if (sendEnabled) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
+                        when {
+                            sendEnabled -> MaterialTheme.colorScheme.primary
+                            dark -> MaterialTheme.colorScheme.surfaceVariant
+                            else -> KinetixWhite.copy(alpha = 0.18f)
                         }
                     )
                     .clickable(enabled = sendEnabled, onClick = onSend),
@@ -1101,10 +1125,10 @@ private fun Composer(
                 Icon(
                     imageVector = InboxIcons.Send,
                     contentDescription = "Send",
-                    tint = if (sendEnabled) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = when {
+                        sendEnabled -> MaterialTheme.colorScheme.onPrimary
+                        dark -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> barContentColor.copy(alpha = 0.6f)
                     },
                     modifier = Modifier.size(19.dp),
                 )

@@ -46,8 +46,23 @@ data class CreatePostUiState(
     val isCommunityLocked: Boolean = false,
     /** When true, the post is submitted to the admin validation queue. */
     val requestValidation: Boolean = false,
+    /**
+     * Raw text of the dedicated Hashtags field at the bottom of the composer,
+     * e.g. "#salamat #patawad". Required before a post carrying media can
+     * request validation — those #tags are what a Text-to-Sign search matches.
+     */
+    val hashtags: String = "",
 ) {
     val canAddMore: Boolean get() = media.size < MAX_POST_MEDIA
+
+    /** Media (image/video) turns on the validation option; text-only hides it. */
+    val hasMedia: Boolean get() = media.isNotEmpty()
+
+    /** Whether validation is both wanted and actually offered (media present). */
+    val wantsValidation: Boolean get() = requestValidation && hasMedia
+
+    /** True once the Hashtags field holds at least one usable #tag. */
+    val hasHashtags: Boolean get() = extractHashtags(hashtags).isNotEmpty()
 
     /** Label for the community pill: the name, or the Home Feed default. */
     val communityLabel: String
@@ -95,7 +110,11 @@ class CreatePostViewModel(
 
     /** Toggles whether this post is submitted for admin validation. */
     fun onToggleValidation(value: Boolean) =
-        _uiState.update { it.copy(requestValidation = value) }
+        _uiState.update { it.copy(requestValidation = value, errorMessage = null) }
+
+    /** Edits the dedicated Hashtags field. */
+    fun onHashtagsChange(value: String) =
+        _uiState.update { it.copy(hashtags = value, errorMessage = null) }
 
     /** Edits the link field at [index]. */
     fun onLinkChange(index: Int, value: String) =
@@ -167,6 +186,16 @@ class CreatePostViewModel(
             return
         }
 
+        // Requesting a validation badge means declaring the signs in the media,
+        // so a validated tutorial is searchable in Text-to-Sign. No #tags, no
+        // submission — but the post can still go out without validation.
+        if (state.wantsValidation && !state.hasHashtags) {
+            _uiState.update {
+                it.copy(errorMessage = "Add at least one #hashtag for each sign to request validation.")
+            }
+            return
+        }
+
         // Take persistent read permission on each URI so the background
         // service can still read them after the activity closes.
         state.media.forEach { item ->
@@ -191,7 +220,11 @@ class CreatePostViewModel(
             )
             putExtra(PostUploadService.EXTRA_COMMUNITY_ID, state.selectedCommunityId)
             putExtra(PostUploadService.EXTRA_COMMUNITY_NAME, state.selectedCommunityName)
-            putExtra(PostUploadService.EXTRA_REQUEST_VALIDATION, state.requestValidation)
+            // Only honor validation when media is actually attached — the toggle
+            // is hidden for text-only posts, but its state could linger if media
+            // was removed after switching it on.
+            putExtra(PostUploadService.EXTRA_REQUEST_VALIDATION, state.wantsValidation)
+            putExtra(PostUploadService.EXTRA_HASHTAGS, state.hashtags)
             if (state.media.isNotEmpty()) {
                 putStringArrayListExtra(
                     PostUploadService.EXTRA_MEDIA_URIS,

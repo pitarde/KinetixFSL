@@ -318,6 +318,10 @@ fun ImmersivePostViewer(
                         Spacer(Modifier.height(4.dp))
                         TruncatedBodyText(text = post.body, maxLines = 3)
                     }
+                    if (post.hashtags.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        PostHashtags(hashtags = post.hashtags)
+                    }
                     Spacer(Modifier.height(12.dp))
                     PostInteractionRow(
                         post = post,

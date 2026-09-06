@@ -3,7 +3,6 @@ package com.example.kinetixfsl.community.inbox
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -72,6 +71,11 @@ import com.example.kinetixfsl.community.openLink
  * Ordered least to most destructive, with Block and Delete last and tinted —
  * the two entries that are hard or impossible to undo shouldn't sit under a
  * thumb reaching for "View profile".
+ *
+ * The sheet chrome itself (scrim, rounded top corners, drag handle,
+ * slide-up-and-swipe-down-to-dismiss) is the caller's SlideUpScreen — see
+ * ChatScreen's own call site — this is just its content, matching the
+ * pattern EditProfileSheet and the Inbox's NewMessageSheet use.
  */
 @Composable
 internal fun ChatOptionsSheet(
@@ -81,9 +85,8 @@ internal fun ChatOptionsSheet(
     onReport: () -> Unit,
     onToggleBlock: () -> Unit,
     onDeleteConversation: () -> Unit,
-    onDismiss: () -> Unit,
 ) {
-    SheetScaffold(onDismiss = onDismiss) {
+    Column(Modifier.navigationBarsPadding().padding(vertical = 12.dp)) {
         SheetRow(CommunityIcons.Profile, "View profile", onViewProfile)
         SheetRow(CommunityIcons.Image, "Media, files and links", onViewMedia)
         SheetRow(CommunityIcons.Report, "Report user", onReport)
@@ -109,48 +112,6 @@ internal fun ChatOptionsSheet(
             onClick = onDeleteConversation,
             tint = MaterialTheme.colorScheme.error,
         )
-    }
-}
-
-/**
- * The app's own dimmed bottom sheet, matching the post-actions sheet rather
- * than Material's `ModalBottomSheet` — same backdrop, same tap-outside and
- * back-to-close behaviour, and no experimental API.
- */
-@Composable
-private fun SheetScaffold(
-    onDismiss: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    BackHandler(onBack = onDismiss)
-
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                .background(MaterialTheme.colorScheme.surface)
-                // Swallow taps on the sheet, so choosing an item doesn't also
-                // register as a tap on the backdrop behind it.
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                ) { }
-                .navigationBarsPadding()
-                .padding(vertical = 12.dp),
-        ) {
-            content()
-        }
     }
 }
 
@@ -293,22 +254,41 @@ internal fun ChatMediaScreen(
     val media = remember(messages) { messages.filter { it.hasMedia } }
     val links = remember(messages) { messages.filter { it.text.containsUrl() } }
 
+    // Same KinetixNavy/white-icon treatment as the Home Feed's own top bar.
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    val barBackground = if (dark) MaterialTheme.colorScheme.surface else com.example.kinetixfsl.ui.theme.KinetixNavy
+    val barContentColor = if (dark) MaterialTheme.colorScheme.onSurface else com.example.kinetixfsl.ui.theme.KinetixWhite
+    com.example.kinetixfsl.ui.theme.StatusBarLightIcons(light = true)
+
+    // This opens drawn over the chat's own composer, whose message field can
+    // still hold focus (and the keyboard with it) from before the 3-dot menu
+    // was tapped — nothing about showing this screen ever released either,
+    // so the keyboard kept popping up over a screen with no text field of
+    // its own to type into.
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        focusManager.clearFocus()
+        keyboard?.hide()
+    }
+
     Column(
         Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding(),
+            .background(MaterialTheme.colorScheme.background),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(barBackground)
+                .statusBarsPadding()
                 .padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = CommunityIcons.ArrowBack,
                 contentDescription = "Back",
-                tint = MaterialTheme.colorScheme.onSurface,
+                tint = barContentColor,
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
@@ -319,7 +299,7 @@ internal fun ChatMediaScreen(
             Text(
                 text = "Media, files and links",
                 style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = barContentColor,
                 fontWeight = FontWeight.Bold,
             )
         }

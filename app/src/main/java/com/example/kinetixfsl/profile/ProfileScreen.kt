@@ -71,6 +71,13 @@ fun ProfileScreen(
      *  closed state lives with the caller. */
     showSettings: Boolean = false,
     onDismissSettings: () -> Unit = {},
+    /**
+     * Reports the local avatar file whenever Edit Profile saves a new one — so
+     * a caller that also renders this photo elsewhere (the Dashboard top bar's
+     * profile shortcut) can update the instant it changes, without polling
+     * [LocalProfileStore] itself.
+     */
+    onAvatarChanged: (java.io.File?) -> Unit = {},
 ) {
     val context = LocalContext.current
 
@@ -121,6 +128,7 @@ fun ProfileScreen(
                 onSaved = { newName, newAvatar ->
                     name = newName
                     avatarFile = newAvatar
+                    onAvatarChanged(newAvatar)
                 },
                 dismiss = dismiss,
             )
