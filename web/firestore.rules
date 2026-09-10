@@ -337,6 +337,68 @@ service cloud.firestore {
       match /devices/{deviceId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
+
+      // ── Restructure targets (FIRESTORE_RESTRUCTURE.md) ────────────────────
+      // These four subcollections consolidate per-learner data that used to
+      // live in dedicated ROOT collections (otp_codes, accountStatus, progress,
+      // notifications). Both the old root paths (further down this file) and
+      // these new nested paths are permitted at once, so the app and admin
+      // console can dual-write/dual-read through the migration window. The old
+      // root blocks are removed only in Phase 5, once adoption is verified.
+      //
+      // A subcollection does NOT inherit users/{uid}'s public read — each rule
+      // below stands on its own, so private data stays private while nested
+      // under the world-readable profile. §5.1 of the plan.
+
+      // OTP second factor — was otp_codes/{uid}. Owner only. (The recursive
+      // admin grant below still lets an admin delete it during an account wipe.)
+      match /private/{docId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Account moderation state — was accountStatus/{uid}. The learner reads it
+      // to enforce a disable/penalty at sign-in; only an admin writes it.
+      match /status/{docId} {
+        allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+        allow write: if isAdmin();
+      }
+
+      // Learner progress — was progress/{uid}. Owner reads+writes their own;
+      // an admin may read it (the analytics module) and delete it in a wipe, but
+      // never writes a learner's progress. The collection-group read that backs
+      // analytics across every learner is granted separately, below the block.
+      match /progress/{docId} {
+        allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+        allow create, update: if request.auth != null && request.auth.uid == userId;
+        allow delete: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      }
+
+      // Notification inbox — was notifications/{uid}/items/{itemId}. Same
+      // asymmetric contract: others write your rows, only you read/mark/clear
+      // them; the sender may fix their own name/photo on rows they wrote.
+      match /notifications/{itemId} {
+        allow read: if request.auth != null && (request.auth.uid == userId || isAdmin());
+        allow create: if request.auth != null
+                      && request.resource.data.isRead == false
+                      && (request.resource.data.fromUserId == request.auth.uid
+                          || (request.resource.data.fromUserId == ''
+                              && request.auth.uid == userId));
+        allow update: if request.auth != null
+                      && (request.auth.uid == userId
+                          || (request.auth.uid == resource.data.fromUserId
+                              && request.resource.data.diff(resource.data).affectedKeys()
+                                   .hasOnly(['fromUserName', 'fromUserPhoto'])));
+        allow delete: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      }
+
+      // Deletion manifest — one small row per document this user wrote into
+      // someone else's subtree (comment, vote, share, follower marker, outgoing
+      // notification). The account-delete sweep reads this to clear those rows
+      // deterministically, without depending on collection-group indexes. §4.2.
+      match /authored/{docId} {
+        allow read, write: if request.auth != null
+                           && (request.auth.uid == userId || isAdmin());
+      }
     }
 
     // Admin sweep of EVERYTHING under a user's document. The account-deletion
@@ -563,6 +625,27 @@ service cloud.firestore {
                   && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
+    // Collection-group read over every learner's progress/current doc — this is
+    // what the admin analytics module is computed from once progress moves to
+    // users/{uid}/progress/current (Phase 3). Admin-only; the nested owner read
+    // is granted in the users block above. Backed by the `progress`
+    // collection-group index in firestore.indexes.json.
+    match /{path=**}/progress/{docId} {
+      allow read: if isAdmin();
+    }
+
+    // Collection-group read over every user's notification rows in the new
+    // nested location (users/{uid}/notifications), the mirror of the old
+    // `items` collection-group rule. Renaming yourself needs to find your own
+    // past notifications wherever they live; the fromUserId condition is what
+    // makes that safe — Firestore rejects a query it can't prove satisfies the
+    // rule, so a query without `where fromUserId == <me>` never runs. Backed by
+    // the `notifications.fromUserId` collection-group index (Phase 4).
+    match /{path=**}/notifications/{itemId} {
+      allow read: if request.auth != null
+                  && resource.data.fromUserId == request.auth.uid;
+    }
+
     // -----------------------------------------------------------------------
     // Admin console OTP codes — otp_codes/{uid}
     //
@@ -576,21 +659,12 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
-    // -----------------------------------------------------------------------
-    // Learner progress — progress/{uid}
-    //
-    // A DEDICATED, PRIVATE collection (not the world-readable users profile):
-    // the mobile app mirrors each learner's XP/streak/detection analytics here
-    // (ProgressSyncWorker). Only the learner may read or write their own doc;
-    // the admin console may read every learner's doc (this is what the whole
-    // four-level analytics module is computed from) and delete one during an
-    // account wipe. The admin never writes a learner's progress.
-    // -----------------------------------------------------------------------
-    match /progress/{uid} {
-      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
-      allow create, update: if request.auth != null && request.auth.uid == uid;
-      allow delete: if request.auth != null && (request.auth.uid == uid || isAdmin());
-    }
+    // Learner progress now lives at users/{uid}/progress/current — see the
+    // `match /progress/{docId}` block nested under `users/{userId}` above, and
+    // the `/{path=**}/progress/{docId}` collection-group rule below it. The old
+    // root `progress/{uid}` collection and its rule were retired once the
+    // database was confirmed to hold no pre-migration data (see
+    // web/FIRESTORE_RESTRUCTURE.md).
 
     // -----------------------------------------------------------------------
     // Admin allowlist — admins/{uid}

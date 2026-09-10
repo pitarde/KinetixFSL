@@ -147,6 +147,27 @@ class InboxViewModel(
         viewModelScope.launch { messages.deleteHistory(conversationId) }
     }
 
+    /**
+     * Opens the thread a message notification points at — but only if it still
+     * exists and the user hasn't deleted it from their side. Otherwise
+     * [onUnavailable] fires so the caller can show the "no longer available"
+     * notice instead of an empty chat.
+     */
+    fun openMessageNotification(
+        conversationId: String,
+        otherUid: String,
+        onOpen: (String, String) -> Unit,
+        onUnavailable: () -> Unit,
+    ) {
+        viewModelScope.launch {
+            if (messages.conversationAvailable(conversationId)) {
+                onOpen(conversationId, otherUid)
+            } else {
+                onUnavailable()
+            }
+        }
+    }
+
     fun deleteNotification(id: String) {
         viewModelScope.launch { notifications.delete(id) }
     }

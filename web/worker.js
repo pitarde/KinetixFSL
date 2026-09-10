@@ -92,19 +92,37 @@ export default {
         ? rawUid
         : null;
 
-      // --- Optional purpose sub-folder --------------------------------
-      // The app tags chat attachments with folder="chat" so message media
-      // sits apart from post/profile media: {uid}/chat/images/…, not mixed
-      // into {uid}/images/…. A strict slug so it can't inject path segments.
+      // --- Purpose sub-folder -------------------------------------------
+      // Every upload site (see R2MediaUploader.Folder on the Android side)
+      // tags its request with one of these five, so the bucket reads as:
+      //   {uid}/chat/images, chat/videos                — direct-message media
+      //   {uid}/comments/images                         — images attached to a comment
+      //   {uid}/user_profile/images                     — the learner's own avatar/banner
+      //   {uid}/community_profile/images                — a created community's avatar/banner
+      //   {uid}/posts/images, posts/videos               — post media, and its derived
+      //                                                     feed/preview copies
+      // Checked against this allowlist, not just a shape regex, so a stray or
+      // misspelled value can't quietly create a sixth folder and undo the
+      // organisation — it just falls back to the flat legacy layout instead
+      // (still safe: the regex below stops path-segment injection either way).
+      const ALLOWED_FOLDERS = new Set([
+        "chat",
+        "comments",
+        "user_profile",
+        "community_profile",
+        "posts",
+      ]);
       const rawFolder = formData.get("folder");
       const subFolder =
-        typeof rawFolder === "string" && /^[a-z0-9_-]{1,32}$/.test(rawFolder)
+        typeof rawFolder === "string" &&
+        /^[a-z0-9_-]{1,32}$/.test(rawFolder) &&
+        ALLOWED_FOLDERS.has(rawFolder)
           ? rawFolder
           : null;
 
       // --- Generate a unique key ------------------------------------------
-      //   {uid}/{subFolder}/{mediaFolder}/{name}   e.g. abc123/chat/images/…
-      //   {uid}/{mediaFolder}/{name}               no sub-folder
+      //   {uid}/{subFolder}/{mediaFolder}/{name}   e.g. abc123/posts/images/…
+      //   {uid}/{mediaFolder}/{name}               no sub-folder (older client, or an unrecognised folder value)
       //   {mediaFolder}/{name}                     no uid (legacy / anon)
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(2, 10);

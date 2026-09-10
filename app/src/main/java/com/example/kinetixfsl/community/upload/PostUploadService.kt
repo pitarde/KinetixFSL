@@ -11,11 +11,13 @@ import androidx.core.app.NotificationCompat
 import com.example.kinetixfsl.R
 import com.example.kinetixfsl.community.CommunityRepository
 import com.example.kinetixfsl.community.model.PostMedia
+import com.example.kinetixfsl.community.model.storageKeyOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 /**
@@ -68,6 +70,12 @@ class PostUploadService : Service() {
                 thumbUrl = existingThumbs.getOrNull(i)?.takeIf { it.isNotBlank() },
             )
         }
+        // The post's media as it stood before this edit — see EditPostViewModel.
+        // Diffed against what's actually being kept/added so the R2 objects for
+        // anything removed or replaced can be deleted, not left orphaned.
+        val originalUrls = intent?.getStringArrayListExtra(EXTRA_ORIGINAL_URLS).orEmpty()
+        val originalThumbs = intent?.getStringArrayListExtra(EXTRA_ORIGINAL_THUMBS).orEmpty()
+        val originalPreviewUrl = intent?.getStringExtra(EXTRA_ORIGINAL_PREVIEW_URL)
 
         startForeground(NOTIFICATION_ID, buildUploadingNotification())
 
@@ -80,6 +88,21 @@ class PostUploadService : Service() {
                 var previewBlur: String? = null
 
                 val itemCount = minOf(mediaUriStrings.size, mediaTypes.size)
+
+                // The share-link preview/blur are only worth (re)generating for
+                // whichever attachment ends up FIRST in the post overall. Final
+                // order is existingMedia + uploaded, so a new upload is only the
+                // true first item when there's no kept media ahead of it — if
+                // existingMedia isn't empty, the post's first attachment didn't
+                // change, and the existing previewUrl is still correct. Getting
+                // this right matters: generating (and uploading) a preview that
+                // then gets thrown away, which the code used to do for every new
+                // item at loop-index 0 regardless of final position, is exactly
+                // what left an untracked, unreferenced .jpg behind in R2 on every
+                // such edit — untracked because it was never written to the post
+                // doc, so no cleanup path (including account deletion) could ever
+                // find it.
+                val newItemCanBeOverallFirst = existingMedia.isEmpty()
 
                 // Each item gets an equal slice of the 0..85% band. Uploads
                 // aren't equal in duration, but a bar that always advances
@@ -146,6 +169,7 @@ class PostUploadService : Service() {
                             R2MediaUploader.uploadFile(
                                 file = compressedFile,
                                 resourceType = "video",
+                                folder = R2MediaUploader.Folder.POSTS,
                             ) { pct ->
                                 updateProgress(label, scale(pct, midBand, bandEnd))
                             }
@@ -154,13 +178,15 @@ class PostUploadService : Service() {
                                 context = this@PostUploadService,
                                 uri = mediaUri,
                                 resourceType = "video",
+                                folder = R2MediaUploader.Folder.POSTS,
                             )
                         }
 
                         when (uploadResult) {
                             is R2MediaUploader.UploadResult.Success -> {
-                                val derived = deriveFor(mediaUri, mediaType, index == 0)
-                                if (index == 0) {
+                                val isOverallFirst = newItemCanBeOverallFirst && index == 0
+                                val derived = deriveFor(mediaUri, mediaType, isOverallFirst)
+                                if (isOverallFirst) {
                                     previewUrl = derived.previewUrl
                                     previewBlur = derived.blur
                                 }
@@ -184,10 +210,12 @@ class PostUploadService : Service() {
                             context = this@PostUploadService,
                             uri = mediaUri,
                             resourceType = "image",
+                            folder = R2MediaUploader.Folder.POSTS,
                         )) {
                             is R2MediaUploader.UploadResult.Success -> {
-                                val derived = deriveFor(mediaUri, mediaType, index == 0)
-                                if (index == 0) {
+                                val isOverallFirst = newItemCanBeOverallFirst && index == 0
+                                val derived = deriveFor(mediaUri, mediaType, isOverallFirst)
+                                if (isOverallFirst) {
                                     previewUrl = derived.previewUrl
                                     previewBlur = derived.blur
                                 }
@@ -216,47 +244,140 @@ class PostUploadService : Service() {
                 // Preview, blur and feed copies are all produced inside the loop
                 // above, from a single decode per attachment.
 
+                // ── Step 2.5: free the R2 objects this edit removed ───────
+                // Anything in the post's ORIGINAL media that isn't in the final
+                // set (kept + newly uploaded) was removed or replaced by this
+                // edit, so its files no longer belong to the post — including
+                // the feed-resolution thumbUrl copy alongside the full file.
+                // Must run BEFORE the Firestore write below: the Worker
+                // authorises a post's media deletions against that post
+                // document's CURRENTLY STORED urls (see worker.js
+                // handleDeleteMedia), so the old array has to still be there
+                // when this call is made — same ordering AccountEraser and the
+                // admin console's account wipe already rely on.
+                // The post's overall FIRST attachment is what the 1200x630
+                // share-link preview (.jpg) is built from. Decide whether this
+                // edit changed that first attachment — if so the stored preview
+                // now shows a removed/replaced image and must be rewritten, and
+                // the old .jpg deleted. (Final order is kept media, then new
+                // uploads.)
+                val finalMedia = existingMedia + uploaded
+                val originalFirstUrl = originalUrls.firstOrNull()
+                val finalFirst = finalMedia.firstOrNull()
+                val previewChanged = isEdit && finalFirst?.url != originalFirstUrl
+
+                // When the new first attachment is a NEW upload, the loop above
+                // already produced its preview (previewUrl != null). When it's a
+                // KEPT (already-uploaded) item — e.g. the user removed the old
+                // first image and an existing one moved into first place — there
+                // was no local file to derive from, so fetch that item's image
+                // back from R2 and regenerate the preview here. If it can't be
+                // regenerated, previewUrl stays null, which CLEARS the stale
+                // preview (the Worker's share card then falls back to the full
+                // first image) rather than keeping a preview of a removed image.
+                if (previewChanged && previewUrl == null && finalFirst != null) {
+                    updateProgress("Saving post…", 90)
+                    val srcUrl = if (finalFirst.isVideo) {
+                        finalFirst.thumbUrl ?: finalFirst.url
+                    } else {
+                        finalFirst.url
+                    }
+                    val bytes = runCatching { R2MediaUploader.downloadBytes(srcUrl) }.getOrNull()
+                    if (bytes != null) {
+                        val regen = SharePreviewGenerator.derivePreviewFromBytes(bytes)
+                        previewUrl = regen.previewUrl
+                        previewBlur = regen.blur
+                    }
+                }
+
+                // The old preview belonged to the previous first attachment, so
+                // delete it whenever the first attachment changed — whether it
+                // was replaced by a new preview or cleared.
+                val supersededPreviewKey = if (previewChanged) {
+                    originalPreviewUrl
+                        ?.takeIf { it.isNotBlank() && it != previewUrl }
+                        ?.let { storageKeyOf(it) }
+                } else {
+                    null
+                }
+
+                if (isEdit) {
+                    val keptUrls = finalMedia.map { it.url }.toSet()
+                    val keptThumbs = finalMedia.mapNotNull { it.thumbUrl }.toSet()
+                    val removedKeys = (
+                        originalUrls.filter { it.isNotBlank() && it !in keptUrls } +
+                            originalThumbs.filter { it.isNotBlank() && it !in keptThumbs }
+                        )
+                        .mapNotNull { storageKeyOf(it) }
+                        .plus(listOfNotNull(supersededPreviewKey))
+                        .distinct()
+                    if (removedKeys.isNotEmpty()) {
+                        runCatching { R2MediaUploader.deleteObjects(postId, removedKeys) }
+                    }
+                }
+
                 // ── Step 3: write the post to Firestore ──────────────────
                 updateProgress("Saving post…", 95)
 
-                val result = if (isEdit) {
-                    // Retained media first, then anything just uploaded — the
-                    // same order the edit screen showed.
-                    repository.updatePost(
-                        postId = postId,
-                        title = title,
-                        body = body,
-                        links = links,
-                        media = existingMedia + uploaded,
-                        communityId = communityId,
-                        communityName = communityName,
-                        requestValidation = requestValidation,
-                        hashtagsText = hashtagsText,
-                    )
-                } else {
-                    repository.createPost(
-                        title = title,
-                        body = body,
-                        links = links,
-                        media = uploaded,
-                        previewUrl = previewUrl,
-                        previewBlur = previewBlur,
-                        communityId = communityId,
-                        communityName = communityName,
-                        requestValidation = requestValidation,
-                        hashtagsText = hashtagsText,
-                    ).map { }
+                // Bounded by a timeout so the notification is ALWAYS resolved.
+                // With Firestore offline persistence (on by default) a write's
+                // await() completes only on SERVER acknowledgement — the write
+                // commits to the local cache immediately (so the post appears in
+                // the home feed at once), but on a flaky connection the ack can
+                // be delayed indefinitely, leaving await() hanging and the
+                // progress notification frozen mid-way even though the post is
+                // effectively saved. If we don't hear back within the timeout,
+                // the write is already committed locally and queued to sync, so
+                // we report success rather than leaving the user staring at a
+                // stuck bar. A genuine failure (returned Result) still surfaces.
+                val saveResult: Result<Unit>? = withTimeoutOrNull(SAVE_TIMEOUT_MS) {
+                    if (isEdit) {
+                        // Retained media first, then anything just uploaded — the
+                        // same order the edit screen showed. The preview fields
+                        // are rewritten only when previewChanged (updatePreview);
+                        // otherwise updatePost leaves the existing preview alone.
+                        repository.updatePost(
+                            postId = postId,
+                            title = title,
+                            body = body,
+                            links = links,
+                            media = existingMedia + uploaded,
+                            communityId = communityId,
+                            communityName = communityName,
+                            requestValidation = requestValidation,
+                            hashtagsText = hashtagsText,
+                            previewUrl = previewUrl,
+                            previewBlur = previewBlur,
+                            // Only rewrite the preview when the first attachment
+                            // actually changed (see previewChanged above).
+                            updatePreview = previewChanged,
+                        )
+                    } else {
+                        repository.createPost(
+                            title = title,
+                            body = body,
+                            links = links,
+                            media = uploaded,
+                            previewUrl = previewUrl,
+                            previewBlur = previewBlur,
+                            communityId = communityId,
+                            communityName = communityName,
+                            requestValidation = requestValidation,
+                            hashtagsText = hashtagsText,
+                        ).map { }
+                    }
                 }
 
-                result.fold(
-                    onSuccess = { showSuccessNotification(isEdit) },
-                    onFailure = { e ->
-                        showFailedNotification(
-                            e.localizedMessage
-                                ?: if (isEdit) "Couldn't save changes." else "Couldn't create post."
-                        )
-                    },
-                )
+                when {
+                    // Timed out waiting for the server ack — committed locally
+                    // and queued; the post is already in the feed. Report done.
+                    saveResult == null -> showSuccessNotification(isEdit)
+                    saveResult.isSuccess -> showSuccessNotification(isEdit)
+                    else -> showFailedNotification(
+                        saveResult.exceptionOrNull()?.localizedMessage
+                            ?: if (isEdit) "Couldn't save changes." else "Couldn't create post."
+                    )
+                }
             } catch (e: Exception) {
                 showFailedNotification(e.localizedMessage ?: "Upload failed.")
             } finally {
@@ -414,8 +535,27 @@ class PostUploadService : Service() {
         const val EXTRA_EXISTING_URLS = "existing_urls"
         const val EXTRA_EXISTING_TYPES = "existing_types"
         const val EXTRA_EXISTING_THUMBS = "existing_thumbs"
+        /**
+         * The post's media exactly as it was before this edit — used to work
+         * out what got removed/replaced so those R2 objects can be deleted.
+         * See EditPostViewModel.originalMedia.
+         */
+        const val EXTRA_ORIGINAL_URLS = "original_urls"
+        const val EXTRA_ORIGINAL_THUMBS = "original_thumbs"
+        /** The post's previewUrl before this edit — see EditPostViewModel.originalPreviewUrl. */
+        const val EXTRA_ORIGINAL_PREVIEW_URL = "original_preview_url"
 
         /** Media uploads occupy 0..85%; preview and Firestore take the rest. */
         private const val MEDIA_BAND_END = 85
+
+        /**
+         * How long to wait for the Firestore write's SERVER acknowledgement
+         * before treating the post as saved anyway. The media (the slow part)
+         * is already uploaded by this point and the write is committed to the
+         * local cache instantly; this only guards against a delayed server ack
+         * freezing the notification. 20s is generous for a tiny document write
+         * on any working connection.
+         */
+        private const val SAVE_TIMEOUT_MS = 20_000L
     }
 }

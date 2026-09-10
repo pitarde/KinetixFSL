@@ -19,7 +19,8 @@ import kotlinx.coroutines.tasks.await
  *
  * Best-effort and client-side: each step is guarded, so one failure never
  * aborts the rest. It deletes everything the security rules let a user delete
- * for themselves: their local Room database rows, their `progress/{uid}` doc,
+ * for themselves: their local Room database rows, their
+ * `users/{uid}/progress/current` doc,
  * their own posts (with the comments/votes/shares under them), every
  * community they created (with EVERY post inside it, by any author, so a
  * deleted community's content doesn't linger in the feed), their
@@ -119,13 +120,25 @@ class AccountEraser(
 
     private suspend fun wipeEverything(context: Context, uid: String) {
         clearLocalProgress(context, uid)
-        runCatching { db.collection(PROGRESS).document(uid).delete().await() }
-            .onFailure { Log.w(TAG, "progress doc delete failed", it) }
+        // Progress lives at users/{uid}/progress/current (the restructure's
+        // Phase 3 target). This is technically redundant with the recursive
+        // subcollection sweep below, but kept explicit for clarity and as a
+        // belt-and-suspenders in case that sweep's list of subcollections ever
+        // drifts.
+        runCatching {
+            db.collection(USERS).document(uid)
+                .collection(PROGRESS).document(PROGRESS_DOC).delete().await()
+        }.onFailure { Log.w(TAG, "progress delete failed", it) }
         deleteOwnPosts(uid)
         deleteOwnCommunities(uid)
-        // Cascade this user's marks off OTHER people's content — their comments
-        // and votes everywhere — correcting each affected post's counts. Runs
-        // after deleteOwnPosts so it only touches surviving posts.
+        // Deterministic first pass: clear everything this user wrote into other
+        // people's subtrees using the manifest (comments, votes, shares, outgoing
+        // notifications), repairing each affected post's counters. No dependence
+        // on collection-group indexes. See AuthoredManifest and §4.2 of the plan.
+        deleteViaManifest(uid)
+        // Fallback sweep for anything the manifest missed (older clients, a
+        // failed companion write). Both use RECOUNT, so running after the manifest
+        // pass is idempotent — a post already fixed is simply set to the same value.
         deleteOwnCommentsEverywhere(uid)
         deleteOwnVotesEverywhere(uid)
         // Direct messages and their R2 media — and the whole thread once both
@@ -141,8 +154,10 @@ class AccountEraser(
 
     /**
      * Clears this account's local offline data: the Room/SQLite rows for its uid
-     * (progress, activity log, quiz game) plus any leftover legacy
-     * SharedPreferences files from before the Room migration.
+     * (progress, activity log, quiz game), its saved local profile name/avatar
+     * override (see [com.example.kinetixfsl.profile.LocalProfileStore]), plus
+     * any leftover legacy SharedPreferences files from before the Room
+     * migration.
      */
     private fun clearLocalProgress(context: Context, uid: String) {
         runCatching {
@@ -151,6 +166,10 @@ class AccountEraser(
             db.activityDao().wipe(uid)
             db.quizDao().wipe(uid)
         }.onFailure { Log.w(TAG, "local Room wipe failed", it) }
+
+        runCatching {
+            com.example.kinetixfsl.profile.LocalProfileStore.clear(context, uid)
+        }.onFailure { Log.w(TAG, "local profile override clear failed", it) }
 
         // Legacy prefs (harmless if already migrated/removed).
         listOf("kinetix_progress__$uid", "kinetix_activity__$uid", "quiz_game__$uid")
@@ -519,9 +538,74 @@ class AccountEraser(
             }
         }.onFailure { Log.w(TAG, "profile media delete failed", it) }.let { }
 
-    /** Empties this user's notification inbox. */
+    /**
+     * Consumes the deletion manifest (`users/{uid}/authored`): deletes every
+     * cross-user document this user wrote — comments, votes, shares, and the
+     * outgoing notifications they left in other inboxes — then repairs the
+     * post-scoped counters on each affected parent by RECOUNTING its surviving
+     * children (self-correcting, same as the fallback sweeps).
+     *
+     * Follower counters are left to [clearFollowGraph] and community member
+     * counters to [leaveJoinedCommunities]: those iterate this user's own lists
+     * and decrement once, so repairing them here too would double-count. Manifest
+     * rows of those types only delete their target document.
+     */
+    private suspend fun deleteViaManifest(uid: String) = runCatching {
+        val authored = db.collection(USERS).document(uid).collection(AUTHORED)
+        // parentPath -> manifest type, so each affected parent is recounted once.
+        val toRepair = mutableMapOf<String, String>()
+
+        while (true) {
+            val snap = authored.limit(BATCH.toLong()).get().await()
+            if (snap.isEmpty) break
+            for (doc in snap.documents) {
+                val path = doc.getString("path")
+                if (path.isNullOrBlank()) { runCatching { doc.reference.delete().await() }; continue }
+                val type = doc.getString("type") ?: ""
+                val parentPath = doc.getString("parentPath")
+                runCatching { db.document(path).delete().await() }
+                if (!parentPath.isNullOrBlank() &&
+                    type in setOf(TYPE_COMMENT, TYPE_VOTE, TYPE_COMMENT_VOTE, TYPE_SHARE)
+                ) {
+                    toRepair[parentPath] = type
+                }
+                runCatching { doc.reference.delete().await() }
+            }
+            if (snap.size() < BATCH) break
+        }
+
+        for ((parentPath, type) in toRepair) {
+            val parentRef = db.document(parentPath)
+            runCatching {
+                when (type) {
+                    TYPE_COMMENT -> {
+                        val remaining = parentRef.collection(COMMENTS).get().await().size().toLong()
+                        parentRef.update("commentCount", remaining).await()
+                    }
+                    TYPE_SHARE -> {
+                        val remaining = parentRef.collection(SHARES).get().await().size().toLong()
+                        parentRef.update("shareCount", remaining).await()
+                    }
+                    TYPE_VOTE, TYPE_COMMENT_VOTE -> {
+                        val left = parentRef.collection(VOTES).get().await().documents
+                        val up = left.count { it.getString("direction") == "up" }.toLong()
+                        val down = left.count { it.getString("direction") == "down" }.toLong()
+                        parentRef.update(
+                            mapOf("upvoteCount" to up, "downvoteCount" to down, "score" to up - down),
+                        ).await()
+                    }
+                }
+            }
+        }
+    }.onFailure { Log.w(TAG, "manifest sweep failed", it) }.let { }
+
+    /** Empties this user's notification inbox — both the new nested path and the old root. */
     private suspend fun deleteNotifications(uid: String) = runCatching {
-        deleteAllIn(db.collection(NOTIFICATIONS).document(uid).collection(ITEMS))
+        runCatching {
+            deleteAllIn(db.collection(USERS).document(uid).collection(NOTIFICATIONS_SUB))
+        }
+        // OLD PATH (Phase 5: remove).
+        runCatching { deleteAllIn(db.collection(NOTIFICATIONS).document(uid).collection(ITEMS)) }
     }.onFailure { Log.w(TAG, "notifications delete failed", it) }.let { }
 
     /** Deletes a whole (sub)collection in batches; best-effort. */
@@ -541,6 +625,8 @@ class AccountEraser(
     private companion object {
         const val TAG = "AccountEraser"
         const val PROGRESS = "progress"
+        /** Doc id of the single nested progress doc: users/{uid}/progress/current. */
+        const val PROGRESS_DOC = "current"
         const val POSTS = "posts"
         const val VOTES = "votes"
         const val SHARES = "shares"
@@ -550,13 +636,21 @@ class AccountEraser(
         const val JOINED_COMMUNITIES = "joinedCommunities"
         const val FOLLOWING = "following"
         const val FOLLOWERS = "followers"
-        const val NOTIFICATIONS = "notifications"
+        const val NOTIFICATIONS = "notifications"       // old root collection
+        const val NOTIFICATIONS_SUB = "notifications"   // users/{uid}/notifications (new)
         const val ITEMS = "items"
+        const val AUTHORED = AuthoredManifest.COLLECTION
         const val CONVERSATIONS = "conversations"
         const val MESSAGES = "messages"
         const val USERS = "users"
         const val FIELD_COMMUNITY_ID = "communityId"
         const val BATCH = 300
+
+        // Manifest types — aliased from AuthoredManifest for readable when-arms.
+        const val TYPE_COMMENT = AuthoredManifest.TYPE_COMMENT
+        const val TYPE_VOTE = AuthoredManifest.TYPE_VOTE
+        const val TYPE_COMMENT_VOTE = AuthoredManifest.TYPE_COMMENT_VOTE
+        const val TYPE_SHARE = AuthoredManifest.TYPE_SHARE
 
         /**
          * Subcollections under `users/{uid}` cleared when the account is wiped.
@@ -578,6 +672,13 @@ class AccountEraser(
             "blocked",
             "blockedBy",
             "devices",
+            // Restructure additions — all owner-deletable subcollections that now
+            // live under users/{uid}, so a self-delete leaves no ghost subtree.
+            // (`status/moderation` is admin-write-only by design, so the owner
+            // can't clear it — an admin sweep does, same as the old accountStatus
+            // root doc. `progress` and the notification inbox are cleared above.)
+            AuthoredManifest.COLLECTION,   // authored — the deletion manifest itself
+            "private",                     // private/otp
         )
     }
 }

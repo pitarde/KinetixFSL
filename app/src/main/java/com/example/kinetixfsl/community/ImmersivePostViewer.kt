@@ -124,6 +124,16 @@ fun ImmersivePostViewer(
     var isComposerOpen by remember { mutableStateOf(false) }
     var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
 
+    // Reporting the post from the flag icon in its interaction row — hidden on
+    // your own post, same as the feed and detail screen.
+    val reportContext = LocalContext.current
+    val reportRepository = remember { ReportRepository() }
+    var isReporting by remember { mutableStateOf(false) }
+    val isOwnPost = remember(post.authorId) {
+        post.authorId.isNotBlank() &&
+            post.authorId == com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+    }
+
     /**
      * True once the sheet has started to rise. derivedStateOf keeps this from
      * recomposing on every scroll pixel — only when the boolean actually flips.
@@ -333,6 +343,7 @@ fun ImmersivePostViewer(
                             isComposerOpen = true
                         },
                         onShare = onShare,
+                        onReport = if (isOwnPost) null else ({ isReporting = true }),
                     )
                     Spacer(Modifier.height(12.dp))
                 }
@@ -491,6 +502,22 @@ fun ImmersivePostViewer(
         FullScreenMediaViewer(
             imageUrl = fullScreenImageUrl,
             onClose = { fullScreenImageUrl = null },
+        )
+    }
+
+    if (isReporting) {
+        ReportReasonDialog(
+            subject = "post",
+            onSubmit = { reason ->
+                scope.launch { reportRepository.reportPost(post, reason) }
+                isReporting = false
+                android.widget.Toast.makeText(
+                    reportContext,
+                    "Thanks — we'll review this post.",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            },
+            onDismiss = { isReporting = false },
         )
     }
 }

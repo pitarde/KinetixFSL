@@ -284,6 +284,7 @@ fun CommunityHomeScreen(
                     // instead of a field swapped into the top bar itself.
                     showSearchBar = searchActive,
                     onMenuClick = { post -> actionsPost = post },
+                    onReportPost = { post -> pendingReportPost = post },
                     onOpenCommunity = openCommunity,
                     onOpenPostById = openPostById,
                     // Tapping a #hashtag opens this community's own inline

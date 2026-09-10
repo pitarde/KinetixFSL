@@ -264,6 +264,7 @@ fun CommunityScreen(
                 // for bandwidth: no autoplay, no prefetch behind the overlay.
                 isFeedActive = overlays.isEmpty(),
                 onFeedMenuClick = { post -> actionsPost = post },
+                onReportPost = { post -> pendingReportPost = post },
                 onOpenPostById = openPostById,
                 feedListState = feedListState,
                 feedViewModel = feedViewModel,
@@ -617,6 +618,7 @@ private fun CommunityScaffold(
     onOpenCommunity: (String) -> Unit,
     isFeedActive: Boolean,
     onFeedMenuClick: (Post) -> Unit,
+    onReportPost: (Post) -> Unit,
     onOpenPostById: (String) -> Unit,
     feedListState: LazyListState,
     feedViewModel: CommunityFeedViewModel,
@@ -720,6 +722,7 @@ private fun CommunityScaffold(
             onOpenCommunity = onOpenCommunity,
             isFeedActive = isFeedActive,
             onMenuClick = onFeedMenuClick,
+            onReportPost = onReportPost,
             onOpenPostById = onOpenPostById,
             // Tapping a #hashtag opens search for it, pre-filled with "#tag" —
             // the same query text search already matches against a post's raw

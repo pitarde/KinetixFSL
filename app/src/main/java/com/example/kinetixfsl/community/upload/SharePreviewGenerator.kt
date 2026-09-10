@@ -106,8 +106,34 @@ object SharePreviewGenerator {
         }
         if (scaled !== source) scaled.recycle()
 
-        return uploadOrNull(bytes, "feed.webp", "image/webp")
+        return uploadOrNull(bytes, "feed.webp", "image/webp", R2MediaUploader.Folder.POSTS)
     }
+
+    /**
+     * Builds the share-link preview (+ blur) from the raw bytes of an image
+     * that's ALREADY uploaded — used when a post edit promotes an existing
+     * attachment to be the new first item, so there's no local file to derive
+     * from and its image is fetched back from R2 first (see
+     * PostUploadService and R2MediaUploader.downloadBytes). Only the preview and
+     * blur are produced — the existing attachment already has its feed copy.
+     * Best-effort: any failure yields empty [Derivatives].
+     */
+    suspend fun derivePreviewFromBytes(imageBytes: ByteArray): Derivatives =
+        withContext(Dispatchers.IO) {
+            val source = try {
+                BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+            } catch (_: Exception) {
+                null
+            } ?: return@withContext Derivatives()
+
+            try {
+                val previewUrl = runCatching { uploadLetterboxedPreview(source) }.getOrNull()
+                val blur = runCatching { encodeBlur(source) }.getOrNull()
+                Derivatives(previewUrl = previewUrl, blur = blur)
+            } finally {
+                source.recycle()
+            }
+        }
 
     private suspend fun uploadLetterboxedPreview(source: Bitmap): String? {
         val preview = letterboxToPreview(source)
@@ -117,7 +143,7 @@ object SharePreviewGenerator {
         }
         preview.recycle()
 
-        return uploadOrNull(bytes, "preview.jpg", "image/jpeg")
+        return uploadOrNull(bytes, "preview.jpg", "image/jpeg", R2MediaUploader.Folder.POSTS)
     }
 
     private fun encodeBlur(source: Bitmap): String? {
@@ -139,7 +165,10 @@ object SharePreviewGenerator {
         bytes: ByteArray,
         fileName: String,
         mimeType: String,
-    ): String? = when (val result = R2MediaUploader.uploadBytes(bytes, fileName, mimeType)) {
+        folder: String? = null,
+    ): String? = when (
+        val result = R2MediaUploader.uploadBytes(bytes, fileName, mimeType, folder = folder)
+    ) {
         is R2MediaUploader.UploadResult.Success -> result.secureUrl
         is R2MediaUploader.UploadResult.Error -> null
     }
@@ -183,7 +212,11 @@ object SharePreviewGenerator {
         }
         scaled.recycle()
 
-        when (val result = R2MediaUploader.uploadBytes(bytes, "feed.webp", "image/webp")) {
+        when (
+            val result = R2MediaUploader.uploadBytes(
+                bytes, "feed.webp", "image/webp", folder = R2MediaUploader.Folder.POSTS,
+            )
+        ) {
             is R2MediaUploader.UploadResult.Success -> result.secureUrl
             is R2MediaUploader.UploadResult.Error -> null
         }
@@ -285,7 +318,11 @@ object SharePreviewGenerator {
         }
         preview.recycle()
 
-        when (val result = R2MediaUploader.uploadBytes(bytes, "preview.jpg", "image/jpeg")) {
+        when (
+            val result = R2MediaUploader.uploadBytes(
+                bytes, "preview.jpg", "image/jpeg", folder = R2MediaUploader.Folder.POSTS,
+            )
+        ) {
             is R2MediaUploader.UploadResult.Success -> result.secureUrl
             is R2MediaUploader.UploadResult.Error -> null
         }

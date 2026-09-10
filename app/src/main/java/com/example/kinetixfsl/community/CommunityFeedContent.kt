@@ -123,6 +123,11 @@ fun CommunityFeedContent(
     /** Tapping a post's 3-dot menu — the host decides what the sheet shows. */
     onMenuClick: (Post) -> Unit = {},
     /**
+     * Reporting a post from the flag icon in its interaction row. The host owns
+     * the reason dialog. Not shown on the signed-in user's own posts.
+     */
+    onReportPost: (Post) -> Unit = {},
+    /**
      * Opens a post by id from an in-app share link pasted into a post. Community
      * and profile share links reuse [onOpenCommunity] and [onAuthorClick].
      */
@@ -153,6 +158,10 @@ fun CommunityFeedContent(
     insetForBottomNav: Boolean = false,
 ) {
     val state by viewModel.feedState.collectAsStateWithLifecycle()
+    // Who's signed in — so a post's flag icon is hidden on the user's own posts.
+    val currentUid = remember {
+        com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+    }
     // Guarantees the skeleton is actually seen: on a fast connection (or a
     // warm Firestore cache) the real state can resolve to Success within a
     // frame or two, so without this the skeleton would never visibly show at
@@ -376,6 +385,11 @@ fun CommunityFeedContent(
                                     onMediaClick = { onMediaClick(post) },
                                     onAuthorClick = { onAuthorClick(post.authorId) },
                                     onMenuClick = { onMenuClick(post) },
+                                    onReport = if (post.authorId.isNotBlank() && post.authorId != currentUid) {
+                                        { onReportPost(post) }
+                                    } else {
+                                        null
+                                    },
                                     // No Follow button in the feed on purpose:
                                     // following happens from a user's profile,
                                     // so a second control here is redundant.
@@ -709,6 +723,8 @@ internal fun PostCard(
     onMediaClick: () -> Unit,
     onClick: () -> Unit,
     onMenuClick: (() -> Unit)? = null,
+    /** Reports the post — a flag icon left of Share. Null on your own posts. */
+    onReport: (() -> Unit)? = null,
     /** Opens the author's profile from their avatar or name. */
     onAuthorClick: (() -> Unit)? = null,
     /** Null on your own posts — you can't follow yourself. */
@@ -875,6 +891,7 @@ internal fun PostCard(
             onDownvote = onDownvote,
             onComment = onComment,
             onShare = onShare,
+            onReport = onReport,
         )
     }
 }

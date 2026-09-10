@@ -7,6 +7,7 @@ import com.example.kinetixfsl.community.model.FollowUser
 import com.example.kinetixfsl.community.model.UserComment
 import com.example.kinetixfsl.community.model.UserProfile
 import com.example.kinetixfsl.community.model.storageKeyOf
+import com.example.kinetixfsl.account.AuthoredManifest
 import com.example.kinetixfsl.community.inbox.MessagesRepository
 import com.example.kinetixfsl.community.inbox.NotificationRepository
 import com.example.kinetixfsl.community.inbox.model.NotificationType
@@ -150,6 +151,40 @@ class CommunityRepository(
         }
     }
 
+    /**
+     * Validated posts whose hashtags START WITH [prefix] — what Text-to-Sign
+     * actually needs, so results appear while the user is still typing (e.g.
+     * "sala" already surfaces a post tagged #salamat), not only once they finish
+     * the whole word.
+     *
+     * `array-contains` (used by [validatedPostsByHashtag]) can only match a
+     * hashtag element EXACTLY; Firestore has no native "array element starts
+     * with" query. Rather than a schema change (storing every prefix of every
+     * hashtag just to make this queryable server-side), this fetches every
+     * validated post with media and filters client-side — the same tradeoff
+     * this file already makes for [postsByAuthor] and [commentsByAuthor]. The
+     * equality filter on `validationStatus` needs no composite index (no
+     * orderBy alongside it), and [limit] keeps a growing catalog bounded.
+     */
+    suspend fun validatedPostsByHashtagPrefix(prefix: String, limit: Long = 300): List<Post> {
+        val needle = prefix.trim().removePrefix("#").lowercase()
+        if (needle.isEmpty()) return emptyList()
+        return try {
+            firestore.collection(POSTS)
+                .whereEqualTo("validationStatus", "validated")
+                .limit(limit)
+                .get().await()
+                .documents.mapNotNull { it.toPostOrNull() }
+                .filter { post ->
+                    post.mediaItems.isNotEmpty() &&
+                        post.hashtags.any { it.lowercase().startsWith(needle) }
+                }
+                .sortedByDescending { it.createdAt }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Following
     // -------------------------------------------------------------------------
@@ -167,9 +202,15 @@ class CommunityRepository(
     private suspend fun isPurgedAccount(uid: String): Boolean {
         if (uid in purgedUids) return true
         if (uid in verifiedUids) return false
+        // Account status is migrating to users/{uid}/status/moderation; read the
+        // new nested path first, then the old accountStatus root (admin
+        // dual-writes both during Phase 2). Server reads, fail-open on error.
         val purged = try {
-            val snap = firestore.collection("accountStatus").document(uid)
-                .get(com.google.firebase.firestore.Source.SERVER).await()
+            val server = com.google.firebase.firestore.Source.SERVER
+            val newSnap = firestore.collection("users").document(uid)
+                .collection("status").document("moderation").get(server).await()
+            val snap = if (newSnap.exists()) newSnap
+                else firestore.collection("accountStatus").document(uid).get(server).await()
             snap.exists() &&
                 (snap.getBoolean("purgeAuth") == true || snap.getTimestamp("wipedAt") != null)
         } catch (_: Exception) {
@@ -452,6 +493,26 @@ class CommunityRepository(
             firestore.collection(USERS).document(user.uid)
                 .set(mapOf("displayName" to trimmed), SetOptions.merge())
                 .await()
+            // The admin console's User Management table reads its `displayName`
+            // straight off the progress doc, which otherwise only refreshes
+            // whenever ProgressSyncWorker next happens to run — potentially long
+            // after this rename. Patch it here too so the admin view updates
+            // immediately. Both locations (progress is mid-migration to
+            // users/{uid}/progress/current — see FIRESTORE_RESTRUCTURE.md Phase
+            // 3) are merge-set so a doc that doesn't exist yet for a brand-new
+            // account is simply created with just this field, harmlessly.
+            runCatching {
+                firestore.collection(USERS).document(user.uid)
+                    .collection("progress").document("current")
+                    .set(mapOf("displayName" to trimmed), SetOptions.merge())
+                    .await()
+            }
+            // OLD PATH (Phase 5 of the restructure: remove).
+            runCatching {
+                firestore.collection("progress").document(user.uid)
+                    .set(mapOf("displayName" to trimmed), SetOptions.merge())
+                    .await()
+            }
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -626,12 +687,25 @@ class CommunityRepository(
                         "createdAt" to Timestamp.now(),
                     ),
                 )
+                val followerRef = targetRef.collection(FOLLOWERS).document(me.uid)
                 tx.set(
-                    targetRef.collection(FOLLOWERS).document(me.uid),
+                    followerRef,
                     mapOf(
                         "displayName" to myName,
                         "avatarUrl" to me.photoUrl?.toString(),
                         "createdAt" to Timestamp.now(),
+                    ),
+                )
+                // Manifest row for this cross-user follower marker, so the
+                // account-delete sweep can find and remove it deterministically
+                // (and fix the target's followerCount). See AuthoredManifest.
+                tx.set(
+                    AuthoredManifest.refFor(firestore, me.uid, followerRef.path),
+                    AuthoredManifest.entry(
+                        path = followerRef.path,
+                        type = AuthoredManifest.TYPE_FOLLOWER,
+                        parentPath = targetRef.path,
+                        counter = "followerCount",
                     ),
                 )
                 // merge() so the counter lands even if the profile doc is new.
@@ -678,8 +752,13 @@ class CommunityRepository(
                 val edge = myRef.collection(FOLLOWING).document(targetUid)
                 if (!tx.get(edge).exists()) return@runTransaction
 
+                val followerRef = targetRef.collection(FOLLOWERS).document(me.uid)
                 tx.delete(edge)
-                tx.delete(targetRef.collection(FOLLOWERS).document(me.uid))
+                tx.delete(followerRef)
+                // The follower marker is gone, so its manifest row must go too —
+                // otherwise the delete sweep would later try to re-delete an
+                // already-absent doc and wrongly decrement followerCount again.
+                tx.delete(AuthoredManifest.refFor(firestore, me.uid, followerRef.path))
                 tx.set(
                     myRef,
                     mapOf("followingCount" to FieldValue.increment(-1)),
@@ -936,34 +1015,57 @@ class CommunityRepository(
          * match the signs the author declared for this tutorial.
          */
         hashtagsText: String = "",
+        /**
+         * The new share-link preview + blur to store. Only consulted when
+         * [updatePreview] is true — see that flag. [previewUrl] may itself be
+         * null there, which deliberately CLEARS the field (e.g. the post now has
+         * no media, or the new first attachment's preview couldn't be
+         * regenerated — either way the old preview must not stay referenced).
+         */
+        previewUrl: String? = null,
+        previewBlur: String? = null,
+        /**
+         * Whether to rewrite the preview fields at all. PostUploadService sets
+         * this only when the post's overall FIRST attachment actually changed
+         * (the one case where the stored 1200x630 preview is now wrong). Left
+         * false — the common case (first attachment unchanged, or a text/caption
+         * edit) — the post keeps its existing preview untouched.
+         */
+        updatePreview: Boolean = false,
     ): Result<Unit> = try {
         val cleanLinks = links.map { it.trim() }.filter { it.isNotBlank() }
         // Legacy single-media fields are rewritten too, so the share page and
         // any older client stay consistent with the new attachment list.
-        firestore.collection(POSTS).document(postId).update(
-            mapOf(
-                "title" to title.trim(),
-                "body" to body.trim(),
-                // Only the composer's dedicated Hashtags box feeds this — a
-                // #word in the title/body is plain text, not a hashtag.
-                "hashtags" to extractHashtags(hashtagsText),
-                "linkUrl" to cleanLinks.firstOrNull(),
-                "links" to cleanLinks,
-                "media" to media.map {
-                    hashMapOf("url" to it.url, "type" to it.type, "thumbUrl" to it.thumbUrl)
-                },
-                "imageUrl" to media.firstOrNull { !it.isVideo }?.url,
-                "videoUrl" to media.firstOrNull { it.isVideo }?.url,
-                "communityId" to communityId,
-                "communityName" to communityName,
-                "editedAt" to Timestamp.now(),
-                // Editing content invalidates a prior approval: re-queue if the
-                // author still wants validation, otherwise clear it.
-                "validationStatus" to if (requestValidation) "pending" else "",
-                "validatedBy" to null,
-                "validatedAt" to null,
-            )
-        ).await()
+        val fields = mutableMapOf<String, Any?>(
+            "title" to title.trim(),
+            "body" to body.trim(),
+            // Only the composer's dedicated Hashtags box feeds this — a
+            // #word in the title/body is plain text, not a hashtag.
+            "hashtags" to extractHashtags(hashtagsText),
+            "linkUrl" to cleanLinks.firstOrNull(),
+            "links" to cleanLinks,
+            "media" to media.map {
+                hashMapOf("url" to it.url, "type" to it.type, "thumbUrl" to it.thumbUrl)
+            },
+            "imageUrl" to media.firstOrNull { !it.isVideo }?.url,
+            "videoUrl" to media.firstOrNull { it.isVideo }?.url,
+            "communityId" to communityId,
+            "communityName" to communityName,
+            "editedAt" to Timestamp.now(),
+            // Editing content invalidates a prior approval: re-queue if the
+            // author still wants validation, otherwise clear it.
+            "validationStatus" to if (requestValidation) "pending" else "",
+            "validatedBy" to null,
+            "validatedAt" to null,
+        )
+        // Rewrite the preview fields only when the first attachment changed —
+        // see updatePreview's doc. previewUrl may be null here, which clears the
+        // stale preview rather than leaving it pointing at a removed image.
+        if (updatePreview) {
+            fields["previewUrl"] = previewUrl
+            fields["previewBlur"] = previewBlur
+        }
+        firestore.collection(POSTS).document(postId).update(fields).await()
         Result.success(Unit)
     } catch (e: Exception) {
         Result.failure(e)
@@ -1078,6 +1180,16 @@ class CommunityRepository(
         val uid = auth.currentUser?.uid ?: return null
         val postRef = firestore.collection(POSTS).document(postId)
         val voteRef = postRef.collection(VOTES).document(uid)
+        // Manifest row for this cross-user vote — set when the vote exists,
+        // deleted when it's retracted. counter is null: the sweep RECOUNTS
+        // up/down/score from the surviving votes rather than decrementing.
+        val voteManifestRef = AuthoredManifest.refFor(firestore, uid, voteRef.path)
+        val voteManifest = AuthoredManifest.entry(
+            path = voteRef.path,
+            type = AuthoredManifest.TYPE_VOTE,
+            parentPath = postRef.path,
+            counter = null,
+        )
 
         val result = try {
             firestore.runTransaction { tx ->
@@ -1087,6 +1199,7 @@ class CommunityRepository(
                 when {
                     existing == direction -> {
                         tx.delete(voteRef)
+                        tx.delete(voteManifestRef)
                         val countField = if (direction == "up") "upvoteCount" else "downvoteCount"
                         val scoreDelta = if (direction == "up") -1L else 1L
                         tx.update(postRef, countField, FieldValue.increment(-1))
@@ -1098,6 +1211,7 @@ class CommunityRepository(
                         // account-deletion sweep can find every vote a user cast
                         // via a collectionGroup query. See AccountEraser.
                         tx.set(voteRef, hashMapOf("direction" to direction, "userId" to uid))
+                        tx.set(voteManifestRef, voteManifest)
                         val incField = if (direction == "up") "upvoteCount" else "downvoteCount"
                         val decField = if (direction == "up") "downvoteCount" else "upvoteCount"
                         val scoreDelta = if (direction == "up") 2L else -2L
@@ -1108,6 +1222,7 @@ class CommunityRepository(
                     }
                     else -> {
                         tx.set(voteRef, hashMapOf("direction" to direction, "userId" to uid))
+                        tx.set(voteManifestRef, voteManifest)
                         val countField = if (direction == "up") "upvoteCount" else "downvoteCount"
                         val scoreDelta = if (direction == "up") 1L else -1L
                         tx.update(postRef, countField, FieldValue.increment(1))
@@ -1178,6 +1293,14 @@ class CommunityRepository(
         val commentRef = firestore.collection(POSTS).document(postId)
             .collection(COMMENTS).document(commentId)
         val voteRef = commentRef.collection(VOTES).document(uid)
+        // Manifest row for this cross-user comment vote (see [vote]).
+        val voteManifestRef = AuthoredManifest.refFor(firestore, uid, voteRef.path)
+        val voteManifest = AuthoredManifest.entry(
+            path = voteRef.path,
+            type = AuthoredManifest.TYPE_COMMENT_VOTE,
+            parentPath = commentRef.path,
+            counter = null,
+        )
 
         val result = try {
             firestore.runTransaction { tx ->
@@ -1187,6 +1310,7 @@ class CommunityRepository(
                 when {
                     existing == direction -> {
                         tx.delete(voteRef)
+                        tx.delete(voteManifestRef)
                         val countField = if (direction == "up") "upvoteCount" else "downvoteCount"
                         val scoreDelta = if (direction == "up") -1L else 1L
                         tx.update(commentRef, countField, FieldValue.increment(-1))
@@ -1195,6 +1319,7 @@ class CommunityRepository(
                     }
                     existing != null -> {
                         tx.set(voteRef, hashMapOf("direction" to direction, "userId" to uid))
+                        tx.set(voteManifestRef, voteManifest)
                         val incField = if (direction == "up") "upvoteCount" else "downvoteCount"
                         val decField = if (direction == "up") "downvoteCount" else "upvoteCount"
                         val scoreDelta = if (direction == "up") 2L else -2L
@@ -1205,6 +1330,7 @@ class CommunityRepository(
                     }
                     else -> {
                         tx.set(voteRef, hashMapOf("direction" to direction, "userId" to uid))
+                        tx.set(voteManifestRef, voteManifest)
                         val countField = if (direction == "up") "upvoteCount" else "downvoteCount"
                         val scoreDelta = if (direction == "up") 1L else -1L
                         tx.update(commentRef, countField, FieldValue.increment(1))
@@ -1291,9 +1417,21 @@ class CommunityRepository(
         )
         return try {
             val postRef = firestore.collection(POSTS).document(postId)
+            val commentRef = postRef.collection(COMMENTS).document()
             firestore.runTransaction { tx ->
                 tx.update(postRef, "commentCount", FieldValue.increment(1))
-                tx.set(postRef.collection(COMMENTS).document(), data)
+                tx.set(commentRef, data)
+                // Manifest row for this cross-user comment, so the delete sweep
+                // clears it and repairs the post's commentCount deterministically.
+                tx.set(
+                    AuthoredManifest.refFor(firestore, user.uid, commentRef.path),
+                    AuthoredManifest.entry(
+                        path = commentRef.path,
+                        type = AuthoredManifest.TYPE_COMMENT,
+                        parentPath = postRef.path,
+                        counter = "commentCount",
+                    ),
+                )
             }.await()
 
             notifyAboutComment(postId, body, parentId, mentionedUserIds)
@@ -1410,6 +1548,16 @@ class CommunityRepository(
                 if (!existing.exists()) {
                     tx.set(shareRef, hashMapOf("sharedAt" to Timestamp.now()))
                     tx.update(postRef, "shareCount", FieldValue.increment(1))
+                    // Manifest row for this cross-user share marker.
+                    tx.set(
+                        AuthoredManifest.refFor(firestore, uid, shareRef.path),
+                        AuthoredManifest.entry(
+                            path = shareRef.path,
+                            type = AuthoredManifest.TYPE_SHARE,
+                            parentPath = postRef.path,
+                            counter = "shareCount",
+                        ),
+                    )
                 }
             }.await()
         } catch (_: Exception) { /* best-effort */ }

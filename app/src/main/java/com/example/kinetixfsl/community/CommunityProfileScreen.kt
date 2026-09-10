@@ -148,6 +148,9 @@ fun CommunityProfileScreen(
     // The post whose 3-dot sheet is open, if any.
     var actionsPost: Post? by remember { mutableStateOf(null) }
     var pendingDelete: Post? by remember { mutableStateOf(null) }
+    // The post being reported from its flag icon (visitor view only).
+    var pendingReportPost: Post? by remember { mutableStateOf(null) }
+    val reportRepository = remember { ReportRepository() }
 
     // Same three states for a comment: menu open, being edited, being deleted.
     var actionsComment: UserComment? by remember { mutableStateOf(null) }
@@ -291,6 +294,10 @@ fun CommunityProfileScreen(
                         onUpvote = { viewModel.vote(it.id, "up") },
                         onDownvote = { viewModel.vote(it.id, "down") },
                         onShare = { viewModel.share(context, it) },
+                        // On someone else's profile every post is theirs, so the
+                        // flag icon shows on all of them; on your own profile it
+                        // never does — you can't report yourself.
+                        onReport = if (state.isOwnProfile) null else ({ post -> pendingReportPost = post }),
                         onOpenCommunityLink = onOpenCommunity,
                         onOpenProfileLink = onUserClick,
                     )
@@ -427,6 +434,23 @@ fun CommunityProfileScreen(
                     pendingDelete = null
                 },
                 onDismiss = { pendingDelete = null },
+            )
+        }
+
+        val reporting = pendingReportPost
+        if (reporting != null) {
+            ReportReasonDialog(
+                subject = "post",
+                onSubmit = { reason ->
+                    scope.launch { reportRepository.reportPost(reporting, reason) }
+                    pendingReportPost = null
+                    Toast.makeText(
+                        context,
+                        "Thanks — we'll review this post.",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                },
+                onDismiss = { pendingReportPost = null },
             )
         }
 
@@ -954,6 +978,8 @@ private fun PostsTab(
     onUpvote: (Post) -> Unit,
     onDownvote: (Post) -> Unit,
     onShare: (Post) -> Unit,
+    /** Reports a post from its flag icon. Null on the signed-in user's own profile. */
+    onReport: ((Post) -> Unit)? = null,
     /** In-app openers for the app's own share links pasted into a post. */
     onOpenCommunityLink: ((String) -> Unit)? = null,
     onOpenProfileLink: ((String) -> Unit)? = null,
@@ -993,6 +1019,7 @@ private fun PostsTab(
                         onMediaClick = { onPostClick(post) },
                         onClick = { onPostClick(post) },
                         onMenuClick = { onMenuClick(post) },
+                        onReport = onReport?.let { report -> { report(post) } },
                         onOpenCommunityLink = onOpenCommunityLink,
                         onOpenProfileLink = onOpenProfileLink,
                     )

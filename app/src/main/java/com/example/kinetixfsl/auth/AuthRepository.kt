@@ -156,10 +156,25 @@ class AuthRepository(
         // could still sit in the device cache as `disabled:true` and wrongly
         // block a legitimate sign-in. If the server is unreachable this throws
         // and we fail open (below), which is the safe default for a login.
-        val snap = runCatching {
-            firestore.collection("accountStatus").document(uid)
+        // Account status is migrating from accountStatus/{uid} (old root) to
+        // users/{uid}/status/moderation (new nested). Read the new path first,
+        // fall back to the old — both from the SERVER (see above). The admin
+        // dual-writes both during Phase 2, so either read is authoritative; the
+        // new-first order means enforcement keeps working after Phase 5 drops the
+        // old path. A transient error on the new read falls through to the old.
+        val newSnap = runCatching {
+            firestore.collection("users").document(uid)
+                .collection("status").document("moderation")
                 .get(com.google.firebase.firestore.Source.SERVER).await()
-        }.getOrNull() ?: return null
+        }.getOrNull()
+        val snap = if (newSnap != null && newSnap.exists()) {
+            newSnap
+        } else {
+            runCatching {
+                firestore.collection("accountStatus").document(uid)
+                    .get(com.google.firebase.firestore.Source.SERVER).await()
+            }.getOrNull() ?: return null
+        }
         if (!snap.exists()) return null
 
         val disabled = snap.getBoolean("disabled") == true

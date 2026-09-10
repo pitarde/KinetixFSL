@@ -21,8 +21,9 @@ import kotlinx.coroutines.tasks.await
  *
  * Each run reads the CURRENT local state from the Room stores (via
  * [ProgressRepository.buildSyncDocument]) and writes one document to
- * `progress/{uid}`. Reading at run time means the upload always reflects the
- * latest offline progress, even if several events queued while offline.
+ * `users/{uid}/progress/current`. Reading at run time means the upload always
+ * reflects the latest offline progress, even if several events queued while
+ * offline.
  */
 class ProgressSyncWorker(
     appContext: Context,
@@ -43,9 +44,13 @@ class ProgressSyncWorker(
 
         return runCatching {
             val payload = document + mapOf("updatedAt" to FieldValue.serverTimestamp())
+            // Progress lives at users/{uid}/progress/current (the restructure's
+            // Phase 3 target — see web/FIRESTORE_RESTRUCTURE.md). The old root
+            // progress/{uid} write was removed once the database was confirmed
+            // free of any pre-migration installs to carry forward.
             FirebaseFirestore.getInstance()
-                .collection(COLLECTION)
-                .document(uid)
+                .collection(USERS).document(uid)
+                .collection(COLLECTION).document(PROGRESS_DOC)
                 .set(payload, SetOptions.merge())
                 .await()
             Result.success()
@@ -58,5 +63,8 @@ class ProgressSyncWorker(
     companion object {
         private const val TAG = "ProgressSyncWorker"
         const val COLLECTION = "progress"
+        const val USERS = "users"
+        /** Doc id of the single nested progress doc: users/{uid}/progress/current. */
+        const val PROGRESS_DOC = "current"
     }
 }

@@ -443,7 +443,7 @@ internal fun openLink(context: android.content.Context, url: String) {
     }
 }
 
-/** Upvote / downvote / comment pill on the left, share pill on the right. */
+/** Upvote / downvote / comment pill on the left, report + share pill on the right. */
 @Composable
 internal fun PostInteractionRow(
     post: Post,
@@ -453,6 +453,11 @@ internal fun PostInteractionRow(
     onComment: () -> Unit,
     onShare: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Reports the post. When set, a flag icon sits just left of Share in the
+     * same pill. Null on your own posts — you can't report yourself.
+     */
+    onReport: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -492,7 +497,18 @@ internal fun PostInteractionRow(
                 .clip(RoundedCornerShape(50))
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(50))
                 .padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (onReport != null) {
+                InteractionButton(
+                    icon = CommunityIcons.Report,
+                    label = null,
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    onClick = onReport,
+                    contentDescription = "Report post",
+                )
+                VerticalHairline()
+            }
             InteractionButton(
                 CommunityIcons.Share,
                 post.shareCount.compact(),
@@ -506,9 +522,10 @@ internal fun PostInteractionRow(
 @Composable
 private fun InteractionButton(
     icon: ImageVector,
-    label: String,
+    label: String?,
     tint: Color,
     onClick: () -> Unit,
+    contentDescription: String? = null,
 ) {
     Row(
         Modifier
@@ -517,14 +534,16 @@ private fun InteractionButton(
             .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            color = tint,
-            fontWeight = FontWeight.SemiBold,
-        )
+        Icon(imageVector = icon, contentDescription = contentDescription, tint = tint, modifier = Modifier.size(16.dp))
+        if (!label.isNullOrEmpty()) {
+            Spacer(Modifier.width(6.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = tint,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
     }
 }
 

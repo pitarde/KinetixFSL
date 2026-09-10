@@ -384,6 +384,15 @@ class MessagesRepository(
         val conversationRef = firestore.collection(CONVERSATIONS).document(conversationId)
 
         return try {
+            // Free every photo and clip in this thread from R2 first, while the
+            // message documents still tie each key to the conversation (the
+            // Worker authorises a chat delete by participant folder). Deleting a
+            // conversation is presented as "for both of you, can't be undone",
+            // so the media goes with it rather than being orphaned in the
+            // bucket forever. Best-effort — a leftover file must never block the
+            // user's own delete.
+            runCatching { freeConversationMedia(conversationId) }
+
             conversationRef.set(
                 mapOf(
                     "hiddenFor" to mapOf(uid to true),
@@ -395,6 +404,36 @@ class MessagesRepository(
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Asks the Worker to remove every chat image and video in [conversationId]
+     * from R2 — the `chat/images` and `chat/videos` folders under each
+     * participant's prefix. Pages the message subcollection so a long thread
+     * doesn't miss anything.
+     */
+    private suspend fun freeConversationMedia(conversationId: String) {
+        val messagesRef = firestore.collection(CONVERSATIONS).document(conversationId)
+            .collection(MESSAGES)
+        val keys = mutableSetOf<String>()
+        var last: DocumentSnapshot? = null
+        while (true) {
+            var query = messagesRef
+                .orderBy(FIELD_CREATED_AT, Query.Direction.DESCENDING)
+                .limit(BATCH_LIMIT.toLong())
+            if (last != null) query = query.startAfter(last)
+            val page = query.get().await()
+            if (page.isEmpty) break
+            page.documents.forEach { m ->
+                storageKeyOf(m.getString("mediaUrl"))?.let { keys.add(it) }
+                storageKeyOf(m.getString("thumbUrl"))?.let { keys.add(it) }
+            }
+            if (page.size() < BATCH_LIMIT) break
+            last = page.documents.last()
+        }
+        if (keys.isNotEmpty()) {
+            R2MediaUploader.deleteConversationObjects(conversationId, keys.toList())
         }
     }
 
@@ -607,6 +646,31 @@ class MessagesRepository(
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Whether [conversationId] can still be opened by the signed-in user.
+     *
+     * False when the thread was fully deleted (no document) or the user cleared
+     * it from their own side (`hiddenFor[me] == true`) and no new message has
+     * since brought it back. A notification row outlives the conversation it
+     * points at, so tapping an old "sent you a message" for a thread the user
+     * has since deleted should say so, not open an empty screen.
+     *
+     * A transient read error resolves to `true` — a network blip must not make
+     * a live thread look gone.
+     */
+    suspend fun conversationAvailable(conversationId: String): Boolean {
+        val uid = auth.currentUser?.uid ?: return false
+        return try {
+            val snap = firestore.collection(CONVERSATIONS).document(conversationId).get().await()
+            if (!snap.exists()) return false
+            @Suppress("UNCHECKED_CAST")
+            val hiddenFor = snap.get("hiddenFor") as? Map<String, Any?>
+            hiddenFor?.get(uid) != true
+        } catch (_: Exception) {
+            true
         }
     }
 

@@ -24,9 +24,20 @@
     }
   ],
 
+  "//progressNote": "PHASE 3 — the admin analytics collection-group read over users/{uid}/progress/current (learners.js) needs NO index here: it's a bare collectionGroup('progress') query with no where/orderBy, and Firestore never requires an index for an unfiltered 'return the whole collection group' read. (An earlier attempt to add a `__name__` field override for this failed to deploy — `__name__` is a reserved field path and can't be targeted by a fieldOverride.)",
+
   "fieldOverrides": [
     {
-      "//": "Lets a user find every notification they've ever sent, across all recipients' inboxes, so changing their name/photo updates OLD notifications too (NotificationRepository.propagateSenderName). Without this the collection-group query fails and the sync silently no-ops.",
+      "//": "PHASE 4 — the successor to the `items.fromUserId` override below, for the new nested notifications path users/{uid}/notifications. Lets a user find every notification they've sent so a rename updates old rows (NotificationRepository.propagateSenderName). Deploy and let it build BEFORE shipping the code that queries it, then drop the `items` override in Phase 5.",
+      "collectionGroup": "notifications",
+      "fieldPath": "fromUserId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "//": "PHASE 5 REMOVAL — drop this once Phase 4 is verified and the old notifications/{uid}/items collection has drained. Lets a user find every notification they've ever sent, across all recipients' inboxes, so changing their name/photo updates OLD notifications too (NotificationRepository.propagateSenderName). Without this the collection-group query fails and the sync silently no-ops.",
       "collectionGroup": "items",
       "fieldPath": "fromUserId",
       "indexes": [

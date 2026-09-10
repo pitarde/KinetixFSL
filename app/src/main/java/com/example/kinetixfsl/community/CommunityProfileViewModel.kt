@@ -486,6 +486,7 @@ class CommunityProfileViewModel(
                     fileName = if (which == Uploading.AVATAR) "avatar.jpg" else "banner.jpg",
                     mimeType = "image/jpeg",
                     resourceType = "image",
+                    folder = com.example.kinetixfsl.community.upload.R2MediaUploader.Folder.USER_PROFILE,
                 )
             ) {
                 is com.example.kinetixfsl.community.upload.R2MediaUploader.UploadResult.Success -> {

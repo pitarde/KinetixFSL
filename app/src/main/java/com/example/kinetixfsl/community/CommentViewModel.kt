@@ -374,7 +374,14 @@ class CommentViewModel(
 
             val uri = state.pendingImageUri
             if (uri != null) {
-                when (val result = R2MediaUploader.upload(context, uri, "image")) {
+                when (
+                    val result = R2MediaUploader.upload(
+                        context,
+                        uri,
+                        "image",
+                        folder = R2MediaUploader.Folder.COMMENTS,
+                    )
+                ) {
                     is R2MediaUploader.UploadResult.Success -> imageUrl = result.secureUrl
                     is R2MediaUploader.UploadResult.Error -> {
                         _uiState.update {

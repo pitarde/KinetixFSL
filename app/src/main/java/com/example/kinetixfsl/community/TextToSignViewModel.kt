@@ -32,14 +32,16 @@ data class TextToSignUiState(
 )
 
 /**
- * Backs the Text-to-Sign search. The user types a word (e.g. "salamat"); the
- * repository returns the admin-validated posts whose [hashtags] contain it, and
- * this flattens their media into a flat grid of signs.
+ * Backs the Text-to-Sign search. The user types a word (e.g. "sala"); the
+ * repository returns admin-validated posts whose [hashtags] START WITH what's
+ * been typed so far, and this flattens their media into a flat grid of signs.
  *
- * Matching is by #hashtag: an author who wants a tutorial to be searchable adds
- * one #tag per sign in the media, and those tags are what the search compares
- * the typed word against. (Default tutorials for words with no community post
- * yet are a later addition — see the empty state on [TextToSignScreen].)
+ * Matching is by #hashtag prefix: an author who wants a tutorial to be
+ * searchable adds one #tag per sign in the media, and results appear as soon as
+ * the typed text is a prefix of one of those tags — "sala" already surfaces
+ * #salamat — rather than waiting for the whole word. (Default tutorials for
+ * words with no community post yet are a later addition — see the empty state
+ * on [TextToSignScreen].)
  */
 class TextToSignViewModel(
     private val repository: CommunityRepository = CommunityRepository(),
@@ -80,7 +82,7 @@ class TextToSignViewModel(
 
     private suspend fun runSearch(term: String) {
         _uiState.update { it.copy(isLoading = true) }
-        val posts = repository.validatedPostsByHashtag(term)
+        val posts = repository.validatedPostsByHashtagPrefix(term)
         val media = posts.flatMap { post ->
             post.mediaItems.map { SignMedia(postId = post.id, media = it) }
         }

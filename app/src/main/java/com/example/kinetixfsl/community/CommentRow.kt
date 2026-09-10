@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -212,13 +211,17 @@ internal fun CommentRow(
             val imageUrl = comment.imageUrl
             if (!imageUrl.isNullOrBlank()) {
                 Spacer(Modifier.height(8.dp))
+                // A fixed, modest thumbnail — not the post's own full-width
+                // image treatment. A comment attachment is a small aside to the
+                // text above it, not the focal point of the row, and
+                // fillMaxWidth() + a 220dp cap was rendering it as a near-banner
+                // on most phone widths. Tap still opens it full-size.
                 AsyncImage(
                     model = optimizeImageUrl(imageUrl),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 220.dp)
+                        .size(COMMENT_IMAGE_SIZE)
                         .clip(RoundedCornerShape(12.dp))
                         .border(
                             1.dp,
@@ -342,6 +345,9 @@ private fun CommentVoteHairline() {
 
 /** Replies line up under the parent's text, not under its avatar. */
 private val REPLY_INDENT = 56.dp
+
+/** A comment's attached image renders as a fixed thumbnail, not a full-width banner. */
+private val COMMENT_IMAGE_SIZE = 140.dp
 
 /**
  * A comment's body, clamped to 3 lines with a "See more" toggle when it

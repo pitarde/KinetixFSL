@@ -71,6 +71,27 @@ class EditPostViewModel(
     private val directory: CommunityDirectoryRepository = CommunityDirectoryRepository(),
 ) : ViewModel() {
 
+    /**
+     * The post's media exactly as it was when editing started — kept
+     * separately from [EditPostUiState.existingMedia], which the user is free
+     * to remove items from. [save] diffs this snapshot against what's actually
+     * being kept so it can tell [PostUploadService] which R2 objects (the
+     * removed/replaced images and videos, and their feed-resolution copies) no
+     * longer belong to the post and should be deleted — otherwise an edit that
+     * drops or swaps an attachment leaves the old file behind in the bucket
+     * forever. See PostUploadService's EXTRA_ORIGINAL_* handling.
+     */
+    private val originalMedia: List<PostMedia> = post.mediaItems
+
+    /**
+     * The post's share-link preview image, as it was when editing started. Only
+     * relevant if this edit ends up replacing the post's overall first
+     * attachment with a newly uploaded one — see PostUploadService, which
+     * decides whether a fresh preview is actually needed and, if so, deletes
+     * this one.
+     */
+    private val originalPreviewUrl: String? = post.previewUrl
+
     private val _uiState = MutableStateFlow(
         EditPostUiState(
             postId = post.id,
@@ -227,6 +248,22 @@ class EditPostViewModel(
                 PostUploadService.EXTRA_EXISTING_THUMBS,
                 ArrayList(state.existingMedia.map { it.thumbUrl.orEmpty() }),
             )
+
+            // The post's media as it was BEFORE this edit — lets the service
+            // work out what got removed or replaced, so it can delete exactly
+            // those R2 objects. Not the same as EXTRA_EXISTING_* above, which
+            // is what the user chose to KEEP.
+            putStringArrayListExtra(
+                PostUploadService.EXTRA_ORIGINAL_URLS,
+                ArrayList(originalMedia.map { it.url }),
+            )
+            putStringArrayListExtra(
+                PostUploadService.EXTRA_ORIGINAL_THUMBS,
+                ArrayList(originalMedia.map { it.thumbUrl.orEmpty() }),
+            )
+            originalPreviewUrl?.let {
+                putExtra(PostUploadService.EXTRA_ORIGINAL_PREVIEW_URL, it)
+            }
 
             // Newly picked media to upload.
             if (state.newMedia.isNotEmpty()) {

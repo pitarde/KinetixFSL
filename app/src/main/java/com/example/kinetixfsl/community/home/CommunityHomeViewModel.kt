@@ -133,6 +133,7 @@ class CommunityHomeViewModel(
                 fileName = if (which == Uploading.AVATAR) "avatar.jpg" else "banner.jpg",
                 mimeType = "image/jpeg",
                 resourceType = "image",
+                folder = R2MediaUploader.Folder.COMMUNITY_PROFILE,
             )) {
                 is R2MediaUploader.UploadResult.Success -> {
                     val save = if (which == Uploading.AVATAR) {

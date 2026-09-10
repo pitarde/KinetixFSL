@@ -1,5 +1,6 @@
 package com.example.kinetixfsl.community.inbox
 
+import com.example.kinetixfsl.account.AuthoredManifest
 import com.example.kinetixfsl.community.inbox.model.NotificationItem
 import com.example.kinetixfsl.community.inbox.model.NotificationType
 import com.example.kinetixfsl.community.inbox.model.readIsRead
@@ -15,19 +16,31 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 
 /**
- * Reads and writes `notifications/{userId}/items` — the list behind the
+ * Reads and writes a learner's notification inbox — the list behind the
  * Notification tab.
  *
- * This is only the *in-app* half. The banner that appears when the app is
- * closed is Firebase Cloud Messaging, which a Cloud Function fires off the back
- * of the very same document write (see web/MESSAGING_SETUP.md). Nothing in this
- * file talks to FCM directly: the client writing its own pushes would mean
- * shipping a server key in the APK.
+ * ## Path migration (Phase 4 of FIRESTORE_RESTRUCTURE.md)
+ *
+ * The inbox is moving from the root collection `notifications/{uid}/items` to a
+ * subcollection of the profile, `users/{uid}/notifications`, so a single
+ * recursive delete of `users/{uid}` clears it. During the migration window this
+ * class:
+ *   • WRITES new rows to the new nested path only ([usersNotif]);
+ *   • READS from BOTH paths and merges, so rows written by older clients (still
+ *     under the old path) and any not-yet-migrated rows still appear;
+ *   • MARK-READ / DELETE / CLEAR act on both paths;
+ *   • propagate-rename queries both collection groups.
+ * Phase 5 removes the old-path halves — every use is tagged `OLD PATH`.
+ *
+ * ## Outgoing-notification manifest (Phase 0)
+ *
+ * A notification is a document this user writes into *someone else's* inbox, so
+ * [notify] also records an [AuthoredManifest] row under the sender's own profile.
+ * That lets account deletion remove the rows a departing user left in other
+ * people's inboxes — cleanup neither sweep did before.
  *
  * Every write here is best-effort. A notification that fails to land must never
- * fail the action that produced it — a comment that posts but doesn't notify is
- * a small loss, a comment that refuses to post because of a notification is a
- * bug the user sees.
+ * fail the action that produced it.
  */
 class NotificationRepository(
     private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance(),
@@ -39,10 +52,12 @@ class NotificationRepository(
     // -------------------------------------------------------------------------
 
     /**
-     * The signed-in user's notifications, newest first.
+     * The signed-in user's notifications, newest first, merged from the new
+     * nested path and the old root path so nothing is missed mid-migration.
      *
-     * Ordered on a single field, so no composite index is needed. Capped at
-     * [PAGE_SIZE] — the tab is a recent-activity list, not an archive.
+     * Two live listeners feed one merged view, de-duplicated by document id
+     * (a row that exists in both paths — e.g. one already backfilled — collapses
+     * to a single entry). Capped at [PAGE_SIZE].
      */
     fun observeNotifications(): Flow<List<NotificationItem>> = callbackFlow {
         val uid = auth.currentUser?.uid
@@ -52,29 +67,51 @@ class NotificationRepository(
             return@callbackFlow
         }
 
-        val registration = itemsOf(uid)
+        // Latest snapshot from each source, merged on every update.
+        var newRows: List<NotificationItem> = emptyList()
+        var oldRows: List<NotificationItem> = emptyList()
+
+        fun emitMerged() {
+            val merged = (oldRows + newRows)
+                .associateBy { it.id }        // de-dupe by id; associateBy keeps
+                                              // the last, so new-path wins ties
+                .values
+                .sortedByDescending { it.createdAt }
+                .take(PAGE_SIZE.toInt())
+            trySend(merged)
+        }
+
+        fun map(snapshot: com.google.firebase.firestore.QuerySnapshot): List<NotificationItem> =
+            snapshot.documents.mapNotNull { doc ->
+                // Per-document, so one malformed row can't take the listener down.
+                try {
+                    doc.toObject(NotificationItem::class.java)?.copy(
+                        id = doc.id,
+                        isRead = doc.readIsRead(),
+                    )
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+        val newReg = usersNotif(uid)
             .orderBy(FIELD_CREATED_AT, Query.Direction.DESCENDING)
             .limit(PAGE_SIZE)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) { trySend(emptyList()); return@addSnapshotListener }
-                if (snapshot == null) return@addSnapshotListener
-                trySend(
-                    snapshot.documents.mapNotNull { doc ->
-                        // Per-document, so one malformed row can't take the
-                        // whole listener down — same reasoning as the feed.
-                        try {
-                            doc.toObject(NotificationItem::class.java)?.copy(
-                                id = doc.id,
-                                // Not something toObject can fill in — see readIsRead.
-                                isRead = doc.readIsRead(),
-                            )
-                        } catch (_: Exception) {
-                            null
-                        }
-                    }
-                )
+            .addSnapshotListener { snap, err ->
+                if (err != null || snap == null) return@addSnapshotListener
+                newRows = map(snap); emitMerged()
             }
-        awaitClose { registration.remove() }
+
+        // OLD PATH (Phase 5: delete this listener).
+        val oldReg = itemsOf(uid)
+            .orderBy(FIELD_CREATED_AT, Query.Direction.DESCENDING)
+            .limit(PAGE_SIZE)
+            .addSnapshotListener { snap, err ->
+                if (err != null || snap == null) return@addSnapshotListener
+                oldRows = map(snap); emitMerged()
+            }
+
+        awaitClose { newReg.remove(); oldReg.remove() }
     }
 
     // -------------------------------------------------------------------------
@@ -82,11 +119,11 @@ class NotificationRepository(
     // -------------------------------------------------------------------------
 
     /**
-     * Writes one notification into [recipientId]'s list, attributed to the
-     * signed-in user.
+     * Writes one notification into [recipientId]'s inbox, attributed to the
+     * signed-in user, and records an outgoing-manifest row so it can be cleaned
+     * up if the sender deletes their account.
      *
-     * Silently does nothing when the recipient is the author — you don't get
-     * told about your own upvote on your own post — and when nobody is signed
+     * Silently does nothing when the recipient is the author or nobody is signed
      * in.
      */
     suspend fun notify(
@@ -103,7 +140,8 @@ class NotificationRepository(
             ?: "Someone"
 
         try {
-            itemsOf(recipientId).add(
+            val ref = usersNotif(recipientId).document()
+            ref.set(
                 hashMapOf(
                     "type" to type.key,
                     "fromUserId" to me.uid,
@@ -115,6 +153,20 @@ class NotificationRepository(
                     "createdAt" to Timestamp.now(),
                 )
             ).await()
+
+            // Manifest row under the SENDER, pointing at the row just written —
+            // so an account wipe removes the notifications this user caused in
+            // other people's inboxes. Best-effort.
+            runCatching {
+                AuthoredManifest.refFor(firestore, me.uid, ref.path).set(
+                    AuthoredManifest.entry(
+                        path = ref.path,
+                        type = AuthoredManifest.TYPE_NOTIFICATION,
+                        parentPath = null,
+                        counter = null,
+                    )
+                ).await()
+            }
         } catch (_: Exception) { /* best-effort — see the class comment */ }
 
         // After the Firestore write, never instead of it: the in-app row is
@@ -131,15 +183,13 @@ class NotificationRepository(
 
     /**
      * Writes a notification with no human sender — welcome messages, password
-     * changes, a sign-in from a new device.
-     *
-     * Separate from [notify] because that one refuses to write to yourself,
-     * which is exactly what these need to do.
+     * changes, a sign-in from a new device. Goes to the recipient's own inbox,
+     * so it needs no manifest row (the inbox is cleared directly on deletion).
      */
     suspend fun notifySelf(message: String, recipientId: String? = null) {
         val uid = recipientId ?: auth.currentUser?.uid ?: return
         try {
-            itemsOf(uid).add(
+            usersNotif(uid).add(
                 hashMapOf(
                     "type" to NotificationType.SYSTEM.key,
                     "fromUserId" to "",
@@ -153,12 +203,6 @@ class NotificationRepository(
             ).await()
         } catch (_: Exception) { /* best-effort */ }
 
-        // A welcome or new-device notice is usually written from the very
-        // device that should hear about it — which just registered its own
-        // token a moment earlier in the same MainActivity.onResume — so the
-        // push mostly lands on the device already looking at the app. Sent
-        // anyway: on a second device, or the instant after backgrounding,
-        // it's the only way the notice is ever seen in real time.
         PushSender.send(
             recipientId = uid,
             title = "Kinetix",
@@ -171,9 +215,10 @@ class NotificationRepository(
     /**
      * Sends [message] to everyone who joined [communityId] except the poster.
      *
-     * Members are read once and written in batches — a community announcement
-     * is a fan-out, and doing it document by document would be one round trip
-     * per member.
+     * Members are read once and written in batches. No per-recipient manifest
+     * row: an announcement fan-out is bounded and low-value to reverse, and
+     * doubling the batch with manifest writes risks the 500-op limit. A deleted
+     * poster's announcements simply age out of members' inboxes.
      */
     suspend fun notifyCommunityMembers(
         communityId: String,
@@ -184,12 +229,6 @@ class NotificationRepository(
         val me = auth.currentUser ?: return
         if (communityId.isBlank()) return
 
-        // In-app only, deliberately. [notify]'s push goes out from the poster's
-        // own phone; fanning that out to every member here would mean the
-        // poster's device making one Worker round trip per member on top of
-        // the Firestore batches below. A community big enough for that to
-        // matter is exactly the community that needs the server-side fan-out
-        // called out in web/MESSAGING_SETUP.md's Part 6, not more client work.
         val fromName = communityName.ifBlank { "A community" }
 
         try {
@@ -204,7 +243,7 @@ class NotificationRepository(
                 val batch = firestore.batch()
                 chunk.forEach { memberId ->
                     batch.set(
-                        itemsOf(memberId).document(),
+                        usersNotif(memberId).document(),
                         hashMapOf(
                             "type" to NotificationType.ANNOUNCEMENT.key,
                             "fromUserId" to me.uid,
@@ -227,90 +266,95 @@ class NotificationRepository(
     // -------------------------------------------------------------------------
 
     /**
-     * Flips every unread notification to read. Called when the user opens the
-     * Notification tab, which is what clears the bell badge.
+     * Flips notifications to read. The [ids] came from the merged live view, so
+     * a row could live under either path — but NOT both, so each id is only
+     * `update()`d, never `set(..., merge)`d.
      *
-     * Takes the ids the UI is already showing rather than re-querying: the list
-     * came from a live listener a moment ago, so a second read would be paying
-     * twice for the same answer.
+     * This distinction matters: `update()` fails (harmlessly, caught below) on a
+     * document that doesn't exist, while `set(..., merge = true)` CREATES one.
+     * An earlier version of this method used `set(..., merge)` on both paths
+     * unconditionally, which meant marking a new-path-only row as read also
+     * silently created a bogus near-empty document at the old path (same id,
+     * only an `isRead` field) — a ghost the old-path listener then picked up as
+     * a "new" row, merged away by id but not before firing an extra, transiently
+     * inconsistent emission. That's what caused the Inbox/sidebar unread badge
+     * to visibly blink. `update()` never creates a document, so no ghost, no
+     * spurious emission — each id is corrected on whichever ONE path actually
+     * holds it, one Firestore batch per path (a batch is atomic, so mixing a
+     * doomed-to-fail update with real writes in the same batch would roll back
+     * the whole thing — kept separate for exactly that reason).
      */
     suspend fun markRead(ids: List<String>) {
         val uid = auth.currentUser?.uid ?: return
         if (ids.isEmpty()) return
-        try {
-            ids.chunked(BATCH_LIMIT).forEach { chunk ->
-                val batch = firestore.batch()
-                chunk.forEach { id ->
-                    batch.set(
-                        itemsOf(uid).document(id),
-                        mapOf("isRead" to true),
-                        SetOptions.merge(),
-                    )
-                }
-                batch.commit().await()
-            }
-        } catch (_: Exception) { /* best-effort */ }
+
+        ids.forEach { id ->
+            runCatching { usersNotif(uid).document(id).update("isRead", true).await() }
+            // OLD PATH (Phase 5: delete this line).
+            runCatching { itemsOf(uid).document(id).update("isRead", true).await() }
+        }
     }
 
     /**
-     * Rewrites the sender name and photo on every notification the signed-in
-     * user has ever caused, in everyone else's inbox.
+     * Rewrites the sender name/photo on every notification the signed-in user
+     * has ever caused, across both the new nested path and the old root path.
      *
-     * Uses a collection-group query across all `items`, filtered to
-     * `fromUserId == me`. That filter is not a nicety — the security rule for
-     * this query is written in terms of it, so a query without it is rejected
-     * outright rather than returning other people's notifications.
-     *
-     * Old rows are worth fixing rather than leaving: a notification list is
-     * mostly history, so a rename that only affected new entries would leave a
-     * user's inbox showing two different names for the same person indefinitely.
+     * The `fromUserId == me` filter is load-bearing, not a nicety: each
+     * collection-group rule is written in terms of it, so a query without it is
+     * rejected outright rather than returning other people's inboxes.
      */
     suspend fun propagateSenderName(displayName: String, avatarUrl: String?) {
         val uid = auth.currentUser?.uid ?: return
-        try {
-            val rows = firestore.collectionGroup(ITEMS)
-                .whereEqualTo("fromUserId", uid)
-                .limit(RENAME_SCAN_LIMIT)
-                .get().await()
-                .documents
 
-            rows.chunked(BATCH_LIMIT).forEach { chunk ->
-                val batch = firestore.batch()
-                chunk.forEach { doc ->
-                    batch.set(
-                        doc.reference,
-                        mapOf(
-                            "fromUserName" to displayName,
-                            "fromUserPhoto" to avatarUrl,
-                        ),
-                        SetOptions.merge(),
-                    )
+        suspend fun rewrite(group: String) {
+            try {
+                val rows = firestore.collectionGroup(group)
+                    .whereEqualTo("fromUserId", uid)
+                    .limit(RENAME_SCAN_LIMIT)
+                    .get().await()
+                    .documents
+                rows.chunked(BATCH_LIMIT).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { doc ->
+                        batch.set(
+                            doc.reference,
+                            mapOf("fromUserName" to displayName, "fromUserPhoto" to avatarUrl),
+                            SetOptions.merge(),
+                        )
+                    }
+                    batch.commit().await()
                 }
-                batch.commit().await()
-            }
-        } catch (_: Exception) { /* best-effort */ }
+            } catch (_: Exception) { /* best-effort */ }
+        }
+
+        rewrite(NOTIFICATIONS_SUB)   // new path
+        rewrite(ITEMS)               // OLD PATH (Phase 5: drop this call)
     }
 
-    /** Removes a single notification — the swipe/long-press action on a row. */
+    /** Removes a single notification — from whichever path holds it. */
     suspend fun delete(id: String) {
         val uid = auth.currentUser?.uid ?: return
-        try {
-            itemsOf(uid).document(id).delete().await()
-        } catch (_: Exception) { /* best-effort */ }
+        try { usersNotif(uid).document(id).delete().await() } catch (_: Exception) { }
+        // OLD PATH (Phase 5: delete this line).
+        try { itemsOf(uid).document(id).delete().await() } catch (_: Exception) { }
     }
 
-    /** Empties the whole list — "Clear all" in the Notification tab. */
+    /** Empties the whole inbox — "Clear all" — across both paths. */
     suspend fun clearAll() {
         val uid = auth.currentUser?.uid ?: return
+        clearCollection(usersNotif(uid))
+        // OLD PATH (Phase 5: delete this call).
+        clearCollection(itemsOf(uid))
+    }
+
+    private suspend fun clearCollection(col: com.google.firebase.firestore.CollectionReference) {
         try {
             while (true) {
-                val snapshot = itemsOf(uid).limit(BATCH_LIMIT.toLong()).get().await()
+                val snapshot = col.limit(BATCH_LIMIT.toLong()).get().await()
                 if (snapshot.isEmpty) return
-
                 val batch = firestore.batch()
                 snapshot.documents.forEach { batch.delete(it.reference) }
                 batch.commit().await()
-
                 if (snapshot.size() < BATCH_LIMIT) return
             }
         } catch (_: Exception) { /* best-effort */ }
@@ -318,11 +362,18 @@ class NotificationRepository(
 
     // -------------------------------------------------------------------------
 
+    /** New nested inbox — users/{uid}/notifications. */
+    private fun usersNotif(uid: String) =
+        firestore.collection(USERS).document(uid).collection(NOTIFICATIONS_SUB)
+
+    /** OLD PATH — notifications/{uid}/items (Phase 5: remove). */
     private fun itemsOf(uid: String) =
         firestore.collection(NOTIFICATIONS).document(uid).collection(ITEMS)
 
     private companion object {
-        const val NOTIFICATIONS = "notifications"
+        const val USERS = "users"
+        const val NOTIFICATIONS_SUB = "notifications"   // users/{uid}/notifications
+        const val NOTIFICATIONS = "notifications"       // old root collection
         const val ITEMS = "items"
         const val COMMUNITIES = "communities"
         const val MEMBERS = "members"
@@ -334,18 +385,10 @@ class NotificationRepository(
         /** Firestore write batches cap at 500 operations. */
         const val BATCH_LIMIT = 400
 
-        /**
-         * Ceiling on how much history a rename rewrites. A user prolific enough
-         * to exceed this has a long tail of very old notifications where a
-         * stale name matters least.
-         */
+        /** Ceiling on how much history a rename rewrites, per path. */
         const val RENAME_SCAN_LIMIT = 500L
 
-        /**
-         * Ceiling on an announcement fan-out. A community large enough to hit
-         * this needs a Cloud Function doing the fan-out server-side, not a
-         * phone writing a few thousand documents on the user's data plan.
-         */
+        /** Ceiling on an announcement fan-out. */
         const val ANNOUNCEMENT_FAN_OUT_LIMIT = 500L
     }
 }

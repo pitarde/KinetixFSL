@@ -39,6 +39,8 @@ object ProgressSync {
     // activity analytics must not be. Security rules make `progress/{uid}`
     // private to that user plus the admin.
     private const val COLLECTION = "progress"
+    /** Doc id of the single nested progress doc: users/{uid}/progress/current. */
+    private const val PROGRESS_DOC = "current"
     private const val WORK_NAME = "progress-cloud-sync"
     private const val DEBOUNCE_MS = 2_500L
 
@@ -102,10 +104,17 @@ object ProgressSync {
             local.unlockedAchievements.isNotEmpty()
         if (hasLocal) return false
 
+        // Progress lives at users/{uid}/progress/current (the restructure's
+        // Phase 3 target). The old-root fallback read was removed once the
+        // database was confirmed free of any pre-migration installs to carry
+        // forward — see web/FIRESTORE_RESTRUCTURE.md.
         val data = withContext(Dispatchers.IO) {
             runCatching {
-                Tasks.await(db().collection(COLLECTION).document(id).get()).data
-            }.getOrNull()
+                Tasks.await(
+                    db().collection("users").document(id)
+                        .collection(COLLECTION).document(PROGRESS_DOC).get(),
+                )
+            }.getOrNull()?.data
         } ?: return false
 
         val progressJson = data["progressJson"] as? String
@@ -138,11 +147,18 @@ object ProgressSync {
      */
     suspend fun applyRemoteWipeIfNeeded(context: Context): Boolean {
         val id = uid() ?: return false
+        // Account status is migrating to users/{uid}/status/moderation; read the
+        // new nested path first, then the old accountStatus root (admin
+        // dual-writes both during Phase 2).
         val wipedAt = withContext(Dispatchers.IO) {
             runCatching {
-                Tasks.await(db().collection("accountStatus").document(id).get())
-                    .getTimestamp("wipedAt")
-            }.getOrNull()
+                val newSnap = Tasks.await(
+                    db().collection("users").document(id)
+                        .collection("status").document("moderation").get(),
+                )
+                if (newSnap.exists()) newSnap
+                else Tasks.await(db().collection("accountStatus").document(id).get())
+            }.getOrNull()?.getTimestamp("wipedAt")
         } ?: return false
 
         val wipedMs = wipedAt.toDate().time

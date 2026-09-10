@@ -21,6 +21,30 @@ import java.net.URL
  */
 object R2MediaUploader {
 
+    /**
+     * The bucket's purpose sub-folders — every upload site should pass one of
+     * these as `folder`, so R2 stays organised as:
+     * ```
+     * {uid}/
+     *   chat/images, chat/videos                 — MessageOutbox
+     *   comments/images                          — CommentViewModel
+     *   user_profile/images                      — CommunityProfileViewModel (own avatar/banner)
+     *   community_profile/images                 — CommunityHomeViewModel (a created community's avatar/banner)
+     *   posts/images, posts/videos                — PostUploadService, SharePreviewGenerator
+     * ```
+     * Must match the Worker's own `ALLOWED_FOLDERS` allowlist in `worker.js` —
+     * a value outside that list is rejected there and the object is stored
+     * flat instead (`{uid}/images/…`), which defeats the whole point, so keep
+     * every call site on one of these constants rather than a literal string.
+     */
+    object Folder {
+        const val CHAT = "chat"
+        const val COMMENTS = "comments"
+        const val USER_PROFILE = "user_profile"
+        const val COMMUNITY_PROFILE = "community_profile"
+        const val POSTS = "posts"
+    }
+
     private const val WORKER_URL = "https://kinetix-upload.pitardeken2024.workers.dev"
 
     private const val BOUNDARY = "----KinetixR2UploadBoundary"
@@ -44,6 +68,15 @@ object R2MediaUploader {
 
     /** Copy buffer for streamed uploads. 64 KB keeps the socket well fed. */
     private const val STREAM_BUFFER_SIZE = 64 * 1024
+
+    /**
+     * How many times an in-memory (image / derived copy) upload is attempted
+     * before giving up. 3 = the original try plus two retries.
+     */
+    private const val MAX_UPLOAD_ATTEMPTS = 3
+
+    /** Base backoff between upload retries, multiplied by the attempt number. */
+    private const val RETRY_BACKOFF_MS = 600L
 
     /**
      * Whoever is signed in right now — sent with every upload so the Worker can
@@ -211,6 +244,8 @@ object R2MediaUploader {
     suspend fun uploadFile(
         file: File,
         resourceType: String = "video",
+        /** Purpose sub-folder, as in [upload]. */
+        folder: String? = null,
         onProgress: (Int) -> Unit = {},
     ): UploadResult = withContext(Dispatchers.IO) {
         try {
@@ -218,7 +253,7 @@ object R2MediaUploader {
             // used to be fully materialised in memory before a single byte went
             // out, which cost time up front and risked an OOM on cheaper
             // phones. Now bytes go to the socket as they come off disk.
-            streamUpload(file, "video/mp4", resourceType, onProgress)
+            streamUpload(file, "video/mp4", resourceType, folder, onProgress)
         } catch (e: Exception) {
             UploadResult.Error(e.localizedMessage ?: "Upload failed.")
         }
@@ -236,12 +271,19 @@ object R2MediaUploader {
         file: File,
         mimeType: String,
         resourceType: String,
+        folder: String?,
         onProgress: (Int) -> Unit,
     ): UploadResult {
         val prefix = buildString {
             append("--$BOUNDARY\r\n")
             append("Content-Disposition: form-data; name=\"resource_type\"\r\n\r\n")
             append("$resourceType\r\n")
+            // optional folder field — see performUpload.
+            if (!folder.isNullOrBlank()) {
+                append("--$BOUNDARY\r\n")
+                append("Content-Disposition: form-data; name=\"folder\"\r\n\r\n")
+                append("$folder\r\n")
+            }
             // uid field, for per-user folders in R2 — see performUpload.
             currentUid()?.let { uid ->
                 append("--$BOUNDARY\r\n")
@@ -298,9 +340,54 @@ object R2MediaUploader {
     }
 
     /**
-     * The actual multipart POST to the Cloudflare Worker.
+     * The multipart POST to the Cloudflare Worker, retried a few times on
+     * failure.
+     *
+     * Posting several attachments fires a burst of sequential uploads (each
+     * image is a full-size upload PLUS a feed copy, and the first also a
+     * share-preview), so on a busy or flaky connection any one of them could
+     * fail — and because the derived feed/preview go through here too, a single
+     * transient failure was exactly what left a post with only 2 of its 3
+     * image versions in R2, or (on edit) failed to produce the new preview so
+     * the old one never got cleaned up. A couple of quick retries with a short
+     * backoff turns almost all of those transient failures into successes.
+     *
+     * Only used for in-memory byte uploads (images and the derived copies),
+     * which are small and cheap to resend; large video uploads take the
+     * streamed [streamUpload] path and are not retried here.
      */
     private fun performUpload(
+        bytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+        resourceType: String,
+        folder: String? = null,
+    ): UploadResult {
+        var lastMessage = "Upload failed."
+        for (attempt in 1..MAX_UPLOAD_ATTEMPTS) {
+            val result = try {
+                performUploadOnce(bytes, fileName, mimeType, resourceType, folder)
+            } catch (e: Exception) {
+                UploadResult.Error(e.localizedMessage ?: "Upload failed.")
+            }
+            if (result is UploadResult.Success) return result
+            lastMessage = (result as UploadResult.Error).message
+            if (attempt < MAX_UPLOAD_ATTEMPTS) {
+                // Linear backoff (0.6s, 1.2s). Blocking is fine: the whole call
+                // already runs on Dispatchers.IO.
+                try {
+                    Thread.sleep(RETRY_BACKOFF_MS * attempt)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return UploadResult.Error(lastMessage)
+                }
+            }
+        }
+        return UploadResult.Error(lastMessage)
+    }
+
+    /** One multipart POST attempt to the Cloudflare Worker. */
+    private fun performUploadOnce(
         bytes: ByteArray,
         fileName: String,
         mimeType: String,
@@ -440,6 +527,29 @@ object R2MediaUploader {
     }
 
     // ─── Raw byte reading ───────────────────────────────────────────────
+
+    /**
+     * Downloads the bytes of an already-uploaded object by its public URL.
+     *
+     * Used when a post edit promotes an existing (already-uploaded) attachment
+     * to be the post's new first item: there's no local file to build a fresh
+     * share-preview from, so its image is fetched back from R2 and re-derived.
+     * Best-effort — a null just means the preview can't be regenerated this way.
+     */
+    suspend fun downloadBytes(url: String): ByteArray? = withContext(Dispatchers.IO) {
+        if (url.isBlank()) return@withContext null
+        try {
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 15_000
+                readTimeout = 60_000
+            }
+            if (connection.responseCode !in 200..299) return@withContext null
+            connection.inputStream.use { it.readBytes() }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     private fun readBytes(context: Context, uri: Uri): ByteArray? {
         return try {

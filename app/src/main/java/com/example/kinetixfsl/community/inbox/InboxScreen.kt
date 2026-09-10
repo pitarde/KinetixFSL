@@ -85,6 +85,9 @@ fun InboxScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var isPickerOpen by remember { mutableStateOf(false) }
+    // Set when a message notification points at a thread the user has since
+    // deleted (or that no longer exists) — a pop-up shows instead of the chat.
+    var showConversationUnavailable by remember { mutableStateOf(false) }
 
     // This screen's own top bar is always dark now (KinetixNavy in light
     // mode, colorScheme.surface in dark) — see InboxTopBar — so it always
@@ -150,12 +153,55 @@ fun InboxScreen(
                     onClearAll = viewModel::clearNotifications,
                     onDelete = viewModel::deleteNotification,
                     onMarkRead = viewModel::markNotificationRead,
-                    onOpenConversation = onOpenConversation,
+                    // A notification outlives the thread it points at: check the
+                    // conversation is still there before opening it, and show a
+                    // notice rather than an empty chat if it isn't.
+                    onOpenConversation = { conversationId, otherUid ->
+                        viewModel.openMessageNotification(
+                            conversationId = conversationId,
+                            otherUid = otherUid,
+                            onOpen = onOpenConversation,
+                            onUnavailable = { showConversationUnavailable = true },
+                        )
+                    },
                     onOpenPost = onOpenPost,
                     onOpenProfile = onOpenProfile,
                 )
             }
         }
+    }
+
+    if (showConversationUnavailable) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showConversationUnavailable = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = {
+                Text(
+                    text = "Conversation unavailable",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            text = {
+                Text(
+                    text = "This conversation is no longer available. It may have been deleted.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = { showConversationUnavailable = false },
+                ) {
+                    Text(
+                        text = "OK",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            },
+        )
     }
 
     pendingClear?.let { conversation ->

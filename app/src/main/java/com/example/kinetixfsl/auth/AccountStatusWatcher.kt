@@ -41,7 +41,14 @@ object AccountStatusWatcher {
     val blockMessage: StateFlow<String?> = _blockMessage.asStateFlow()
 
     private var appContext: Context? = null
-    private var registration: ListenerRegistration? = null
+    // Account status is migrating from accountStatus/{uid} (old root) to
+    // users/{uid}/status/moderation (new nested). The admin dual-writes both
+    // during Phase 2, so we watch BOTH and run the same handler on each — the
+    // handler is idempotent (disable/penalty just re-set the same message; the
+    // wipe logout is de-duped by a persistent per-uid marker), so a duplicate
+    // snapshot from the two identical documents is harmless. Phase 5 drops the
+    // old-path registration.
+    private val registrations = mutableListOf<ListenerRegistration>()
     private var authListener: FirebaseAuth.AuthStateListener? = null
     private var started = false
 
@@ -71,9 +78,9 @@ object AccountStatusWatcher {
         appContext = context.applicationContext
         val auth = FirebaseAuth.getInstance()
         authListener = FirebaseAuth.AuthStateListener { a ->
-            // Re-point the listener whenever the signed-in account changes.
-            registration?.remove()
-            registration = null
+            // Re-point the listeners whenever the signed-in account changes.
+            registrations.forEach { it.remove() }
+            registrations.clear()
 
             // Drop any block message from the PREVIOUS account. Without this a
             // notice raised for account A lingered in the flow and blocked the
@@ -84,53 +91,65 @@ object AccountStatusWatcher {
 
             val uid = a.currentUser?.uid ?: return@AuthStateListener
 
-            registration = FirebaseFirestore.getInstance()
-                .collection("accountStatus").document(uid)
-                .addSnapshotListener { snap, err ->
-                    if (err != null) { Log.w(TAG, "status listen failed", err); return@addSnapshotListener }
-                    // Only act on the account that is still the current one — a
-                    // late snapshot for a signed-out account must not block.
-                    if (FirebaseAuth.getInstance().currentUser?.uid != uid) return@addSnapshotListener
-                    if (snap == null || !snap.exists()) return@addSnapshotListener
-                    // Ignore cache-only reads. After an admin re-enables an
-                    // account, the device may still hold the old `disabled:true`
-                    // in its offline cache; acting on that stale value would kick
-                    // the user out again the instant they sign back in. Only the
-                    // server-confirmed value is authoritative.
-                    if (snap.metadata.isFromCache) return@addSnapshotListener
-
-                    val reason = snap.getString("reason")?.takeIf { it.isNotBlank() }
-                    val disabled = snap.getBoolean("disabled") == true
-                    val until = snap.getTimestamp("lockedUntil")
-                    val locked = until != null && until > Timestamp.now()
-
-                    if (disabled || locked) {
-                        _blockMessage.value = buildMessage(disabled, until, reason)
-                        return@addSnapshotListener
-                    }
-
-                    // Admin "delete account data": no `disabled`/`lockedUntil`
-                    // (the account is free to reuse), just a `wipedAt` stamp.
-                    // Force a logout once per wipe — tracked in a persistent
-                    // per-uid marker so it also catches a delete that happened
-                    // while the app was closed, on the next cold start.
-                    val wipedAtMs = snap.getTimestamp("wipedAt")?.toDate()?.time ?: 0L
-                    if (wipedAtMs <= 0L) return@addSnapshotListener
-
-                    val prefs = appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    val ackKey = "logout_$uid"
-                    val acked = prefs?.getLong(ackKey, 0L) ?: 0L
-                    if (wipedAtMs > acked) {
-                        prefs?.edit()?.putLong(ackKey, wipedAtMs)?.apply()
-                        _blockMessage.value = buildString {
-                            append("Your account has been deleted by an administrator.")
-                            if (reason != null) append(" Reason: $reason.")
-                            append(" As a penalty, all your data has been removed. You may sign in again, but you'll start over from scratch.")
-                        }
-                    }
-                }
+            val fs = FirebaseFirestore.getInstance()
+            // New nested path, then the old root path (Phase 5: drop the second).
+            registrations += fs.collection("users").document(uid)
+                .collection("status").document("moderation")
+                .addSnapshotListener { snap, err -> handleStatus(uid, snap, err) }
+            registrations += fs.collection("accountStatus").document(uid)
+                .addSnapshotListener { snap, err -> handleStatus(uid, snap, err) }
         }
         auth.addAuthStateListener(authListener!!)
+    }
+
+    /**
+     * Reacts to one account-status snapshot. Registered on both the new and old
+     * paths; idempotent, so being called twice with identical documents is safe.
+     */
+    private fun handleStatus(
+        uid: String,
+        snap: com.google.firebase.firestore.DocumentSnapshot?,
+        err: com.google.firebase.firestore.FirebaseFirestoreException?,
+    ) {
+        if (err != null) { Log.w(TAG, "status listen failed", err); return }
+        // Only act on the account that is still the current one — a late
+        // snapshot for a signed-out account must not block.
+        if (FirebaseAuth.getInstance().currentUser?.uid != uid) return
+        if (snap == null || !snap.exists()) return
+        // Ignore cache-only reads. After an admin re-enables an account, the
+        // device may still hold the old `disabled:true` in its offline cache;
+        // acting on that stale value would kick the user out again the instant
+        // they sign back in. Only the server-confirmed value is authoritative.
+        if (snap.metadata.isFromCache) return
+
+        val reason = snap.getString("reason")?.takeIf { it.isNotBlank() }
+        val disabled = snap.getBoolean("disabled") == true
+        val until = snap.getTimestamp("lockedUntil")
+        val locked = until != null && until > Timestamp.now()
+
+        if (disabled || locked) {
+            _blockMessage.value = buildMessage(disabled, until, reason)
+            return
+        }
+
+        // Admin "delete account data": no `disabled`/`lockedUntil` (the account
+        // is free to reuse), just a `wipedAt` stamp. Force a logout once per
+        // wipe — tracked in a persistent per-uid marker so it also catches a
+        // delete that happened while the app was closed, on the next cold start.
+        val wipedAtMs = snap.getTimestamp("wipedAt")?.toDate()?.time ?: 0L
+        if (wipedAtMs <= 0L) return
+
+        val prefs = appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val ackKey = "logout_$uid"
+        val acked = prefs?.getLong(ackKey, 0L) ?: 0L
+        if (wipedAtMs > acked) {
+            prefs?.edit()?.putLong(ackKey, wipedAtMs)?.apply()
+            _blockMessage.value = buildString {
+                append("Your account has been deleted by an administrator.")
+                if (reason != null) append(" Reason: $reason.")
+                append(" As a penalty, all your data has been removed. You may sign in again, but you'll start over from scratch.")
+            }
+        }
     }
 
     /** Called by the UI after it has handled a block, so it doesn't re-fire. */

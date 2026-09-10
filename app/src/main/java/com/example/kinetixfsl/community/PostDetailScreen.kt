@@ -315,6 +315,9 @@ fun PostDetailScreen(
                             isComposerOpen = true
                         },
                         onShare = onShare,
+                        // Flag icon left of Share — hidden on your own post,
+                        // where the 3-dot menu offers Edit/Delete instead.
+                        onReport = if (isOwnPost) null else ({ isReporting = true }),
                     )
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
