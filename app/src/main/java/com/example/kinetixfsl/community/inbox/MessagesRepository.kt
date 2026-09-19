@@ -1,6 +1,8 @@
 package com.example.kinetixfsl.community.inbox
 
+import android.util.Log
 import com.example.kinetixfsl.community.inbox.model.ChatMessage
+import com.example.kinetixfsl.community.inbox.model.resolvedFor
 import com.example.kinetixfsl.community.inbox.model.Conversation
 import com.example.kinetixfsl.community.inbox.model.NotificationType
 import com.example.kinetixfsl.community.inbox.model.conversationIdFor
@@ -108,6 +110,7 @@ class MessagesRepository(
      * into reading order.
      */
     fun observeMessages(conversationId: String): Flow<List<ChatMessage>> = callbackFlow {
+        val viewerUid = auth.currentUser?.uid
         val registration = firestore.collection(CONVERSATIONS).document(conversationId)
             .collection(MESSAGES)
             .orderBy(FIELD_CREATED_AT, Query.Direction.DESCENDING)
@@ -118,11 +121,14 @@ class MessagesRepository(
                 trySend(
                     snapshot.documents.mapNotNull { doc ->
                         try {
-                            doc.toObject(ChatMessage::class.java)?.copy(
+                            val message = doc.toObject(ChatMessage::class.java)?.copy(
                                 id = doc.id,
                                 // Not something toObject can fill in — see readIsRead.
                                 isRead = doc.readIsRead(),
-                            )
+                            ) ?: return@mapNotNull null
+                            // Resolve any attachment to *my* own R2 copy, not
+                            // necessarily the sender's — see ChatMessage.resolvedFor.
+                            if (viewerUid != null) message.resolvedFor(viewerUid) else message
                         } catch (_: Exception) {
                             null
                         }
@@ -170,6 +176,8 @@ class MessagesRepository(
         mediaType: String? = null,
         /** Still frame for a video attachment. See [ChatMessage.thumbUrl]. */
         thumbUrl: String? = null,
+        /** See [ChatMessage.mediaDuplicated]. */
+        mediaDuplicated: Boolean = false,
     ): Result<Unit> {
         val me = auth.currentUser ?: return Result.failure(Exception("You're not signed in."))
         val body = text.trim()
@@ -226,6 +234,7 @@ class MessagesRepository(
                         "mediaUrl" to mediaUrl,
                         "mediaType" to mediaType,
                         "thumbUrl" to thumbUrl,
+                        "mediaDuplicated" to mediaDuplicated,
                         "isRead" to false,
                         "createdAt" to Timestamp.now(),
                     ),
@@ -372,11 +381,20 @@ class MessagesRepository(
      *    thread reads as empty for me even though the documents still exist for
      *    them.
      *
-     * Nothing is destroyed, so the other person is never silently stripped of a
-     * conversation they were part of — the failure mode the earlier
-     * delete-for-both version had. Messaging this person again clears
-     * `hiddenFor` (see [sendMessage]) and the thread comes back, showing only
-     * what's arrived since the cutoff — again exactly like Messenger.
+     * Alongside that, this frees *my own* R2 copy of every photo and clip in
+     * the thread — what I sent, and my duplicate of what they sent me (see
+     * [freeOwnMediaCopies]) — immediately and unconditionally. That's safe
+     * because each participant holds an independent copy (see
+     * [ChatMessage.mediaDuplicated]): deleting mine can never break playback
+     * for them, the same way it never could on Messenger. The message
+     * documents themselves, and the other participant's copies, are untouched
+     * — so the other person is never silently stripped of a conversation they
+     * were part of. Messaging this person again clears `hiddenFor` (see
+     * [sendMessage]) and the thread comes back, showing only what's arrived
+     * since the cutoff.
+     *
+     * The message documents and thread document are torn down separately,
+     * only once *nobody* can see them any more — see [freeThreadIfAbandoned].
      */
     suspend fun deleteHistory(conversationId: String): Result<Unit> {
         val uid = auth.currentUser?.uid
@@ -384,15 +402,6 @@ class MessagesRepository(
         val conversationRef = firestore.collection(CONVERSATIONS).document(conversationId)
 
         return try {
-            // Free every photo and clip in this thread from R2 first, while the
-            // message documents still tie each key to the conversation (the
-            // Worker authorises a chat delete by participant folder). Deleting a
-            // conversation is presented as "for both of you, can't be undone",
-            // so the media goes with it rather than being orphaned in the
-            // bucket forever. Best-effort — a leftover file must never block the
-            // user's own delete.
-            runCatching { freeConversationMedia(conversationId) }
-
             conversationRef.set(
                 mapOf(
                     "hiddenFor" to mapOf(uid to true),
@@ -401,6 +410,14 @@ class MessagesRepository(
                 ),
                 SetOptions.merge(),
             ).await()
+
+            // My own copy of this conversation's media, gone right away —
+            // never blocks the delete itself.
+            runCatching { freeOwnMediaCopies(conversationId, uid) }
+
+            // Separately: whether that was the second and last person to
+            // leave, in which case the Firestore records themselves come down.
+            runCatching { freeThreadIfAbandoned(conversationId, uid) }
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -408,34 +425,193 @@ class MessagesRepository(
     }
 
     /**
-     * Asks the Worker to remove every chat image and video in [conversationId]
-     * from R2 — the `chat/images` and `chat/videos` folders under each
-     * participant's prefix. Pages the message subcollection so a long thread
-     * doesn't miss anything.
+     * Frees [uid]'s own R2 copy of every photo/clip in [conversationId] —
+     * what they sent, and their duplicate of whatever the other participant
+     * sent them (see [ChatMessage.mediaDuplicated]) — without touching a
+     * single message document or the other participant's copies.
+     *
+     * Safe to call unconditionally on every conversation delete: because each
+     * side holds an independent R2 copy, freeing yours can never affect what
+     * the other person can still play. A message from before duplication
+     * shipped only ever had the sender's single copy, so this only acts on
+     * that message when [uid] *is* the sender.
      */
-    private suspend fun freeConversationMedia(conversationId: String) {
-        val messagesRef = firestore.collection(CONVERSATIONS).document(conversationId)
-            .collection(MESSAGES)
+    private suspend fun freeOwnMediaCopies(conversationId: String, uid: String) {
+        val messagesRef = firestore.collection(CONVERSATIONS).document(conversationId).collection(MESSAGES)
         val keys = mutableSetOf<String>()
         var last: DocumentSnapshot? = null
         while (true) {
-            var query = messagesRef
-                .orderBy(FIELD_CREATED_AT, Query.Direction.DESCENDING)
-                .limit(BATCH_LIMIT.toLong())
+            var query = messagesRef.orderBy(FIELD_CREATED_AT, Query.Direction.DESCENDING).limit(BATCH_LIMIT.toLong())
             if (last != null) query = query.startAfter(last)
             val page = query.get().await()
             if (page.isEmpty) break
+
             page.documents.forEach { m ->
-                storageKeyOf(m.getString("mediaUrl"))?.let { keys.add(it) }
-                storageKeyOf(m.getString("thumbUrl"))?.let { keys.add(it) }
+                val senderId = m.getString("senderId").orEmpty()
+                val duplicated = m.getBoolean("mediaDuplicated") == true
+                ownMediaKey(uid, senderId, duplicated, m.getString("mediaUrl"))?.let { keys.add(it) }
+                ownMediaKey(uid, senderId, duplicated, m.getString("thumbUrl"))?.let { keys.add(it) }
             }
             if (page.size() < BATCH_LIMIT) break
             last = page.documents.last()
         }
         if (keys.isNotEmpty()) {
-            R2MediaUploader.deleteConversationObjects(conversationId, keys.toList())
+            runCatching { R2MediaUploader.deleteConversationObjects(conversationId, keys.toList()) }
         }
     }
+
+    /**
+     * The R2 key for [uid]'s own copy of one message attachment, or null if
+     * [uid] never had a copy of it — they neither sent it nor received a
+     * duplicate (an older, un-duplicated message sent by the other person).
+     */
+    private fun ownMediaKey(uid: String, senderId: String, duplicated: Boolean, url: String?): String? {
+        val key = storageKeyOf(url) ?: return null
+        return when {
+            uid == senderId -> key
+            duplicated -> rewriteKeyOwner(key, senderId, uid)
+            else -> null
+        }
+    }
+
+    /** Swaps an R2 key's leading `{uid}/` segment — the key-string equivalent of [resolvedFor]. */
+    private fun rewriteKeyOwner(key: String, fromUid: String, toUid: String): String {
+        val segments = key.split("/").toMutableList()
+        if (segments.isNotEmpty() && segments[0] == fromUid) segments[0] = toUid
+        return segments.joinToString("/")
+    }
+
+    /**
+     * Tears a thread all the way down — every message document, every R2
+     * copy of their media (both participants', via [wipeThread]), and the
+     * conversation document itself — but only once *neither* participant can
+     * still see it: each side has either deleted/hidden this conversation
+     * from their own side, or no longer has an account at all.
+     *
+     * Media is normally already gone by the time this fires — each side frees
+     * their own copy immediately on their own delete (see
+     * [freeOwnMediaCopies]) — so this is mainly cleaning up the now-orphaned
+     * Firestore documents. It still sweeps R2 itself as a safety net.
+     */
+    private suspend fun freeThreadIfAbandoned(conversationId: String, actingUid: String) {
+        val threadRef = firestore.collection(CONVERSATIONS).document(conversationId)
+        val snap = threadRef.get().await()
+        if (!snap.exists()) return
+
+        @Suppress("UNCHECKED_CAST")
+        val participants = (snap.get("participants") as? List<*>)
+            ?.mapNotNull { it as? String }
+            ?: emptyList()
+        val otherUid = participants.firstOrNull { it != actingUid }
+
+        val abandoned = if (otherUid == null) {
+            true // No one else was ever in this thread.
+        } else {
+            @Suppress("UNCHECKED_CAST")
+            val hiddenFor = snap.get("hiddenFor") as? Map<String, Any?>
+            val otherHidden = hiddenFor?.get(otherUid) == true
+            otherHidden || runCatching {
+                !firestore.collection(USERS).document(otherUid).get().await().exists()
+            }.getOrDefault(false)
+        }
+
+        if (abandoned) wipeThread(threadRef, conversationId)
+    }
+
+    /**
+     * Unconditionally removes every message in [threadRef], every R2 copy of
+     * their media — both participants' (a duplicated attachment lives under
+     * each of their own folders; see [ChatMessage.mediaDuplicated]) — and the
+     * thread document itself. Callers are responsible for only invoking this
+     * once the thread is actually abandoned (or, for [deleteConversation],
+     * once the UI has confirmed the other side is gone).
+     */
+    private suspend fun wipeThread(threadRef: com.google.firebase.firestore.DocumentReference, conversationId: String) {
+        @Suppress("UNCHECKED_CAST")
+        val participants = runCatching {
+            (threadRef.get().await().get("participants") as? List<*>)?.mapNotNull { it as? String }
+        }.getOrNull().orEmpty()
+
+        val keys = mutableSetOf<String>()
+        while (true) {
+            val page = threadRef.collection(MESSAGES).limit(BATCH_LIMIT.toLong()).get().await()
+            if (page.isEmpty) break
+
+            page.documents.forEach { m ->
+                val senderId = m.getString("senderId").orEmpty()
+                val duplicated = m.getBoolean("mediaDuplicated") == true
+                listOf(m.getString("mediaUrl"), m.getString("thumbUrl")).forEach { url ->
+                    val key = storageKeyOf(url) ?: return@forEach
+                    keys.add(key)
+                    if (duplicated && senderId.isNotBlank()) {
+                        participants.filter { it != senderId }.forEach { other ->
+                            keys.add(rewriteKeyOwner(key, senderId, other))
+                        }
+                    }
+                }
+            }
+
+            val batch = firestore.batch()
+            page.documents.forEach { batch.delete(it.reference) }
+            batch.commit().await()
+
+            if (page.size() < BATCH_LIMIT) break
+        }
+        if (keys.isNotEmpty()) {
+            runCatching { R2MediaUploader.deleteConversationObjects(conversationId, keys.toList()) }
+        }
+        runCatching { threadRef.delete().await() }
+    }
+
+    /**
+     * Called from [com.example.kinetixfsl.account.AccountEraser] while wiping
+     * an account: for every thread [uid] is in, frees [uid]'s own R2 copy of
+     * that thread's media right away (see [freeOwnMediaCopies] — safe
+     * regardless of whether the other participant is still around, since
+     * their copy is independent), then applies the same abandoned-thread rule
+     * as [deleteHistory] for the Firestore records themselves: the messages
+     * and the conversation document only come down once the other participant
+     * is also gone or has already hidden this conversation from their side.
+     *
+     * While the other participant still has this thread open, its messages —
+     * and their own copy of every photo and clip either side ever sent — stay
+     * completely untouched. This account disappearing must not break what it
+     * already sent someone who's still around to see it; the thread simply
+     * keeps showing this user's messages under whatever "no longer available"
+     * treatment the UI gives a departed author.
+     */
+    suspend fun freeChatDataOnAccountDeletion(uid: String) = runCatching {
+        val threads = firestore.collection(CONVERSATIONS)
+            .whereArrayContains(FIELD_PARTICIPANTS, uid)
+            .get().await()
+
+        for (thread in threads.documents) {
+            // My own copy of this thread's media, gone right away — safe
+            // regardless of whether the other participant is still around,
+            // since their copy (if any) is independent. See freeOwnMediaCopies.
+            runCatching { freeOwnMediaCopies(thread.id, uid) }
+
+            @Suppress("UNCHECKED_CAST")
+            val otherUid = (thread.get(FIELD_PARTICIPANTS) as? List<*>)
+                ?.mapNotNull { it as? String }
+                ?.firstOrNull { it != uid }
+
+            val abandoned = if (otherUid == null) {
+                true
+            } else {
+                @Suppress("UNCHECKED_CAST")
+                val hiddenFor = thread.get("hiddenFor") as? Map<String, Any?>
+                val otherHidden = hiddenFor?.get(otherUid) == true
+                otherHidden || runCatching {
+                    !firestore.collection(USERS).document(otherUid).get().await().exists()
+                }.getOrDefault(false)
+            }
+
+            if (abandoned) {
+                runCatching { wipeThread(thread.reference, thread.id) }
+            }
+        }
+    }.onFailure { Log.w(TAG, "chat data cleanup failed", it) }.let { }
 
     /**
      * Removes one message, and whatever it had attached.
@@ -458,15 +634,33 @@ class MessagesRepository(
                 return Result.failure(Exception("You can only delete your own messages."))
             }
 
-            val keys = listOfNotNull(
-                storageKeyOf(snapshot.getString("mediaUrl")),
-                storageKeyOf(snapshot.getString("thumbUrl")),
-            )
+            val duplicated = snapshot.getBoolean("mediaDuplicated") == true
+            // The message document is deleted outright below (it's shared, not
+            // per-user), so nobody can reach it any more once this returns —
+            // free the recipient's duplicate copy too, or it leaks in R2
+            // forever. Only fetched when actually needed.
+            val others = if (duplicated) {
+                @Suppress("UNCHECKED_CAST")
+                (firestore.collection(CONVERSATIONS).document(conversationId)
+                    .get().await().get(FIELD_PARTICIPANTS) as? List<*>)
+                    ?.mapNotNull { it as? String }
+                    ?.filter { it != uid }
+                    .orEmpty()
+            } else {
+                emptyList()
+            }
+
+            val keys = mutableSetOf<String>()
+            listOf(snapshot.getString("mediaUrl"), snapshot.getString("thumbUrl")).forEach { url ->
+                val key = storageKeyOf(url) ?: return@forEach
+                keys.add(key)
+                others.forEach { other -> keys.add(rewriteKeyOwner(key, uid, other)) }
+            }
             if (keys.isNotEmpty()) {
                 // conversationId, not deleteObjects(postId=…) — chat media has
                 // no owning post, and the old call 404'd on the Worker and
                 // silently freed nothing.
-                R2MediaUploader.deleteConversationObjects(conversationId, keys)
+                R2MediaUploader.deleteConversationObjects(conversationId, keys.toList())
             }
 
             messageRef.delete().await()
@@ -620,29 +814,7 @@ class MessagesRepository(
         }
         val conversationRef = firestore.collection(CONVERSATIONS).document(conversationId)
         return try {
-            while (true) {
-                val page = conversationRef.collection(MESSAGES)
-                    .limit(BATCH_LIMIT.toLong())
-                    .get().await()
-                if (page.isEmpty) break
-
-                val keys = page.documents.flatMap { m ->
-                    listOfNotNull(
-                        storageKeyOf(m.getString("mediaUrl")),
-                        storageKeyOf(m.getString("thumbUrl")),
-                    )
-                }.distinct()
-                if (keys.isNotEmpty()) {
-                    runCatching { R2MediaUploader.deleteConversationObjects(conversationId, keys) }
-                }
-
-                val batch = firestore.batch()
-                page.documents.forEach { batch.delete(it.reference) }
-                batch.commit().await()
-
-                if (page.size() < BATCH_LIMIT) break
-            }
-            conversationRef.delete().await()
+            wipeThread(conversationRef, conversationId)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -707,6 +879,7 @@ class MessagesRepository(
         const val BLOCKED_BY = "blockedBy"
         const val FIELD_PARTICIPANTS = "participants"
         const val FIELD_CREATED_AT = "createdAt"
+        const val TAG = "MessagesRepository"
 
         /** How much of a thread's tail the chat screen holds in memory. */
         const val MESSAGE_PAGE_SIZE = 100L

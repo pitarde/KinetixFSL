@@ -136,7 +136,7 @@ encoding all 50.
 - **Pass mark:** 4 of 5 correct (`PASS_THRESHOLD` in `QuizModels.kt`).
 - **Persistence:** progress + the in-progress attempt are saved to
   `SharedPreferences` ("quiz_game") as JSON on every step, so the game survives a
-  full app close and works fully offline. A resume popup ("Continue last
+  full app close and works fully offline. A resumes popup ("Continue last
   session?") appears when you reopen the tab mid-attempt.
   *This deliberately avoids adding Room/KSP; swap `QuizStore` for Room later if
   you want the spec's exact table layout — nothing else needs to change.*

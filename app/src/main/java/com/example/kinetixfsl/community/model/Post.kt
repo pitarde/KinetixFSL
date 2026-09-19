@@ -92,6 +92,8 @@ data class Post(
     val commentCount: Long = 0,
     val shareCount: Long = 0,
     val viewCount: Long = 0,
+    /** How many distinct users have reported this post — one report each, see [com.example.kinetixfsl.community.ReportRepository]. */
+    val reportCount: Long = 0,
     val score: Long = 0,
     val createdAt: Timestamp? = null,
     /**

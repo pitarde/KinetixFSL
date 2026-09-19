@@ -484,13 +484,8 @@ fun PostDetailScreen(
         ReportReasonDialog(
             subject = "post",
             onSubmit = { reason ->
-                reportScope.launch { reportRepository.reportPost(post, reason) }
+                reportScope.launch { reportRepository.reportPostShowingResult(context, post, reason) }
                 isReporting = false
-                android.widget.Toast.makeText(
-                    context,
-                    "Thanks — we'll review this post.",
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
             },
             onDismiss = { isReporting = false },
         )

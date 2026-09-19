@@ -140,6 +140,11 @@ object MessageOutbox {
                     uri = uri,
                     resourceType = entry.type ?: "image",
                     folder = "chat",
+                    // Duplicates this attachment into the recipient's own
+                    // {uid}/chat/… folder too, so their copy survives whatever
+                    // either side later does to their own conversation — see
+                    // MessagesRepository.deleteHistory / freeOwnMediaCopies.
+                    recipientId = entry.recipientId,
                 )
             ) {
                 is R2MediaUploader.UploadResult.Success -> mediaUrl = result.secureUrl
@@ -153,7 +158,7 @@ object MessageOutbox {
             // on purpose — a clip whose first frame won't decode should still
             // send, just without a preview.
             if (entry.isVideo) {
-                thumbUrl = uploadThumbnail(context, uri)
+                thumbUrl = uploadThumbnail(context, uri, entry.recipientId)
             }
         }
 
@@ -164,6 +169,11 @@ object MessageOutbox {
             mediaUrl = mediaUrl,
             mediaType = entry.type,
             thumbUrl = thumbUrl,
+            // True whenever there was an attachment — the upload above always
+            // asks the Worker to duplicate it (and only reports success once
+            // both copies exist), so this is accurate for every message this
+            // build sends. See ChatMessage.resolvedFor.
+            mediaDuplicated = mediaUrl != null,
         )
 
         if (result.isSuccess) {
@@ -173,7 +183,7 @@ object MessageOutbox {
         }
     }
 
-    private suspend fun uploadThumbnail(context: Context, uri: Uri): String? {
+    private suspend fun uploadThumbnail(context: Context, uri: Uri, recipientId: String): String? {
         val bytes = VideoThumbnailer.extract(context, uri) ?: return null
         return when (
             val result = R2MediaUploader.uploadBytes(
@@ -183,6 +193,7 @@ object MessageOutbox {
                 resourceType = "image",
                 // Alongside the clip it previews — {uid}/chat/images/….
                 folder = "chat",
+                recipientId = recipientId,
             )
         ) {
             is R2MediaUploader.UploadResult.Success -> result.secureUrl

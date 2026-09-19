@@ -442,13 +442,8 @@ fun CommunityProfileScreen(
             ReportReasonDialog(
                 subject = "post",
                 onSubmit = { reason ->
-                    scope.launch { reportRepository.reportPost(reporting, reason) }
+                    scope.launch { reportRepository.reportPostShowingResult(context, reporting, reason) }
                     pendingReportPost = null
-                    Toast.makeText(
-                        context,
-                        "Thanks — we'll review this post.",
-                        Toast.LENGTH_SHORT,
-                    ).show()
                 },
                 onDismiss = { pendingReportPost = null },
             )

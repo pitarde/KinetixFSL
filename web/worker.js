@@ -92,6 +92,18 @@ export default {
         ? rawUid
         : null;
 
+      // --- Chat's other participant, for per-side media copies ----------
+      // Sent only alongside folder "chat" (see MessageOutbox on the Android
+      // side). Same shape check as `uid`; blank/invalid/self just means no
+      // duplicate is made, same as an older client that doesn't send it.
+      const rawRecipientId = formData.get("recipientId");
+      const recipientId =
+        typeof rawRecipientId === "string" &&
+        /^[A-Za-z0-9_-]{1,64}$/.test(rawRecipientId) &&
+        rawRecipientId !== uid
+          ? rawRecipientId
+          : null;
+
       // --- Purpose sub-folder -------------------------------------------
       // Every upload site (see R2MediaUploader.Folder on the Android side)
       // tags its request with one of these five, so the bucket reads as:
@@ -127,22 +139,43 @@ export default {
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(2, 10);
       const ext = getExtension(file.name, file.type);
-      const key =
-        [uid, subFolder, mediaFolder].filter(Boolean).join("/") +
-        `/${timestamp}-${random}${ext}`;
+      const name = `${timestamp}-${random}${ext}`;
+      const key = [uid, subFolder, mediaFolder].filter(Boolean).join("/") + `/${name}`;
 
-      // --- Upload to R2 ------------------------------------------------
-      await env.KINETIX_BUCKET.put(key, file.stream(), {
-        httpMetadata: {
-          contentType: file.type || "application/octet-stream",
-          // Every key is unique (timestamp + random), so an object at a given
-          // URL never changes and can be cached forever. Without this header
-          // Cloudflare's edge won't cache the file and the Android client
-          // re-downloads it on every scroll — barely noticeable on WiFi,
-          // painful on mobile data.
-          cacheControl: "public, max-age=31536000, immutable",
-        },
-      });
+      const httpMetadata = {
+        contentType: file.type || "application/octet-stream",
+        // Every key is unique (timestamp + random), so an object at a given
+        // URL never changes and can be cached forever. Without this header
+        // Cloudflare's edge won't cache the file and the Android client
+        // re-downloads it on every scroll — barely noticeable on WiFi,
+        // painful on mobile data.
+        cacheControl: "public, max-age=31536000, immutable",
+      };
+
+      // --- Upload to R2 --------------------------------------------------
+      // A chat attachment with a recognised `recipientId` is written to BOTH
+      // participants' own folders under the *same* name — one participant
+      // deleting their conversation can then free only their own copy without
+      // touching the other's, and either side keeps playing whatever was sent
+      // even after the other one's copy (or account) is gone. See
+      // MessagesRepository.deleteHistory / freeChatDataOnAccountDeletion.
+      //
+      // Buffered once so both `put()`s can read the same bytes — R2 accepts
+      // an ArrayBuffer directly, so this costs one buffer in Worker memory
+      // rather than two, and chat attachments are short clips / compressed
+      // photos, not large enough for that to matter.
+      let duplicated = false;
+      if (subFolder === "chat" && recipientId) {
+        const bytes = await file.arrayBuffer();
+        const recipientKey = [recipientId, subFolder, mediaFolder].filter(Boolean).join("/") + `/${name}`;
+        await Promise.all([
+          env.KINETIX_BUCKET.put(key, bytes, { httpMetadata }),
+          env.KINETIX_BUCKET.put(recipientKey, bytes, { httpMetadata }),
+        ]);
+        duplicated = true;
+      } else {
+        await env.KINETIX_BUCKET.put(key, file.stream(), { httpMetadata });
+      }
 
       // --- Return the public URL ---------------------------------------
       const publicUrl = `${env.PUBLIC_BUCKET_URL}/${key}`;
@@ -151,6 +184,7 @@ export default {
         secure_url: publicUrl,
         key: key,
         size: file.size,
+        duplicated: duplicated,
       });
     } catch (err) {
       return jsonResponse(500, { error: err.message || "Upload failed" });
@@ -183,11 +217,13 @@ export default {
  * The `conversationId` branch can't verify keys against message documents the
  * way the others do — messages aren't world-readable, and this Worker reads
  * Firestore unauthenticated. Instead it relies on the layout: a thread id is
- * `uidA_uidB` (the two participants, sorted), and every upload is filed under
- * its uploader's own `{uid}/` folder, so a key that legitimately belongs to
- * the thread must sit under one of those two prefixes. Paired with the shared
- * secret, the worst a caller can do is delete files inside one of two named
- * users' own folders.
+ * `uidA_uidB` (the two participants, sorted), and every chat upload is filed
+ * under the uploader's own `{uid}/` folder — and, since each participant gets
+ * their own independent copy of every attachment (see the `recipientId`
+ * duplication above), sometimes under the *other* participant's folder too —
+ * so a key that legitimately belongs to the thread must sit under one of
+ * those two prefixes either way. Paired with the shared secret, the worst a
+ * caller can do is delete files inside one of two named users' own folders.
  *
  * SECURITY NOTE: the shared secret ships inside the APK and can be extracted
  * by anyone willing to unpack it. The ownership check above is what limits the

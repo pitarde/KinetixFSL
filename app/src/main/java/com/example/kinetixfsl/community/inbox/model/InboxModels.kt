@@ -211,12 +211,67 @@ data class ChatMessage(
      * [readIsRead], never from `toObject` alone.
      */
     val isRead: Boolean = false,
+    /**
+     * True when [mediaUrl]/[thumbUrl] were duplicated into BOTH participants'
+     * own R2 folders at send time (see MessageOutbox), rather than existing
+     * only under [senderId]'s. Drives whether [resolvedFor] may safely rewrite
+     * the URL to a viewer's own copy — doing that for an older, un-duplicated
+     * message would point at a file that was never uploaded for them.
+     */
+    val mediaDuplicated: Boolean = false,
 ) {
     val isVideo: Boolean get() = mediaType == "video"
     val hasMedia: Boolean get() = !mediaUrl.isNullOrBlank()
 
     /** What the bubble draws: a video's still, or the image itself. */
     val previewUrl: String? get() = if (isVideo) thumbUrl else mediaUrl
+}
+
+/**
+ * This message's media URLs, rewritten to [viewerUid]'s own R2 copy.
+ *
+ * Every photo/clip sent in a thread is duplicated into BOTH participants' own
+ * `{uid}/chat/images|videos` folders at send time (see MessageOutbox and the
+ * upload Worker) — each side's copy is independent, so either participant can
+ * delete their conversation, freeing only their own copy, without breaking
+ * playback for the other. [mediaUrl]/[thumbUrl] are always stored pointing at
+ * the *sender's* copy; this swaps that for [viewerUid] so whoever is actually
+ * looking loads their own file — which may still exist even after the
+ * sender's copy (or account) is gone.
+ *
+ * A no-op for a text message, for the sender viewing their own message
+ * (already their own uid), and for a message sent before duplication shipped
+ * ([mediaDuplicated] false) — rewriting one of those would point at a copy
+ * that was never uploaded for the viewer.
+ */
+fun ChatMessage.resolvedFor(viewerUid: String): ChatMessage {
+    if (!mediaDuplicated || senderId.isBlank() || senderId == viewerUid) return this
+    return copy(
+        mediaUrl = rewriteChatMediaOwner(mediaUrl, senderId, viewerUid),
+        thumbUrl = rewriteChatMediaOwner(thumbUrl, senderId, viewerUid),
+    )
+}
+
+/**
+ * Swaps the uid path segment of an R2 chat media URL —
+ * `.../senderUid/chat/images/name.webp` → `.../viewerUid/chat/images/name.webp`.
+ * Returns [url] unchanged if [fromUid] isn't present as an exact path segment
+ * (an unexpected URL shape), so a mismatch degrades to the old behaviour
+ * rather than breaking the link outright.
+ */
+private fun rewriteChatMediaOwner(url: String?, fromUid: String, toUid: String): String? {
+    if (url.isNullOrBlank()) return url
+    return try {
+        val uri = android.net.Uri.parse(url)
+        val segments = uri.pathSegments ?: return url
+        val idx = segments.indexOf(fromUid)
+        if (idx < 0) return url
+        val newPath = segments.toMutableList().also { it[idx] = toUid }
+            .joinToString("/", prefix = "/")
+        uri.buildUpon().path(newPath).build().toString()
+    } catch (_: Exception) {
+        url
+    }
 }
 
 /**

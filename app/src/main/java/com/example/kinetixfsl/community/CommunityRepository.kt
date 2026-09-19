@@ -955,6 +955,7 @@ class CommunityRepository(
         deleteAllIn(postRef.collection(COMMENTS))
         deleteAllIn(postRef.collection(VOTES))
         deleteAllIn(postRef.collection(SHARES))
+        deleteAllIn(postRef.collection(REPORTERS))
 
         // The post itself goes last, and is the only step allowed to fail the
         // operation. Everything above is tidy-up: leaving a stray vote document
@@ -1685,6 +1686,7 @@ class CommunityRepository(
         const val VOTES = "votes"
         const val COMMENTS = "comments"
         const val SHARES = "shares"
+        const val REPORTERS = "reporters"
         const val USERS = "users"
         const val COMMUNITIES = "communities"
         const val HIDDEN_POSTS = "hiddenPosts"

@@ -74,6 +74,7 @@ import com.example.kinetixfsl.community.FeedState
 import com.example.kinetixfsl.community.ImmersivePostViewer
 import com.example.kinetixfsl.community.hashtagQueryText
 import com.example.kinetixfsl.community.PostDetailScreen
+import com.example.kinetixfsl.community.reportPostShowingResult
 import com.example.kinetixfsl.community.SlideUpScreen
 import com.example.kinetixfsl.ui.theme.KinetixWhite
 import com.example.kinetixfsl.community.ShareLinks
@@ -618,13 +619,8 @@ fun CommunityHomeScreen(
             com.example.kinetixfsl.community.ReportReasonDialog(
                 subject = "post",
                 onSubmit = { reason ->
-                    reportScope.launch { reportRepository.reportPost(reporting, reason) }
+                    reportScope.launch { reportRepository.reportPostShowingResult(context, reporting, reason) }
                     pendingReportPost = null
-                    android.widget.Toast.makeText(
-                        context,
-                        "Thanks — we'll review this post.",
-                        android.widget.Toast.LENGTH_SHORT,
-                    ).show()
                 },
                 onDismiss = { pendingReportPost = null },
             )

@@ -64,10 +64,15 @@ fun ModulesScreen(
     onCategoryClick: (SignCategory) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Modules an admin has hidden (Content Management → Hide module). Loaded
-    // async; defaults to none so the grid shows in full until it resolves and
-    // on any read failure.
-    val disabledCategoryIds by androidx.compose.runtime.produceState(initialValue = emptySet<String>()) {
+    // Modules an admin has hidden (Content Management → Hide module).
+    // Seeded from the last answer this process has seen — not an empty set —
+    // so returning to this screen renders the correct grid immediately
+    // instead of briefly showing every hidden module again while a fresh
+    // Firestore read is in flight. Falls back to none (full grid) only on the
+    // very first load this process makes, and on any read failure.
+    val disabledCategoryIds by androidx.compose.runtime.produceState(
+        initialValue = ContentOverridesRepository.cached ?: emptySet(),
+    ) {
         value = ContentOverridesRepository().disabledCategoryIds()
     }
     val categories = remember(disabledCategoryIds) {

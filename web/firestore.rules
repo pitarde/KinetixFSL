@@ -34,7 +34,7 @@ service cloud.firestore {
     function onlyCounterFieldsChanged() {
       return request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['upvoteCount', 'downvoteCount', 'commentCount',
-                  'shareCount', 'viewCount', 'score']);
+                  'shareCount', 'viewCount', 'score', 'reportCount']);
     }
 
     // The comment equivalent — voting on someone else's comment only ever
@@ -160,6 +160,25 @@ service cloud.firestore {
       // One share marker per user — this is what keeps the share count
       // to one per account. Never updated.
       match /shares/{userId} {
+        allow get: if request.auth != null && request.auth.uid == userId;
+        allow list: if isPostAuthor(database, postId)
+                    || isPostCommunityCreator(database, postId)
+                    || isAdmin();
+        allow create: if request.auth != null && request.auth.uid == userId;
+        allow update: if false;
+        allow delete: if request.auth != null
+                      && (request.auth.uid == userId
+                          || isPostAuthor(database, postId)
+                          || isPostCommunityCreator(database, postId)
+                          || isAdmin());
+      }
+
+      // One report marker per user — caps a post at one report per account,
+      // the same shape as /votes and /shares above. The report itself (with
+      // its reason and a content snapshot) lands in the top-level `reports`
+      // collection; this doc only remembers "this user already reported this
+      // post" so a second tap can say so instead of filing a duplicate.
+      match /reporters/{userId} {
         allow get: if request.auth != null && request.auth.uid == userId;
         allow list: if isPostAuthor(database, postId)
                     || isPostCommunityCreator(database, postId)

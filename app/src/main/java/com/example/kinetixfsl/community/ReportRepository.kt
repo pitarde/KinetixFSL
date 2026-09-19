@@ -1,12 +1,21 @@
 package com.example.kinetixfsl.community
 
+import android.content.Context
 import android.util.Log
+import android.widget.Toast
 import com.example.kinetixfsl.community.model.Comment
 import com.example.kinetixfsl.community.model.Post
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
+
+/**
+ * Thrown by [ReportRepository.reportPost] when the signed-in user has already
+ * reported this post. One report per post per account, so a repeat tap is a
+ * normal, user-facing outcome ("Reported already") — not a failure to log.
+ */
+class AlreadyReportedException : Exception("You already reported this post.")
 
 /**
  * Files community reports into the top-level `reports` collection, which the
@@ -26,23 +35,60 @@ class ReportRepository(
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
 ) {
 
-    /** Report a post. [reason] is the reporter's free-text note. */
-    suspend fun reportPost(post: Post, reason: String): Result<Unit> = submit(
-        contentType = "post",
-        reportedUserId = post.authorId,
-        reportedUserName = post.authorName,
-        reason = reason,
-        extra = mapOf(
-            "postId" to post.id,
-            "communityId" to post.communityId,
-            "communityName" to post.communityName,
-            "contentSnapshot" to mapOf(
-                "title" to post.title,
-                "body" to post.body,
-                "imageUrl" to (post.mediaItems.firstOrNull()?.feedUrl ?: ""),
-            ),
-        ),
-    )
+    /**
+     * Reports a post — at most once per signed-in user.
+     *
+     * A `posts/{id}/reporters/{uid}` marker (see web/firestore.rules) is what
+     * caps it: the transaction checks that marker first and fails with
+     * [AlreadyReportedException] on a repeat report, instead of filing a
+     * duplicate and bumping [Post.reportCount] a second time for the same
+     * person — the spam path this exists to close.
+     *
+     * Every photo/clip on the post is denormalised into the report's
+     * `contentSnapshot.media`, so an admin can still watch the video or view
+     * the images later, even if the post itself gets deleted first.
+     */
+    suspend fun reportPost(post: Post, reason: String): Result<Unit> = runCatching {
+        val me = auth.currentUser ?: error("Not signed in")
+        val postRef = db.collection("posts").document(post.id)
+        val reporterRef = postRef.collection("reporters").document(me.uid)
+        val reportRef = db.collection("reports").document()
+
+        db.runTransaction { txn ->
+            if (txn.get(reporterRef).exists()) throw AlreadyReportedException()
+
+            txn.set(reporterRef, mapOf("reportedAt" to FieldValue.serverTimestamp()))
+            txn.update(postRef, "reportCount", FieldValue.increment(1))
+            txn.set(
+                reportRef,
+                mapOf(
+                    "contentType" to "post",
+                    "reportedUserId" to post.authorId,
+                    "reportedUserName" to post.authorName,
+                    "reporterId" to me.uid,
+                    "reporterName" to (me.displayName ?: me.email?.substringBefore('@') ?: "A learner"),
+                    "reason" to reason.trim(),
+                    "status" to "open",
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "postId" to post.id,
+                    "communityId" to post.communityId,
+                    "communityName" to post.communityName,
+                    "contentSnapshot" to mapOf(
+                        "title" to post.title,
+                        "body" to post.body,
+                        // Legacy single-image field, kept for anything still reading it.
+                        "imageUrl" to (post.mediaItems.firstOrNull { !it.isVideo }?.feedUrl ?: ""),
+                        // Every photo/clip on the post — so the admin can watch the
+                        // video and view every image, not just one still.
+                        "media" to post.mediaItems.map { m ->
+                            mapOf("url" to m.url, "type" to m.type, "thumbUrl" to (m.thumbUrl ?: ""))
+                        },
+                    ),
+                ),
+            )
+        }.await()
+        Unit
+    }.onFailure { if (it !is AlreadyReportedException) Log.w(TAG, "report submit failed", it) }
 
     /** Report a single comment on a post. */
     suspend fun reportComment(postId: String, comment: Comment, reason: String): Result<Unit> = submit(
@@ -99,4 +145,18 @@ class ReportRepository(
     private companion object {
         const val TAG = "ReportRepository"
     }
+}
+
+/**
+ * Submits a post report and shows the outcome as a Toast — success, the
+ * "already reported" notice, or a generic failure — so every report dialog
+ * (feed, profile, post detail, immersive viewer) gives real feedback instead
+ * of always claiming success regardless of what happened.
+ */
+suspend fun ReportRepository.reportPostShowingResult(context: Context, post: Post, reason: String) {
+    val message = reportPost(post, reason).fold(
+        onSuccess = { "Thanks — we'll review this post." },
+        onFailure = { e -> if (e is AlreadyReportedException) "Reported already" else "Couldn't submit the report. Try again." },
+    )
+    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 }

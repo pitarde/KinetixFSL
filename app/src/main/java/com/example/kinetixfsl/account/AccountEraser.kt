@@ -46,6 +46,9 @@ class AccountEraser(
     /** Reused only for its R2 community-media cleanup during the wipe. */
     private val directory: com.example.kinetixfsl.community.CommunityDirectoryRepository =
         com.example.kinetixfsl.community.CommunityDirectoryRepository(db, auth),
+    /** Reused only for its abandoned-thread chat cleanup during the wipe. */
+    private val messages: com.example.kinetixfsl.community.inbox.MessagesRepository =
+        com.example.kinetixfsl.community.inbox.MessagesRepository(db, auth),
 ) {
 
     /** Outcome of a full delete, so the UI can tell the user what happened. */
@@ -300,65 +303,20 @@ class AccountEraser(
     }.onFailure { Log.w(TAG, "votes-everywhere delete failed", it) }.let { }
 
     /**
-     * Cleans this user out of every direct-message thread they're in, and frees
-     * the chat images/videos involved from R2.
+     * Cleans this user out of every direct-message thread they're in — delegated
+     * to [MessagesRepository.freeChatDataOnAccountDeletion], which shares the
+     * exact same abandoned-thread rule [MessagesRepository.deleteHistory] uses:
+     * a thread (and the R2 media in it) is only torn down once *neither*
+     * participant can see it any more — the other side is also gone, or has
+     * already hidden this conversation from their own side.
      *
-     * Two cases per thread, decided by whether the OTHER participant still has a
-     * `users/{uid}` doc:
-     *
-     *  - **They're still around** — delete only the messages this user sent
-     *    (the rules let a sender delete their own), and free the R2 media on
-     *    them. The thread lives on as the other person's half, under a "person
-     *    no longer available" header.
-     *  - **They've already deleted their account too** — the thread is a ghost
-     *    nobody can see: delete EVERY remaining message, free all their R2
-     *    media, then delete the conversation document itself. The rules allow a
-     *    participant to clear a thread once the other side's account is gone.
-     *
-     * R2 first, while the messages still exist — the Worker authorises chat keys
-     * by the thread's two participant folders, and once the docs are gone
-     * there's nothing tying a key to this thread.
+     * While the other participant still has this thread open, it's left
+     * completely untouched — messages, photos and clips all keep working for
+     * them exactly as before. This account disappearing must never break
+     * something it already sent someone who's still around.
      */
     private suspend fun deleteOwnChatData(uid: String) = runCatching {
-        val threads = db.collection(CONVERSATIONS)
-            .whereArrayContains("participants", uid)
-            .get().await()
-
-        for (thread in threads.documents) {
-            val otherUid = (thread.get("participants") as? List<*>)
-                ?.mapNotNull { it as? String }
-                ?.firstOrNull { it != uid }
-            val otherGone = otherUid == null || runCatching {
-                !db.collection(USERS).document(otherUid).get().await().exists()
-            }.getOrDefault(false)
-
-            val base = thread.reference.collection(MESSAGES)
-            val query = if (otherGone) base else base.whereEqualTo("senderId", uid)
-
-            while (true) {
-                val page = runCatching { query.limit(BATCH.toLong()).get().await() }
-                    .getOrNull() ?: break
-                if (page.isEmpty) break
-
-                val keys = page.documents.flatMap { m ->
-                    listOfNotNull(
-                        storageKeyOf(m.getString("mediaUrl")),
-                        storageKeyOf(m.getString("thumbUrl")),
-                    )
-                }.distinct()
-                if (keys.isNotEmpty()) {
-                    runCatching { R2MediaUploader.deleteConversationObjects(thread.id, keys) }
-                }
-
-                for (m in page.documents) runCatching { m.reference.delete().await() }
-                if (page.size() < BATCH) break
-            }
-
-            // No one left to keep it — take the whole thread down.
-            if (otherGone) {
-                runCatching { thread.reference.delete().await() }
-            }
-        }
+        messages.freeChatDataOnAccountDeletion(uid)
     }.onFailure { Log.w(TAG, "chat data cleanup failed", it) }.let { }
 
     /**

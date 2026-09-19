@@ -591,13 +591,8 @@ fun CommunityScreen(
                 ReportReasonDialog(
                     subject = "post",
                     onSubmit = { reason ->
-                        scope.launch { reportRepository.reportPost(reporting, reason) }
+                        scope.launch { reportRepository.reportPostShowingResult(context, reporting, reason) }
                         pendingReportPost = null
-                        android.widget.Toast.makeText(
-                            context,
-                            "Thanks — we'll review this post.",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
                     },
                     onDismiss = { pendingReportPost = null },
                 )

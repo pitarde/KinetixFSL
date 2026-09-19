@@ -502,7 +502,9 @@ internal fun PostInteractionRow(
             if (onReport != null) {
                 InteractionButton(
                     icon = CommunityIcons.Report,
-                    label = null,
+                    // Report count, so anyone can see how many people flagged this
+                    // post — blank at zero, same as the other pills would look.
+                    label = post.reportCount.takeIf { it > 0 }?.compact(),
                     tint = MaterialTheme.colorScheme.onBackground,
                     onClick = onReport,
                     contentDescription = "Report post",

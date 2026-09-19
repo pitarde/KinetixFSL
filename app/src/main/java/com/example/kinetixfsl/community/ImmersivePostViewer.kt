@@ -509,13 +509,8 @@ fun ImmersivePostViewer(
         ReportReasonDialog(
             subject = "post",
             onSubmit = { reason ->
-                scope.launch { reportRepository.reportPost(post, reason) }
+                scope.launch { reportRepository.reportPostShowingResult(reportContext, post, reason) }
                 isReporting = false
-                android.widget.Toast.makeText(
-                    reportContext,
-                    "Thanks — we'll review this post.",
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
             },
             onDismiss = { isReporting = false },
         )

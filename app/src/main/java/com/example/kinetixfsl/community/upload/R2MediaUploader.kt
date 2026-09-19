@@ -110,6 +110,13 @@ object R2MediaUploader {
          * ignores it and stores flat, so client and Worker needn't ship together.
          */
         folder: String? = null,
+        /**
+         * The chat thread's other participant. Set only for `folder = "chat"`
+         * uploads — the Worker then writes the file to BOTH participants' own
+         * `{uid}/chat/…` folders under the same name, so each side ends up
+         * with an independent copy. See MessageOutbox / MessagesRepository.
+         */
+        recipientId: String? = null,
     ): UploadResult = withContext(Dispatchers.IO) {
         try {
             val bytes: ByteArray
@@ -129,7 +136,7 @@ object R2MediaUploader {
                 fileName = uri.lastPathSegment ?: "video.mp4"
             }
 
-            performUpload(bytes, fileName, mimeType, resourceType, folder)
+            performUpload(bytes, fileName, mimeType, resourceType, folder, recipientId)
         } catch (e: Exception) {
             UploadResult.Error(e.localizedMessage ?: "Upload failed.")
         }
@@ -174,10 +181,13 @@ object R2MediaUploader {
      * Removes chat images/videos from one direct-message thread.
      *
      * The Worker authorises these by folder: a thread id is `uidA_uidB`, and
-     * every upload is filed under its sender's own `{uid}/` folder, so a key
-     * under either participant's folder is accepted. Used both when a single
-     * message is deleted and by the account-deletion sweep, which clears every
-     * message the departing user sent. Run while the messages still exist.
+     * every chat upload is filed under the uploader's own `{uid}/` folder —
+     * and, for a duplicated attachment (see [upload]'s `recipientId`), under
+     * the other participant's folder too — so a key under either
+     * participant's folder is accepted. [keys] passed here should already be
+     * scoped to one participant's own copies (see
+     * MessagesRepository.freeOwnMediaCopies) so a delete never reaches past
+     * what that person actually owns.
      */
     suspend fun deleteConversationObjects(conversationId: String, keys: List<String>): Boolean =
         deleteMedia("conversationId", conversationId, keys)
@@ -230,9 +240,11 @@ object R2MediaUploader {
         resourceType: String = "image",
         /** Bucket prefix, as in [upload]. */
         folder: String? = null,
+        /** The chat thread's other participant, as in [upload]. */
+        recipientId: String? = null,
     ): UploadResult = withContext(Dispatchers.IO) {
         try {
-            performUpload(bytes, fileName, mimeType, resourceType, folder)
+            performUpload(bytes, fileName, mimeType, resourceType, folder, recipientId)
         } catch (e: Exception) {
             UploadResult.Error(e.localizedMessage ?: "Upload failed.")
         }
@@ -362,11 +374,12 @@ object R2MediaUploader {
         mimeType: String,
         resourceType: String,
         folder: String? = null,
+        recipientId: String? = null,
     ): UploadResult {
         var lastMessage = "Upload failed."
         for (attempt in 1..MAX_UPLOAD_ATTEMPTS) {
             val result = try {
-                performUploadOnce(bytes, fileName, mimeType, resourceType, folder)
+                performUploadOnce(bytes, fileName, mimeType, resourceType, folder, recipientId)
             } catch (e: Exception) {
                 UploadResult.Error(e.localizedMessage ?: "Upload failed.")
             }
@@ -393,6 +406,7 @@ object R2MediaUploader {
         mimeType: String,
         resourceType: String,
         folder: String? = null,
+        recipientId: String? = null,
     ): UploadResult {
         val url = URL(WORKER_URL)
         val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -422,6 +436,13 @@ object R2MediaUploader {
                 out.write("--$BOUNDARY\r\n".toByteArray())
                 out.write("Content-Disposition: form-data; name=\"uid\"\r\n\r\n".toByteArray())
                 out.write("$uid\r\n".toByteArray())
+            }
+
+            // --- optional recipientId field, for a chat attachment's duplicate copy ---
+            if (!recipientId.isNullOrBlank()) {
+                out.write("--$BOUNDARY\r\n".toByteArray())
+                out.write("Content-Disposition: form-data; name=\"recipientId\"\r\n\r\n".toByteArray())
+                out.write("$recipientId\r\n".toByteArray())
             }
 
             // --- file field ---
