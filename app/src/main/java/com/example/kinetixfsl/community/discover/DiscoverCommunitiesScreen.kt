@@ -55,6 +55,8 @@ fun DiscoverCommunitiesScreen(
     onClose: () -> Unit,
     onOpenCommunity: (communityId: String) -> Unit,
     onOpenCategory: (category: String) -> Unit,
+    /** Opens the Eligibility ("Become a Moderator") screen — the bottom CTA card. */
+    onOpenEligibility: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: DiscoverCommunitiesViewModel = viewModel(),
 ) {
@@ -182,7 +184,43 @@ fun DiscoverCommunitiesScreen(
                 }
             }
         }
+
+        // ---- Become a Moderator CTA ---- always rendered, regardless of the
+        // load state above, so it never disappears behind a skeleton or error.
+        item {
+            EligibilityCta(
+                onClick = onOpenEligibility,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+            )
         }
+        }
+    }
+}
+
+/** Bottom-of-list nudge toward the Eligibility screen. */
+@Composable
+private fun EligibilityCta(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                if (isSystemInDarkTheme()) {
+                    com.example.kinetixfsl.ui.theme.KinetixDarkSurfaceVariant
+                } else {
+                    KinetixWhite
+                },
+            )
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+    ) {
+        Text(
+            text = "Want to post as a moderator? Check your eligibility →",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 

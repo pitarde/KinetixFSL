@@ -50,7 +50,6 @@ class PostUploadService : Service() {
         val links = intent?.getStringArrayListExtra(EXTRA_LINK_URLS).orEmpty()
         val communityId = intent?.getStringExtra(EXTRA_COMMUNITY_ID) ?: ""
         val communityName = intent?.getStringExtra(EXTRA_COMMUNITY_NAME) ?: ""
-        val requestValidation = intent?.getBooleanExtra(EXTRA_REQUEST_VALIDATION, false) ?: false
         val hashtagsText = intent?.getStringExtra(EXTRA_HASHTAGS) ?: ""
         val mediaUriStrings = intent?.getStringArrayListExtra(EXTRA_MEDIA_URIS).orEmpty()
         val mediaTypes = intent?.getStringArrayListExtra(EXTRA_MEDIA_TYPES).orEmpty()
@@ -344,7 +343,6 @@ class PostUploadService : Service() {
                             media = existingMedia + uploaded,
                             communityId = communityId,
                             communityName = communityName,
-                            requestValidation = requestValidation,
                             hashtagsText = hashtagsText,
                             previewUrl = previewUrl,
                             previewBlur = previewBlur,
@@ -362,7 +360,6 @@ class PostUploadService : Service() {
                             previewBlur = previewBlur,
                             communityId = communityId,
                             communityName = communityName,
-                            requestValidation = requestValidation,
                             hashtagsText = hashtagsText,
                         ).map { }
                     }
@@ -523,7 +520,6 @@ class PostUploadService : Service() {
         const val EXTRA_LINK_URLS = "link_urls"
         const val EXTRA_COMMUNITY_ID = "community_id"
         const val EXTRA_COMMUNITY_NAME = "community_name"
-        const val EXTRA_REQUEST_VALIDATION = "request_validation"
         /** Raw text of the composer's Hashtags field (its #tags are searchable). */
         const val EXTRA_HASHTAGS = "hashtags"
         const val EXTRA_MEDIA_URIS = "media_uris"

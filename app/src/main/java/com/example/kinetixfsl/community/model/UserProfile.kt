@@ -44,6 +44,14 @@ data class UserProfile(
      * "My Communities" count and sheet.
      */
     val joinedCommunityIds: List<String> = emptyList(),
+    /**
+     * True once an admin has approved this user's [ModeratorApplication]. A
+     * moderator's posts skip the validation queue (auto-validated at creation)
+     * and their profile shows a Moderator badge to every viewer.
+     */
+    val isModerator: Boolean = false,
+    /** When [isModerator] was approved — null until then. */
+    val moderatorSince: Timestamp? = null,
 )
 
 /**

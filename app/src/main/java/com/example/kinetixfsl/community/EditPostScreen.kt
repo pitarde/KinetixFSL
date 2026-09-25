@@ -242,12 +242,16 @@ fun EditPostScreen(
             )
         }
 
-        // ---- Request admin validation toggle ----
-        // Only shown once the post carries a photo or video.
-        if (state.hasMedia) {
-            ValidationToggleRow(
-                checked = state.requestValidation,
-                onToggle = { viewModel.onToggleValidation(it) },
+        // ---- Auto-validation notice ----
+        // There's no more manual "request validation" toggle — a post is only
+        // ever validated automatically, once its author is an approved
+        // moderator (see create's own copy of this note in CreatePostScreen.kt).
+        if (state.hasMedia && state.isModerator) {
+            Text(
+                text = "As a moderator, this post will be auto-validated.",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
             )
         }
 

@@ -80,6 +80,8 @@ fun CommunityScreen(
     onNavigateToDashboard: () -> Unit,
     onStartCommunity: () -> Unit = {},
     onDiscoverCommunities: () -> Unit = {},
+    /** Opens the Eligibility ("Become a Moderator") screen — the drawer's own entry point. */
+    onEligibility: () -> Unit = {},
     /** Opens the Text-to-Sign search — the drawer's "Text to Gesture" item. */
     onTextToSign: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -223,6 +225,12 @@ fun CommunityScreen(
                         scope.launch {
                             drawerState.close()
                             onDiscoverCommunities()
+                        }
+                    },
+                    onEligibilityClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onEligibility()
                         }
                     },
                     onAboutClick = { scope.launch { drawerState.close() } },

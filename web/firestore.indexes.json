@@ -21,6 +21,15 @@
         { "fieldPath": "validationStatus", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "//": "Admin Moderator Applications queue: applications filtered by status, newest-first (moderatorApplications.js subscribeApplications).",
+      "collectionGroup": "moderatorApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "appliedAt", "order": "DESCENDING" }
+      ]
     }
   ],
 

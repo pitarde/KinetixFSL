@@ -230,6 +230,20 @@ service cloud.firestore {
       }
     }
 
+    // A regular user may never grant themselves the moderator flag — only an
+    // admin's approval (see `moderatorApplications` below) may set it, and
+    // only an admin may touch it afterward (e.g. revoking it).
+    //
+    // `resource == null` is a create (no prior document to diff against): the
+    // new document simply must not carry either field at all. Otherwise it's
+    // an update, and neither field may appear in what actually changed.
+    function onlyModeratorFieldsUnchanged() {
+      return resource == null
+        ? !('isModerator' in request.resource.data) && !('moderatorSince' in request.resource.data)
+        : (!('isModerator' in request.resource.data.diff(resource.data).affectedKeys())
+            && !('moderatorSince' in request.resource.data.diff(resource.data).affectedKeys()));
+    }
+
     // Community profiles and the follow graph.
     match /users/{userId} {
       // Public: post cards and follower lists show anyone's name and photo.
@@ -241,8 +255,10 @@ service cloud.firestore {
       // The owner writes their own profile; anyone signed in may move the
       // follower counters (see above); an admin may edit any profile — the
       // account wipe anonymises a deleted learner's name/photo through here.
+      // The owner may not touch isModerator/moderatorSince themselves — only
+      // an admin (reviewing a moderatorApplications doc) may flip those.
       allow create, update: if request.auth != null
-                            && (request.auth.uid == userId
+                            && ((request.auth.uid == userId && onlyModeratorFieldsUnchanged())
                                 || onlyFollowCountsChanged()
                                 || isAdmin());
       // The owner may hard-delete their own profile document — the
@@ -725,6 +741,26 @@ service cloud.firestore {
                     && request.resource.data.reporterId == request.auth.uid
                     && request.resource.data.status == 'open';
       allow read, update, delete: if isAdmin();
+    }
+
+    // -----------------------------------------------------------------------
+    // Become-a-Moderator applications — moderatorApplications/{uid}
+    //
+    // Doc id is the applicant's own uid — one slot per user, so applying again
+    // simply overwrites the previous record. A user may create/overwrite only
+    // their own doc, and only arriving "pending" (so nobody can self-approve
+    // by writing status: "approved" directly); only an admin may move it to
+    // "approved"/"rejected" or read the queue (the mobile app only ever reads
+    // its own doc, which the owner-or-admin read below already covers).
+    // -----------------------------------------------------------------------
+    match /moderatorApplications/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow create, update: if request.auth != null
+                            && ((request.auth.uid == uid
+                                 && request.resource.data.uid == uid
+                                 && request.resource.data.status == 'pending')
+                                || isAdmin());
+      allow delete: if isAdmin();
     }
 
     // -----------------------------------------------------------------------

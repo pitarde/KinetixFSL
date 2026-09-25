@@ -8,10 +8,14 @@ import androidx.lifecycle.viewModelScope
 import com.example.kinetixfsl.community.model.Community
 import com.example.kinetixfsl.community.model.MAX_POST_MEDIA
 import com.example.kinetixfsl.community.upload.PostUploadService
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -44,22 +48,27 @@ data class CreatePostUiState(
     val selectedCommunityName: String = "",
     /** When true the target is fixed (posting from inside a community). */
     val isCommunityLocked: Boolean = false,
-    /** When true, the post is submitted to the admin validation queue. */
-    val requestValidation: Boolean = false,
     /**
      * Raw text of the dedicated Hashtags field at the bottom of the composer,
-     * e.g. "#salamat #patawad". Required before a post carrying media can
-     * request validation — those #tags are what a Text-to-Sign search matches.
+     * e.g. "#salamat #patawad". Required before a moderator's media post can
+     * go out — those #tags are what a Text-to-Sign search matches, and their
+     * posts are auto-validated with no manual request step.
      */
     val hashtags: String = "",
+    /**
+     * True once the signed-in user's own profile confirms they're an approved
+     * moderator — there's no manual "request validation" step anymore: a
+     * moderator's media posts auto-validate, everyone else's never do.
+     */
+    val isModerator: Boolean = false,
 ) {
     val canAddMore: Boolean get() = media.size < MAX_POST_MEDIA
 
-    /** Media (image/video) turns on the validation option; text-only hides it. */
+    /** Media (image/video) turns on validation; text-only never validates. */
     val hasMedia: Boolean get() = media.isNotEmpty()
 
-    /** Whether validation is both wanted and actually offered (media present). */
-    val wantsValidation: Boolean get() = requestValidation && hasMedia
+    /** Whether this post will actually be auto-validated (moderator + media). */
+    val wantsValidation: Boolean get() = isModerator && hasMedia
 
     /** True once the Hashtags field holds at least one usable #tag. */
     val hasHashtags: Boolean get() = extractHashtags(hashtags).isNotEmpty()
@@ -81,6 +90,19 @@ class CreatePostViewModel(
     val joinedCommunities: StateFlow<List<Community>> =
         directory.observeJoinedCommunities()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    init {
+        // Live rather than a one-off read: this screen can stay open a while
+        // (media picking, typing), and an application approved mid-composition
+        // should hide the validation toggle without the user having to back
+        // out and reopen the composer.
+        FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
+            repository.observeUserProfile(uid)
+                .map { it?.isModerator == true }
+                .onEach { isModerator -> _uiState.update { it.copy(isModerator = isModerator) } }
+                .launchIn(viewModelScope)
+        }
+    }
 
     /** Picks the target community. A blank [id] means the Home Feed. */
     fun selectCommunity(id: String, name: String) {
@@ -107,10 +129,6 @@ class CreatePostViewModel(
 
     fun onBodyChange(value: String) =
         _uiState.update { it.copy(body = value, errorMessage = null) }
-
-    /** Toggles whether this post is submitted for admin validation. */
-    fun onToggleValidation(value: Boolean) =
-        _uiState.update { it.copy(requestValidation = value, errorMessage = null) }
 
     /** Edits the dedicated Hashtags field. */
     fun onHashtagsChange(value: String) =
@@ -186,12 +204,11 @@ class CreatePostViewModel(
             return
         }
 
-        // Requesting a validation badge means declaring the signs in the media,
-        // so a validated tutorial is searchable in Text-to-Sign. No #tags, no
-        // submission — but the post can still go out without validation.
+        // A moderator's auto-validated media post still needs its signs
+        // declared, so a validated tutorial is searchable in Text-to-Sign.
         if (state.wantsValidation && !state.hasHashtags) {
             _uiState.update {
-                it.copy(errorMessage = "Add at least one #hashtag for each sign to request validation.")
+                it.copy(errorMessage = "Add at least one #hashtag for each sign before posting.")
             }
             return
         }
@@ -220,10 +237,6 @@ class CreatePostViewModel(
             )
             putExtra(PostUploadService.EXTRA_COMMUNITY_ID, state.selectedCommunityId)
             putExtra(PostUploadService.EXTRA_COMMUNITY_NAME, state.selectedCommunityName)
-            // Only honor validation when media is actually attached — the toggle
-            // is hidden for text-only posts, but its state could linger if media
-            // was removed after switching it on.
-            putExtra(PostUploadService.EXTRA_REQUEST_VALIDATION, state.wantsValidation)
             putExtra(PostUploadService.EXTRA_HASHTAGS, state.hashtags)
             if (state.media.isNotEmpty()) {
                 putStringArrayListExtra(

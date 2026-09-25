@@ -333,6 +333,7 @@ fun CommunityProfileScreen(
                 bannerUrl = state.bannerUrl,
                 followerCount = state.followerCount,
                 followingCount = state.followingCount,
+                isModerator = state.isModerator,
                 isOwnProfile = state.isOwnProfile,
                 isFollowing = state.isFollowing,
                 onFollowersClick = { isFollowersOpen = true },
@@ -588,6 +589,7 @@ private fun ProfileCard(
     bannerUrl: String?,
     followerCount: Long,
     followingCount: Long,
+    isModerator: Boolean,
     isOwnProfile: Boolean,
     isFollowing: Boolean,
     onFollowersClick: () -> Unit,
@@ -652,8 +654,18 @@ private fun ProfileCard(
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f, fill = false),
                         )
+                        if (isModerator) {
+                            Spacer(Modifier.width(6.dp))
+                            Icon(
+                                imageVector = CommunityIcons.ModeratorBadge,
+                                contentDescription = "Moderator",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
                         Spacer(Modifier.width(12.dp))
 
                         if (isOwnProfile) {

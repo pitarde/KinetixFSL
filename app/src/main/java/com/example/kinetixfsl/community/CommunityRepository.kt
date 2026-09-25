@@ -221,6 +221,24 @@ class CommunityRepository(
     }
 
     /**
+     * Whether [uid] is an approved moderator — a moderator's posts skip the
+     * validation queue entirely (see [createPost]/[updatePost]).
+     *
+     * A single one-off read rather than a live listener: PostUploadService,
+     * the only caller, runs as a background service with no ViewModel to hold
+     * a cached profile, and this is only ever consulted once, right when a
+     * post is about to be written. Fails closed to false on error — a
+     * moderator lookup that can't complete should never accidentally
+     * auto-validate a post.
+     */
+    private suspend fun isModeratorUser(uid: String): Boolean = try {
+        firestore.collection(USERS).document(uid).get().await()
+            .getBoolean("isModerator") == true
+    } catch (_: Exception) {
+        false
+    }
+
+    /**
      * Writes the signed-in user's name and photo to `users/{uid}`.
      *
      * Follower lists need somewhere to read a user's details from, and posts
@@ -1007,9 +1025,6 @@ class CommunityRepository(
         /** Where the post lives. Blank publishes to the Home Feed. */
         communityId: String = "",
         communityName: String = "",
-        /** True re-submits the (edited) post for admin validation as "pending";
-         *  false clears any validation state, since the content changed. */
-        requestValidation: Boolean = false,
         /**
          * The raw text of the composer's dedicated Hashtags field. Its #tags are
          * merged with any found in the title/body so a Text-to-Sign search can
@@ -1034,6 +1049,7 @@ class CommunityRepository(
          */
         updatePreview: Boolean = false,
     ): Result<Unit> = try {
+        val isModerator = auth.currentUser?.uid?.let { isModeratorUser(it) } == true
         val cleanLinks = links.map { it.trim() }.filter { it.isNotBlank() }
         // Legacy single-media fields are rewritten too, so the share page and
         // any older client stay consistent with the new attachment list.
@@ -1053,11 +1069,12 @@ class CommunityRepository(
             "communityId" to communityId,
             "communityName" to communityName,
             "editedAt" to Timestamp.now(),
-            // Editing content invalidates a prior approval: re-queue if the
-            // author still wants validation, otherwise clear it.
-            "validationStatus" to if (requestValidation) "pending" else "",
-            "validatedBy" to null,
-            "validatedAt" to null,
+            // Editing content invalidates a prior approval: only an approved
+            // moderator's posts are ever validated, so anyone else's edit
+            // always clears it — there's no manual "request validation" step.
+            "validationStatus" to if (isModerator) "validated" else "",
+            "validatedBy" to if (isModerator) "auto:moderator" else null,
+            "validatedAt" to if (isModerator) Timestamp.now() else null,
         )
         // Rewrite the preview fields only when the first attachment changed —
         // see updatePreview's doc. previewUrl may be null here, which clears the
@@ -1088,8 +1105,6 @@ class CommunityRepository(
         /** Blank publishes to the Home Feed; otherwise the target community. */
         communityId: String = "",
         communityName: String = "",
-        /** When true, the post enters the admin validation queue as "pending". */
-        requestValidation: Boolean = false,
         /**
          * The raw text of the composer's dedicated Hashtags field. Its #tags are
          * merged with any found in the title/body so a Text-to-Sign search can
@@ -1098,6 +1113,7 @@ class CommunityRepository(
         hashtagsText: String = "",
     ): Result<String> {
         val user = auth.currentUser ?: return Result.failure(Exception("Not signed in."))
+        val isModerator = isModeratorUser(user.uid)
 
         // Normalize the link list, and keep the legacy single field pointed at
         // the first one so older clients and the web worker still show a link.
@@ -1139,8 +1155,12 @@ class CommunityRepository(
             "viewCount" to 0L,
             "score" to 0L,
             "createdAt" to Timestamp.now(),
-            // "" = not submitted, "pending" = awaiting admin, "validated" = approved.
-            "validationStatus" to if (requestValidation) "pending" else "",
+            // "" = not validated, "validated" = auto-approved because the author
+            // is a moderator. There's no manual admin-requested "pending" state
+            // anymore — validation is only ever automatic, moderator-driven.
+            "validationStatus" to if (isModerator) "validated" else "",
+            "validatedBy" to if (isModerator) "auto:moderator" else null,
+            "validatedAt" to if (isModerator) Timestamp.now() else null,
         )
         return try {
             val ref = firestore.collection(POSTS).add(data).await()

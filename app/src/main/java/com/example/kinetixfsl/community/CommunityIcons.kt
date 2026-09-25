@@ -516,4 +516,33 @@ internal object CommunityIcons {
             }
         }.build()
     }
+
+    /**
+     * A filled shield with a checkmark cutout — the Moderator badge shown next
+     * to a moderator's name on their profile. Deliberately a shield rather
+     * than [Verified]'s circle, so the "this user is a moderator" badge never
+     * reads as the unrelated "this post was Validated" badge.
+     */
+    val ModeratorBadge: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "ModeratorBadge",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(12f, 2f)
+                lineTo(19f, 5f)
+                lineTo(19f, 11f)
+                curveTo(19f, 16f, 16f, 19.5f, 12f, 21f)
+                curveTo(8f, 19.5f, 5f, 16f, 5f, 11f)
+                lineTo(5f, 5f)
+                close()
+            }
+            path(stroke = SolidColor(Color.White), strokeLineWidth = 2.2f) {
+                moveTo(8.5f, 11.7f)
+                lineTo(10.8f, 14f)
+                lineTo(15.5f, 8.7f)
+            }
+        }.build()
+    }
 }

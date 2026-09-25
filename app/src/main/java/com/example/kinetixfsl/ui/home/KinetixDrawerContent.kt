@@ -62,6 +62,7 @@ fun KinetixDrawerContent(
     onCommunityClick: () -> Unit,
     onStartCommunityClick: () -> Unit,
     onDiscoverCommunitiesClick: () -> Unit,
+    onEligibilityClick: () -> Unit,
     onAboutClick: () -> Unit,
     modifier: Modifier = Modifier,
     /**
@@ -118,6 +119,7 @@ fun KinetixDrawerContent(
         DrawerItem(HomeIcons.Community, "Community", onCommunityClick)
         DrawerItem(HomeIcons.Plus, "Start a community", onStartCommunityClick)
         DrawerItem(HomeIcons.Search, "Discover communities", onDiscoverCommunitiesClick)
+        DrawerItem(HomeIcons.Eligibility, "Eligibility", onEligibilityClick)
         // Inbox lives here now rather than as its own bottom-nav tab or top-bar
         // icon — one destination for both direct messages and notifications,
         // reached the same way Discover and Start a community are.
@@ -413,6 +415,7 @@ private fun KinetixDrawerContentPreviewLight() {
             onCommunityClick = {},
             onStartCommunityClick = {},
             onDiscoverCommunitiesClick = {},
+            onEligibilityClick = {},
             onAboutClick = {},
         )
     }
@@ -429,6 +432,7 @@ private fun KinetixDrawerContentPreviewDark() {
             onCommunityClick = {},
             onStartCommunityClick = {},
             onDiscoverCommunitiesClick = {},
+            onEligibilityClick = {},
             onAboutClick = {},
         )
     }

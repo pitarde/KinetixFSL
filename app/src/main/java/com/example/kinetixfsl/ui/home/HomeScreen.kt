@@ -73,6 +73,8 @@ fun HomeScreen(
     onNavigateToSignList: (categoryId: String) -> Unit,
     onStartCommunity: () -> Unit = {},
     onDiscoverCommunities: () -> Unit = {},
+    /** Opens the Eligibility ("Become a Moderator") screen — the drawer's own entry point. */
+    onEligibility: () -> Unit = {},
     /** Opens a specific community — the drawer's Recently Visited rows. */
     onOpenCommunity: (String) -> Unit = {},
     /** Opens the Inbox (chat + notifications) — the drawer's own entry point. */
@@ -151,6 +153,12 @@ fun HomeScreen(
                         scope.launch {
                             drawerState.close()
                             onDiscoverCommunities()
+                        }
+                    },
+                    onEligibilityClick = {
+                        scope.launch {
+                            drawerState.close()
+                            onEligibility()
                         }
                     },
                     onAboutClick = {

@@ -288,4 +288,28 @@ internal object HomeIcons {
             }
         }.build()
     }
+
+    /** A shield with a checkmark — used for "Eligibility" (Become a Moderator). */
+    val Eligibility: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Eligibility",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(stroke = SolidColor(Color.Black), strokeLineWidth = 2f) {
+                // Shield outline
+                moveTo(12f, 3f)
+                lineTo(19f, 6f)
+                lineTo(19f, 11f)
+                curveTo(19f, 16f, 16f, 19.5f, 12f, 21f)
+                curveTo(8f, 19.5f, 5f, 16f, 5f, 11f)
+                lineTo(5f, 6f)
+                close()
+                // Checkmark
+                moveTo(8.5f, 12f)
+                lineTo(11f, 14.5f)
+                lineTo(15.5f, 9.5f)
+            }
+        }.build()
+    }
 }

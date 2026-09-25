@@ -10,10 +10,14 @@ import com.example.kinetixfsl.community.model.MAX_POST_MEDIA
 import com.example.kinetixfsl.community.model.Post
 import com.example.kinetixfsl.community.model.PostMedia
 import com.example.kinetixfsl.community.upload.PostUploadService
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 
@@ -34,23 +38,24 @@ data class EditPostUiState(
     /** Where the post lives. Blank id means the Home Feed. */
     val selectedCommunityId: String = "",
     val selectedCommunityName: String = "",
-    /** Whether to (re)submit the edited post for admin validation. */
-    val requestValidation: Boolean = false,
     /**
      * Raw text of the dedicated Hashtags field, e.g. "#salamat #patawad".
-     * Required before a post carrying media can request validation.
+     * Required before a moderator's media post can go out.
      */
     val hashtags: String = "",
+    /** True once the signed-in user's profile confirms they're an approved
+     *  moderator — see [CreatePostUiState.isModerator]. */
+    val isModerator: Boolean = false,
 ) {
     val totalMedia: Int get() = existingMedia.size + newMedia.size
     val canAddMore: Boolean get() = totalMedia < MAX_POST_MEDIA
     val canSave: Boolean get() = title.isNotBlank() && !isSaving
 
-    /** Media (image/video) turns on the validation option; text-only hides it. */
+    /** Media (image/video) turns on validation; text-only never validates. */
     val hasMedia: Boolean get() = totalMedia > 0
 
-    /** Whether validation is both wanted and actually offered (media present). */
-    val wantsValidation: Boolean get() = requestValidation && hasMedia
+    /** Whether this post will actually be auto-validated (moderator + media). */
+    val wantsValidation: Boolean get() = isModerator && hasMedia
 
     /** True once the Hashtags field holds at least one usable #tag. */
     val hasHashtags: Boolean get() = extractHashtags(hashtags).isNotEmpty()
@@ -69,6 +74,7 @@ data class EditPostUiState(
 class EditPostViewModel(
     post: Post,
     private val directory: CommunityDirectoryRepository = CommunityDirectoryRepository(),
+    private val repository: CommunityRepository = CommunityRepository(),
 ) : ViewModel() {
 
     /**
@@ -101,8 +107,6 @@ class EditPostViewModel(
             existingMedia = post.mediaItems,
             selectedCommunityId = post.communityId,
             selectedCommunityName = post.communityName,
-            // Pre-check if the post was already submitted or approved.
-            requestValidation = post.validationStatus.isNotBlank(),
             // Re-populate the Hashtags field from the tags already saved, so an
             // edit keeps them rather than silently dropping the ones that were
             // typed into the dedicated field rather than the title/body.
@@ -121,6 +125,15 @@ class EditPostViewModel(
         directory.observeJoinedCommunities()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    init {
+        FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
+            repository.observeUserProfile(uid)
+                .map { it?.isModerator == true }
+                .onEach { isModerator -> _uiState.update { it.copy(isModerator = isModerator) } }
+                .launchIn(viewModelScope)
+        }
+    }
+
     /** Picks the target community. A blank [id] means the Home Feed. */
     fun selectCommunity(id: String, name: String) =
         _uiState.update { it.copy(selectedCommunityId = id, selectedCommunityName = name) }
@@ -130,9 +143,6 @@ class EditPostViewModel(
 
     fun onBodyChange(value: String) =
         _uiState.update { it.copy(body = value, errorMessage = null) }
-
-    fun onToggleValidation(value: Boolean) =
-        _uiState.update { it.copy(requestValidation = value, errorMessage = null) }
 
     /** Edits the dedicated Hashtags field. */
     fun onHashtagsChange(value: String) =
@@ -202,7 +212,7 @@ class EditPostViewModel(
         }
         if (state.wantsValidation && !state.hasHashtags) {
             _uiState.update {
-                it.copy(errorMessage = "Add at least one #hashtag for each sign to request validation.")
+                it.copy(errorMessage = "Add at least one #hashtag for each sign before saving.")
             }
             return
         }
@@ -230,9 +240,6 @@ class EditPostViewModel(
             putStringArrayListExtra(PostUploadService.EXTRA_LINK_URLS, ArrayList(cleanLinks))
             putExtra(PostUploadService.EXTRA_COMMUNITY_ID, state.selectedCommunityId)
             putExtra(PostUploadService.EXTRA_COMMUNITY_NAME, state.selectedCommunityName)
-            // Only honor validation when media is present — see the note in
-            // CreatePostViewModel.submitPost.
-            putExtra(PostUploadService.EXTRA_REQUEST_VALIDATION, state.wantsValidation)
             putExtra(PostUploadService.EXTRA_HASHTAGS, state.hashtags)
 
             // Media already on the post, kept as-is (three parallel arrays).

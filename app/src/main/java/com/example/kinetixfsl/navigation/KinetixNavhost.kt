@@ -35,6 +35,7 @@ import com.example.kinetixfsl.community.SharedPostScreen
 import com.example.kinetixfsl.community.create.StartCommunityScreen
 import com.example.kinetixfsl.community.discover.CommunityCategoryScreen
 import com.example.kinetixfsl.community.discover.DiscoverCommunitiesScreen
+import com.example.kinetixfsl.community.moderator.EligibilityScreen
 import com.example.kinetixfsl.community.home.CommunityHomeScreen
 import com.example.kinetixfsl.community.inbox.InboxScreen
 import com.example.kinetixfsl.modules.LearningRoomScreen
@@ -82,6 +83,9 @@ object Route {
     // ── Communities: create, discover, and a single community's home ──
     const val START_COMMUNITY = "start_community"
     const val DISCOVER_COMMUNITIES = "discover_communities"
+
+    /** "Become a Moderator" eligibility — reached from the drawer and Discover. */
+    const val ELIGIBILITY = "eligibility"
 
     private const val COMMUNITY_HOME_BASE = "community_home"
     const val COMMUNITY_HOME_ARG = "communityId"
@@ -319,6 +323,7 @@ fun KinetixNavHost(
             Route.COMMUNITY,
             Route.START_COMMUNITY,
             Route.DISCOVER_COMMUNITIES,
+            Route.ELIGIBILITY,
             Route.COMMUNITY_CATEGORY_PATTERN,
             Route.COMMUNITY_HOME_PATTERN,
             Route.INBOX,
@@ -559,6 +564,9 @@ fun KinetixNavHost(
                 onDiscoverCommunities = {
                     navController.navigate(Route.DISCOVER_COMMUNITIES)
                 },
+                onEligibility = {
+                    navController.navigate(Route.ELIGIBILITY)
+                },
                 onOpenCommunity = { communityId ->
                     navController.navigate(Route.communityHome(communityId))
                 },
@@ -643,6 +651,12 @@ fun KinetixNavHost(
                                     navController.navigate(Route.DISCOVER_COMMUNITIES)
                                 }
                             },
+                            onEligibilityClick = {
+                                inboxDrawerScope.launch {
+                                    inboxDrawerState.close()
+                                    navController.navigate(Route.ELIGIBILITY)
+                                }
+                            },
                             onAboutClick = { inboxDrawerScope.launch { inboxDrawerState.close() } },
                             onRecentCommunityClick = { communityId ->
                                 inboxDrawerScope.launch {
@@ -725,6 +739,9 @@ fun KinetixNavHost(
                 onDiscoverCommunities = {
                     navController.navigate(Route.DISCOVER_COMMUNITIES)
                 },
+                onEligibility = {
+                    navController.navigate(Route.ELIGIBILITY)
+                },
                 onTextToSign = {
                     navController.navigate(Route.TEXT_TO_SIGN)
                 },
@@ -780,6 +797,22 @@ fun KinetixNavHost(
                 onOpenCategory = { category ->
                     navController.navigate(Route.communityCategory(category))
                 },
+                onOpenEligibility = {
+                    navController.navigate(Route.ELIGIBILITY)
+                },
+            )
+        }
+
+        // ---- Eligibility: "Become a Moderator" progress + apply ----
+        composable(
+            route = Route.ELIGIBILITY,
+            enterTransition = { communityPushEnter() },
+            exitTransition = { communityPushExit() },
+            popEnterTransition = { communityPopEnter() },
+            popExitTransition = { communityPopExit() },
+        ) {
+            EligibilityScreen(
+                onClose = { navController.popBackStack() },
             )
         }
 

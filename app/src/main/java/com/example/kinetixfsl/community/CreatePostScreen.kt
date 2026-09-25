@@ -250,13 +250,16 @@ fun CreatePostScreen(
             )
         }
 
-        // ---- Request admin validation toggle ----
-        // Only shown once the post carries a photo or video — there's nothing to
-        // validate on a text-only post.
-        if (state.hasMedia) {
-            ValidationToggleRow(
-                checked = state.requestValidation,
-                onToggle = { viewModel.onToggleValidation(it) },
+        // ---- Auto-validation notice ----
+        // There's no more manual "request validation" toggle — a post is only
+        // ever validated automatically, once its author is an approved
+        // moderator. Shown only when there's actually media to validate.
+        if (state.hasMedia && state.isModerator) {
+            Text(
+                text = "As a moderator, this post will be auto-validated.",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
             )
         }
 
@@ -522,52 +525,6 @@ private fun CommunityPickerRow(
  * One editable link, in a bordered pill with an "x" to remove it. Shared by the
  * create and edit composers so a link field looks the same in both.
  */
-/**
- * The "Request admin validation" toggle shown on the create/edit composers.
- * When on, the post is submitted to the admin Content Validation queue and, once
- * approved, shows a "Validated" badge to everyone.
- */
-@Composable
-internal fun ValidationToggleRow(
-    checked: Boolean,
-    onToggle: (Boolean) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable { onToggle(!checked) }
-            .padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = CommunityIcons.Verified,
-            contentDescription = null,
-            tint = if (checked) MaterialTheme.colorScheme.primary
-                   else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Request admin validation",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = "Get this post reviewed and marked Validated",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        androidx.compose.material3.Switch(
-            checked = checked,
-            onCheckedChange = onToggle,
-        )
-    }
-}
-
 /**
  * The dedicated Hashtags field, shown just above the create/edit composer's
  * bottom toolbar — YouTube-style tagging. The author lists one #tag per sign in

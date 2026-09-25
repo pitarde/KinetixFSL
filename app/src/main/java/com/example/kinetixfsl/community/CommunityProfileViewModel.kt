@@ -40,6 +40,8 @@ data class CommunityProfileUiState(
      */
     val commentsError: String? = null,
     val followerCount: Long = 0,
+    /** Shows the Moderator badge next to [displayName] — public, any viewer sees it. */
+    val isModerator: Boolean = false,
     /** How many accounts this user follows — shown on the own-profile stat pill
      *  in place of the useless "Active now" a user always sees on themselves. */
     val followingCount: Long = 0,
@@ -187,6 +189,7 @@ class CommunityProfileViewModel(
                     state.copy(
                         followerCount = profile?.followerCount ?: 0,
                         followingCount = profile?.followingCount ?: 0,
+                        isModerator = profile?.isModerator == true,
                         // Another user's name, age and presence can only come
                         // from their document — their Auth record isn't readable.
                         displayName = if (isOwn) {
